@@ -11,7 +11,7 @@ namespace ExploreTogether.Net;
 public partial class NetSession : Node
 {
     // ---- Server-side events (raised when a client calls us) ----
-    public event Action<long, string>? JoinRequested;      // peer, display name
+    public event Action<long, string, Color>? JoinRequested; // peer, display name, color
     public event Action<long, int>? InstanceReadyReceived; // peer, instance id
 
     // ---- Client-side events (raised when the server calls us) ----
@@ -20,17 +20,17 @@ public partial class NetSession : Node
 
     // ---- Client -> server ----
 
-    public void SendJoinRequest(string displayName) =>
-        RpcId(1, MethodName.RequestJoin, displayName);
+    public void SendJoinRequest(string displayName, Color color) =>
+        RpcId(1, MethodName.RequestJoin, displayName, color);
 
     public void SendInstanceReady(int instanceId) =>
         RpcId(1, MethodName.InstanceReady, instanceId);
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
-    private void RequestJoin(string displayName)
+    private void RequestJoin(string displayName, Color color)
     {
         if (!Main.IsServer) return;
-        JoinRequested?.Invoke(Multiplayer.GetRemoteSenderId(), displayName);
+        JoinRequested?.Invoke(Multiplayer.GetRemoteSenderId(), displayName, color);
     }
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]

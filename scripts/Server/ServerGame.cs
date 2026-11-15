@@ -22,7 +22,7 @@ public partial class ServerGame : Node
     private InstanceManager _instances = null!;
 
     /// <summary>Peers that asked to join, keyed by peer id, with the instance they were sent to.</summary>
-    private readonly Dictionary<long, (string Name, int InstanceId)> _pending = new();
+    private readonly Dictionary<long, (string Name, Color Color, int InstanceId)> _pending = new();
 
     private readonly Dictionary<long, string> _names = new();
 
@@ -52,7 +52,7 @@ public partial class ServerGame : Node
         GD.Print($"[server] listening on port {port}");
     }
 
-    private void OnJoinRequested(long peer, string requestedName)
+    private void OnJoinRequested(long peer, string requestedName, Color requestedColor)
     {
         var name = requestedName.StripEdges();
         if (name.Length == 0) name = $"Player{peer % 10000}";
@@ -60,7 +60,7 @@ public partial class ServerGame : Node
 
         _names[peer] = name;
         var target = _instances.Hub;
-        _pending[peer] = (name, target.Id);
+        _pending[peer] = (name, PlayerLook.Sanitize(requestedColor), target.Id);
         _session.SendEnterInstance(peer, target.Id, target.Kind);
     }
 
@@ -73,7 +73,7 @@ public partial class ServerGame : Node
         }
         var instance = _instances.Get(instanceId);
         if (instance == null) return;
-        _instances.AddPlayer(instance, peer, pending.Name);
+        _instances.AddPlayer(instance, peer, pending.Name, pending.Color);
     }
 
     private void OnPeerDisconnected(long peer)

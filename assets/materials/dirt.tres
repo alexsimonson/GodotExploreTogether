@@ -1,0 +1,9 @@
+[gd_resource type="StandardMaterial3D" format=3]
+
+[ext_resource type="Texture2D" path="res://assets/textures/dungeon/grass_rock/Dirt_Texture.png" id="1_albedo"]
+
+[resource]
+resource_name = "dirt"
+albedo_texture = ExtResource("1_albedo")
+metallic = 0.0
+roughness = 0.5

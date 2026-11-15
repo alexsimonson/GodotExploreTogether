@@ -8,7 +8,7 @@ See `E:\claude\CLAUDE.md` for the environment setup (the .NET 10 SDK on E:, neve
 - `core/`: `ExploreTogether.Core`, plain C# with **no Godot references** (maze generation, rules, persistence). Unit-tested.
 - `tests/`: xUnit tests for `core/`.
 - `scripts/`: Godot-side C# (`Core`, `Net`, `Server`, `Client`, `Dungeon`, `Player`, `Items`, `Persistence`, `UI`).
-- `scenes/`, `assets/`: Godot scenes and imported assets.
+- `scenes/`, `assets/`: Godot scenes and imported assets. **Only use art from the original `Resources/Prefabs/Dungeon` folder** (made by a friend); see `assets/README.md`.
 - `core/` and `tests/` contain `.gdignore` so Godot doesn't scan them. The Godot csproj excludes them from compilation and references Core as a project.
 
 ## Commands (with the env from E:\claude\CLAUDE.md)

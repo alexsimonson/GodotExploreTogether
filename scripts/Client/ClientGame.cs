@@ -15,6 +15,8 @@ public partial class ClientGame : Node
     private NetSession _session = null!;
     private ConnectMenu _menu = null!;
     private string _displayName = "";
+    private Color _color;
+    private Label _debugLabel = null!;
     private int? _currentInstanceId;
 
     public override void _Ready()
@@ -33,13 +35,37 @@ public partial class ClientGame : Node
         _session.EnterInstanceReceived += OnEnterInstance;
         _session.JoinRejectedReceived += reason => ResetToMenu($"Join rejected: {reason}");
 
+        var hud = new CanvasLayer { Name = "DebugHud" };
+        AddChild(hud);
+        _debugLabel = new Label { Position = new Vector2(10, 8), Visible = false };
+        _debugLabel.AddThemeColorOverride("font_outline_color", Colors.Black);
+        _debugLabel.AddThemeConstantOverride("outline_size", 6);
+        hud.AddChild(_debugLabel);
+
         if (CmdArgs.Has("connect"))
-            CallDeferred(MethodName.Connect, CmdArgs.Get("name", "Player"), CmdArgs.Get("connect", "127.0.0.1"));
+            CallDeferred(MethodName.Connect, CmdArgs.Get("name", "Player"),
+                PlayerLook.ParseColor(CmdArgs.Get("color"), PlayerLook.DefaultColor), CmdArgs.Get("connect", "127.0.0.1"));
     }
 
-    private void Connect(string displayName, string address)
+    public override void _UnhandledInput(InputEvent @event)
+    {
+        if (@event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.F1 } && _currentInstanceId != null)
+        {
+            MaterialDebug.Toggle(_main.Instances);
+            UpdateDebugLabel();
+        }
+    }
+
+    private void UpdateDebugLabel()
+    {
+        _debugLabel.Visible = _currentInstanceId != null;
+        _debugLabel.Text = $"Materials: {MaterialDebug.Describe(MaterialDebug.Current)}   [F1 to toggle]";
+    }
+
+    private void Connect(string displayName, Color color, string address)
     {
         _displayName = displayName;
+        _color = color;
         var (host, port) = ParseAddress(address);
 
         var peer = new ENetMultiplayerPeer();
@@ -58,7 +84,7 @@ public partial class ClientGame : Node
     {
         GD.Print($"[client] connected as peer {Multiplayer.GetUniqueId()}");
         _menu.SetBusy(true, "Joining...");
-        _session.SendJoinRequest(_displayName);
+        _session.SendJoinRequest(_displayName, _color);
     }
 
     private void OnEnterInstance(int instanceId, string kind)
@@ -66,6 +92,8 @@ public partial class ClientGame : Node
         ClearInstances();
         InstanceFactory.Build(_main.Instances, instanceId, kind, isServer: false);
         _currentInstanceId = instanceId;
+        MaterialDebug.Apply(_main.Instances);
+        UpdateDebugLabel();
         _menu.Visible = false;
         GD.Print($"[client] entered instance {instanceId} ({kind})");
         _session.SendInstanceReady(instanceId);
@@ -78,6 +106,7 @@ public partial class ClientGame : Node
         Multiplayer.MultiplayerPeer?.Close();
         Multiplayer.MultiplayerPeer = new OfflineMultiplayerPeer();
         Input.MouseMode = Input.MouseModeEnum.Visible;
+        UpdateDebugLabel();
         _menu.Visible = true;
         _menu.SetBusy(false, status);
     }

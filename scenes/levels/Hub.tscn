@@ -1,8 +1,13 @@
 [gd_scene format=3]
 
-[ext_resource type="Texture2D" path="res://assets/textures/Floor01.tga" id="1_floor"]
-[ext_resource type="Texture2D" path="res://assets/textures/Crate01.tga" id="2_crate"]
-[ext_resource type="Texture2D" path="res://assets/textures/Wall01.tga" id="3_wall"]
+[ext_resource type="Material" path="res://assets/materials/hub_floor.tres" id="1_floor"]
+[ext_resource type="Material" path="res://assets/materials/hub_wall.tres" id="2_wall"]
+[ext_resource type="Material" path="res://assets/materials/hub_rock_block.tres" id="3_rock_block"]
+[ext_resource type="Material" path="res://assets/materials/chess.tres" id="4_chess"]
+[ext_resource type="Material" path="res://assets/materials/rock.tres" id="5_rock"]
+[ext_resource type="Material" path="res://assets/materials/dirt.tres" id="6_dirt"]
+[ext_resource type="Material" path="res://assets/materials/rockbottom.tres" id="7_rockbottom"]
+[ext_resource type="Material" path="res://assets/materials/roof_wood.tres" id="8_roof_wood"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_sky"]
 
@@ -14,38 +19,54 @@ background_mode = 2
 sky = SubResource("Sky_sky")
 tonemap_mode = 2
 
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_floor"]
-albedo_texture = ExtResource("1_floor")
-uv1_scale = Vector3(0.5, 0.5, 0.5)
-uv1_triplanar = true
-
 [sub_resource type="PlaneMesh" id="PlaneMesh_floor"]
-material = SubResource("StandardMaterial3D_floor")
+material = ExtResource("1_floor")
 size = Vector2(40, 40)
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_floor"]
 size = Vector3(40, 1, 40)
 
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_crate"]
-albedo_texture = ExtResource("2_crate")
-uv1_triplanar = true
-
-[sub_resource type="BoxMesh" id="BoxMesh_crate"]
-material = SubResource("StandardMaterial3D_crate")
-
-[sub_resource type="BoxShape3D" id="BoxShape3D_crate"]
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_wall"]
-albedo_texture = ExtResource("3_wall")
-uv1_scale = Vector3(0.5, 0.5, 0.5)
-uv1_triplanar = true
-
-[sub_resource type="BoxMesh" id="BoxMesh_wall"]
-material = SubResource("StandardMaterial3D_wall")
-size = Vector3(40, 3, 1)
+[sub_resource type="QuadMesh" id="QuadMesh_wall"]
+material = ExtResource("2_wall")
+size = Vector2(40, 4)
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_wall"]
-size = Vector3(40, 3, 1)
+size = Vector3(40, 4, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_rock_block"]
+material = ExtResource("3_rock_block")
+size = Vector3(1.5, 1.5, 1.5)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_rock_block"]
+size = Vector3(1.5, 1.5, 1.5)
+
+[sub_resource type="QuadMesh" id="QuadMesh_chess"]
+material = ExtResource("4_chess")
+size = Vector2(4, 3)
+
+[sub_resource type="QuadMesh" id="QuadMesh_rock"]
+material = ExtResource("5_rock")
+size = Vector2(4, 3)
+
+[sub_resource type="QuadMesh" id="QuadMesh_dirt"]
+material = ExtResource("6_dirt")
+size = Vector2(4, 3)
+
+[sub_resource type="QuadMesh" id="QuadMesh_rockbottom"]
+material = ExtResource("7_rockbottom")
+size = Vector2(4, 3)
+
+[sub_resource type="QuadMesh" id="QuadMesh_roof_wood"]
+material = ExtResource("8_roof_wood")
+size = Vector2(4, 3)
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_rock_patch"]
+material = ExtResource("5_rock")
+size = Vector2(4, 4)
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_chess_patch"]
+material = ExtResource("4_chess")
+size = Vector2(4, 4)
 
 [node name="Hub" type="Node3D"]
 
@@ -66,64 +87,134 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
 shape = SubResource("BoxShape3D_floor")
 
 [node name="WallNorth" type="StaticBody3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, -20)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, -20)
 
 [node name="Mesh" type="MeshInstance3D" parent="WallNorth"]
-mesh = SubResource("BoxMesh_wall")
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.5)
+mesh = SubResource("QuadMesh_wall")
 
 [node name="Shape" type="CollisionShape3D" parent="WallNorth"]
 shape = SubResource("BoxShape3D_wall")
 
 [node name="WallSouth" type="StaticBody3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 20)
+transform = Transform3D(-1, 0, 0, 0, 1, 0, 0, 0, -1, 0, 2, 20)
 
 [node name="Mesh" type="MeshInstance3D" parent="WallSouth"]
-mesh = SubResource("BoxMesh_wall")
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.5)
+mesh = SubResource("QuadMesh_wall")
 
 [node name="Shape" type="CollisionShape3D" parent="WallSouth"]
 shape = SubResource("BoxShape3D_wall")
 
 [node name="WallEast" type="StaticBody3D" parent="."]
-transform = Transform3D(0, 0, -1, 0, 1, 0, 1, 0, 0, 20, 1.5, 0)
+transform = Transform3D(0, 0, 1, 0, 1, 0, -1, 0, 0, 20, 2, 0)
 
 [node name="Mesh" type="MeshInstance3D" parent="WallEast"]
-mesh = SubResource("BoxMesh_wall")
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.5)
+mesh = SubResource("QuadMesh_wall")
 
 [node name="Shape" type="CollisionShape3D" parent="WallEast"]
 shape = SubResource("BoxShape3D_wall")
 
 [node name="WallWest" type="StaticBody3D" parent="."]
-transform = Transform3D(0, 0, -1, 0, 1, 0, 1, 0, 0, -20, 1.5, 0)
+transform = Transform3D(0, 0, -1, 0, 1, 0, 1, 0, 0, -20, 2, 0)
 
 [node name="Mesh" type="MeshInstance3D" parent="WallWest"]
-mesh = SubResource("BoxMesh_wall")
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.5)
+mesh = SubResource("QuadMesh_wall")
 
 [node name="Shape" type="CollisionShape3D" parent="WallWest"]
 shape = SubResource("BoxShape3D_wall")
 
-[node name="Crate1" type="StaticBody3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 0.5, -4)
+[node name="RockBlock1" type="StaticBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 0.75, 4)
 
-[node name="Mesh" type="MeshInstance3D" parent="Crate1"]
-mesh = SubResource("BoxMesh_crate")
+[node name="Mesh" type="MeshInstance3D" parent="RockBlock1"]
+mesh = SubResource("BoxMesh_rock_block")
 
-[node name="Shape" type="CollisionShape3D" parent="Crate1"]
-shape = SubResource("BoxShape3D_crate")
+[node name="Shape" type="CollisionShape3D" parent="RockBlock1"]
+shape = SubResource("BoxShape3D_rock_block")
 
-[node name="Crate2" type="StaticBody3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.6, 1.5, -4.2)
+[node name="RockBlock2" type="StaticBody3D" parent="."]
+transform = Transform3D(0.9, 0, 0.436, 0, 1, 0, -0.436, 0, 0.9, 7.6, 2.25, 4.2)
 
-[node name="Mesh" type="MeshInstance3D" parent="Crate2"]
-mesh = SubResource("BoxMesh_crate")
+[node name="Mesh" type="MeshInstance3D" parent="RockBlock2"]
+mesh = SubResource("BoxMesh_rock_block")
 
-[node name="Shape" type="CollisionShape3D" parent="Crate2"]
-shape = SubResource("BoxShape3D_crate")
+[node name="Shape" type="CollisionShape3D" parent="RockBlock2"]
+shape = SubResource("BoxShape3D_rock_block")
 
-[node name="Crate3" type="StaticBody3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6, 0.5, 3)
+[node name="RockBlock3" type="StaticBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8, 0.75, 6)
 
-[node name="Mesh" type="MeshInstance3D" parent="Crate3"]
-mesh = SubResource("BoxMesh_crate")
+[node name="Mesh" type="MeshInstance3D" parent="RockBlock3"]
+mesh = SubResource("BoxMesh_rock_block")
 
-[node name="Shape" type="CollisionShape3D" parent="Crate3"]
-shape = SubResource("BoxShape3D_crate")
+[node name="Shape" type="CollisionShape3D" parent="RockBlock3"]
+shape = SubResource("BoxShape3D_rock_block")
+
+[node name="MaterialSamples" type="Node3D" parent="."]
+
+[node name="Title" type="Label3D" parent="MaterialSamples"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.8, -19.4)
+text = "Material samples  (floor = hardwood, walls = brick)  -  F1 toggles all effects on/off"
+font_size = 56
+outline_size = 12
+
+[node name="Chess" type="MeshInstance3D" parent="MaterialSamples"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -12, 2.0, -19.45)
+mesh = SubResource("QuadMesh_chess")
+
+[node name="ChessLabel" type="Label3D" parent="MaterialSamples"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -12, 0.25, -19.4)
+text = "chess"
+font_size = 48
+outline_size = 10
+
+[node name="Rock" type="MeshInstance3D" parent="MaterialSamples"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6, 2.0, -19.45)
+mesh = SubResource("QuadMesh_rock")
+
+[node name="RockLabel" type="Label3D" parent="MaterialSamples"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6, 0.25, -19.4)
+text = "rock"
+font_size = 48
+outline_size = 10
+
+[node name="Dirt" type="MeshInstance3D" parent="MaterialSamples"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.0, -19.45)
+mesh = SubResource("QuadMesh_dirt")
+
+[node name="DirtLabel" type="Label3D" parent="MaterialSamples"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.25, -19.4)
+text = "dirt"
+font_size = 48
+outline_size = 10
+
+[node name="Rockbottom" type="MeshInstance3D" parent="MaterialSamples"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 2.0, -19.45)
+mesh = SubResource("QuadMesh_rockbottom")
+
+[node name="RockbottomLabel" type="Label3D" parent="MaterialSamples"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 0.25, -19.4)
+text = "rockbottom"
+font_size = 48
+outline_size = 10
+
+[node name="RoofWood" type="MeshInstance3D" parent="MaterialSamples"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 12, 2.0, -19.45)
+mesh = SubResource("QuadMesh_roof_wood")
+
+[node name="RoofWoodLabel" type="Label3D" parent="MaterialSamples"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 12, 0.25, -19.4)
+text = "roof_wood"
+font_size = 48
+outline_size = 10
+
+[node name="RockPatch" type="MeshInstance3D" parent="MaterialSamples"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6, 0.01, -15)
+mesh = SubResource("PlaneMesh_rock_patch")
+
+[node name="ChessPatch" type="MeshInstance3D" parent="MaterialSamples"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -12, 0.01, -15)
+mesh = SubResource("PlaneMesh_chess_patch")

@@ -18,7 +18,7 @@ A rewrite of the Unity ExploreTogether project (reference copy at `E:\claude\_re
 | Persistence | SQLite on the server. Characters belong to player accounts |
 | Login | Username + password for now (hashed on the server). Steam login later |
 | Platforms | Client: Windows, Linux, macOS. Server: headless build (Windows or Linux). Web deferred |
-| Art | Reuse the old textures/models for now |
+| Art | Only the original dungeon art in `_reference/.../Resources/Prefabs/Dungeon` (see `assets/README.md`) |
 | Disk | Everything on E:. NuGet cache redirected to E: |
 
 ## Architecture

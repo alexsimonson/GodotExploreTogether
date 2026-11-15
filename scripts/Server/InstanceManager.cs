@@ -47,13 +47,14 @@ public sealed class InstanceManager
 
     public ServerInstance? Get(int id) => _instances.GetValueOrDefault(id);
 
-    public void AddPlayer(ServerInstance instance, long peer, string displayName)
+    public void AddPlayer(ServerInstance instance, long peer, string displayName, Color color)
     {
         RemovePeer(peer);
 
         var player = _playerScene.Instantiate<PlayerCharacter>();
         player.Name = peer.ToString();
         player.DisplayName = displayName;
+        player.PlayerColor = color;
         var spawn = SpawnPoint(instance.Players.Count);
         player.Position = spawn;
         player.NetPosition = spawn;

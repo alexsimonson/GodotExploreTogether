@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cf71u7sipmpbf"
-path="res://.godot/imported/Floor01.tga-67172ffb45f2e675d2a82a74aac3e761.ctex"
+uid="uid://bmf0vmg3yi5ai"
+path="res://.godot/imported/roof_wood.png-1222d5ddb2ec9388ea1673ed6ed798c7.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/textures/Floor01.tga"
-dest_files=["res://.godot/imported/Floor01.tga-67172ffb45f2e675d2a82a74aac3e761.ctex"]
+source_file="res://assets/textures/dungeon/roof_wood.png"
+dest_files=["res://.godot/imported/roof_wood.png-1222d5ddb2ec9388ea1673ed6ed798c7.ctex"]
 
 [params]
 

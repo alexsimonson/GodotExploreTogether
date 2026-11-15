@@ -15,6 +15,7 @@ namespace ExploreTogether;
 ///   --port N                    server listen port / default client port
 ///   --connect host[:port]       client: connect immediately (skips the menu)
 ///   --name NAME                 client: display name
+///   --color COLOR               client: body color ("#3cb043" or a named color like "green")
 ///   --dev-quit-after SECONDS    quit automatically (for scripted tests)
 ///   --dev-autowalk              client: walk in a circle without input
 ///   --dev-log                   client: periodically log remote player positions

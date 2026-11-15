@@ -4,12 +4,13 @@ using Godot;
 
 namespace ExploreTogether.UI;
 
-/// <summary>Minimal connect screen: display name + server address. Built in code.</summary>
+/// <summary>Minimal connect screen: display name, color and server address. Built in code.</summary>
 public partial class ConnectMenu : CanvasLayer
 {
-    public event Action<string, string>? ConnectRequested; // name, address
+    public event Action<string, Color, string>? ConnectRequested; // name, color, address
 
     private LineEdit _name = null!;
+    private ColorPickerButton _color = null!;
     private LineEdit _address = null!;
     private Button _connect = null!;
     private Label _status = null!;
@@ -36,6 +37,14 @@ public partial class ConnectMenu : CanvasLayer
         box.AddChild(new Label { Text = "Name" });
         _name = new LineEdit { Text = CmdArgs.Get("name", "Player"), MaxLength = 24 };
         box.AddChild(_name);
+        box.AddChild(new Label { Text = "Color" });
+        _color = new ColorPickerButton
+        {
+            Color = PlayerLook.ParseColor(CmdArgs.Get("color"), PlayerLook.DefaultColor),
+            EditAlpha = false,
+            CustomMinimumSize = new Vector2(0, 32),
+        };
+        box.AddChild(_color);
         box.AddChild(new Label { Text = "Server address" });
         _address = new LineEdit { Text = $"127.0.0.1:{CmdArgs.GetInt("port", GameInfo.DefaultPort)}" };
         box.AddChild(_address);
@@ -49,7 +58,7 @@ public partial class ConnectMenu : CanvasLayer
         _name.TextSubmitted += _ => Submit();
     }
 
-    private void Submit() => ConnectRequested?.Invoke(_name.Text, _address.Text);
+    private void Submit() => ConnectRequested?.Invoke(_name.Text, _color.Color, _address.Text);
 
     public void SetBusy(bool busy, string status)
     {

@@ -28,6 +28,17 @@ for /L %%i in (1,1,%COUNT%) do (
 exit /b 0
 
 :client
+rem Test presets for the first clients; later ones get a generic name and the default color.
+set "NAME=Player%1"
+set "COLOR="
+if "%1"=="1" (set "NAME=Kermit" & set "COLOR=#3cb043")
+if "%1"=="2" (set "NAME=Blueberry" & set "COLOR=#4f86f7")
+if "%1"=="3" (set "NAME=Tangerine" & set "COLOR=#f28500")
+if "%1"=="4" (set "NAME=Grape" & set "COLOR=#6f2da8")
 set /a POSX=(%1-1)*970
-start "" "%GODOT%" --path "%PROJECT%" --resolution 960x540 --position %POSX%,60 -- --connect 127.0.0.1 --name Player%1
+if defined COLOR (
+  start "" "%GODOT%" --path "%PROJECT%" --resolution 960x540 --position %POSX%,60 -- --connect 127.0.0.1 --name %NAME% --color %COLOR%
+) else (
+  start "" "%GODOT%" --path "%PROJECT%" --resolution 960x540 --position %POSX%,60 -- --connect 127.0.0.1 --name %NAME%
+)
 exit /b 0

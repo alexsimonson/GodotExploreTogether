@@ -1,0 +1,13 @@
+[gd_resource type="StandardMaterial3D" format=3]
+
+[ext_resource type="Texture2D" path="res://assets/textures/dungeon/chess/chess.png" id="1_albedo"]
+[ext_resource type="Texture2D" path="res://assets/textures/dungeon/chess/checkered_normal.png" id="2_normal"]
+
+[resource]
+resource_name = "chess"
+albedo_texture = ExtResource("1_albedo")
+metallic = 1.0
+roughness = 0.7
+normal_enabled = true
+normal_scale = 0.5
+normal_texture = ExtResource("2_normal")

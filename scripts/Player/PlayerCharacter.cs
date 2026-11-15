@@ -18,6 +18,7 @@ public partial class PlayerCharacter : CharacterBody3D
     [Export] public Vector3 NetPosition { get; set; }
     [Export] public float NetYaw { get; set; }
     [Export] public string DisplayName { get; set; } = "";
+    [Export] public Color PlayerColor { get; set; } = PlayerLook.DefaultColor;
 
     private const float WalkSpeed = 5f;
     private const float SprintSpeed = 8f;
@@ -48,7 +49,10 @@ public partial class PlayerCharacter : CharacterBody3D
 
         Position = NetPosition;
         Rotation = new Vector3(0, NetYaw, 0);
-        GetNode<Label3D>("NameTag").Text = DisplayName;
+        var tag = GetNode<Label3D>("NameTag");
+        tag.Text = DisplayName;
+        tag.Modulate = PlayerColor.Lightened(0.35f);
+        GetNode<MeshInstance3D>("Body").MaterialOverride = new StandardMaterial3D { AlbedoColor = PlayerColor, Roughness = 0.6f };
 
         if (IsLocal)
         {
@@ -64,7 +68,7 @@ public partial class PlayerCharacter : CharacterBody3D
         SetProcessUnhandledInput(IsLocal);
 
         if (!Main.IsServer)
-            GD.Print($"[client] {(IsLocal ? "local" : "remote")} player {Name} ('{DisplayName}') spawned at {NetPosition}");
+            GD.Print($"[client] {(IsLocal ? "local" : "remote")} player {Name} ('{DisplayName}', #{PlayerColor.ToHtml(false)}) spawned at {NetPosition}");
     }
 
     public override void _UnhandledInput(InputEvent @event)

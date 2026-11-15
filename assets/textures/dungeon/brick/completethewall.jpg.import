@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://c583drnf42jaf"
-path="res://.godot/imported/Crate01.tga-a00cac50c39a2d7fcb9afa8f0b99b67b.ctex"
+uid="uid://bouc8ij3cd3y"
+path="res://.godot/imported/completethewall.jpg-b2c99a8887cc4bffb89f2105be64c783.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/textures/Crate01.tga"
-dest_files=["res://.godot/imported/Crate01.tga-a00cac50c39a2d7fcb9afa8f0b99b67b.ctex"]
+source_file="res://assets/textures/dungeon/brick/completethewall.jpg"
+dest_files=["res://.godot/imported/completethewall.jpg-b2c99a8887cc4bffb89f2105be64c783.ctex"]
 
 [params]
 
