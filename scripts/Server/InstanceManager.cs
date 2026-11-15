@@ -47,7 +47,12 @@ public sealed class InstanceManager
 
     public ServerInstance? Get(int id) => _instances.GetValueOrDefault(id);
 
-    public void AddPlayer(ServerInstance instance, long peer, string displayName, Color color)
+    /// <summary>
+    /// Spawns a player for the peer in the instance. A saved position (e.g. the character's
+    /// last hub spot) is used if given and sane; otherwise a default spawn point.
+    /// </summary>
+    public void AddPlayer(ServerInstance instance, long peer, string displayName, Color color,
+        Vector3? savedPosition = null, float savedYaw = 0f)
     {
         RemovePeer(peer);
 
@@ -55,9 +60,11 @@ public sealed class InstanceManager
         player.Name = peer.ToString();
         player.DisplayName = displayName;
         player.PlayerColor = color;
-        var spawn = SpawnPoint(instance.Players.Count);
+        var useSaved = savedPosition is { } sp && sp.Y > -10f && sp.IsFinite();
+        var spawn = useSaved ? savedPosition!.Value : SpawnPoint(instance.Players.Count);
         player.Position = spawn;
         player.NetPosition = spawn;
+        player.NetYaw = useSaved ? savedYaw : 0f;
         instance.Nodes.Players.AddChild(player, forceReadableName: true);
 
         // Visibility (the scene sets public_visibility = false):
@@ -74,6 +81,12 @@ public sealed class InstanceManager
         GD.Print($"[server] peer {peer} ('{displayName}') entered instance {instance.Id}; " +
                  $"{instance.Players.Count} player(s) there");
     }
+
+    /// <summary>The instance and player node for a peer, if the peer is currently spawned somewhere.</summary>
+    public (ServerInstance Instance, PlayerCharacter Player)? FindPlayer(long peer) =>
+        _instanceByPeer.TryGetValue(peer, out var instance) && instance.Players.TryGetValue(peer, out var player)
+            ? (instance, player)
+            : null;
 
     public void RemovePeer(long peer)
     {

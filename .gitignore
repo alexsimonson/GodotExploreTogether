@@ -17,3 +17,6 @@ obj/
 *.db-wal
 *.db-shm
 /builds/
+
+# Server data (database) in dev runs
+.localdata/

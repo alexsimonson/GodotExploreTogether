@@ -13,9 +13,12 @@ namespace ExploreTogether;
 /// User args (after "--"):
 ///   --server                    run as dedicated server
 ///   --port N                    server listen port / default client port
-///   --connect host[:port]       client: connect immediately (skips the menu)
-///   --name NAME                 client: display name
-///   --color COLOR               client: body color ("#3cb043" or a named color like "green")
+///   --db PATH                   server: SQLite database file (default: &lt;project&gt;/.localdata/server.db)
+///   --connect host[:port]       client: server address for the login screen / auto-login
+///   --user NAME                 client: dev auto-login as NAME (registers the account if missing)
+///   --password P                client: password for auto-login (default "devpass")
+///   --character NAME            client: character to auto-play, created if missing (default: the user name)
+///   --color COLOR               client: color for an auto-created character ("#3cb043" or "green")
 ///   --dev-quit-after SECONDS    quit automatically (for scripted tests)
 ///   --dev-autowalk              client: walk in a circle without input
 ///   --dev-log                   client: periodically log remote player positions

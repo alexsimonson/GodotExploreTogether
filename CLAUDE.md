@@ -14,7 +14,9 @@ See `E:\claude\CLAUDE.md` for the environment setup (the .NET 10 SDK on E:, neve
 ## Commands (with the env from E:\claude\CLAUDE.md)
 - Build: `dotnet build ExploreTogether.sln`
 - Test: `dotnet test ExploreTogether.sln`
-- Play locally: `tools\dev-run.cmd [clients]` (builds, then opens a server console and client windows)
+- Play locally: `tools\dev-run.cmd [clients]` (closes any previous session, builds, then opens a server console and client windows that auto-log in as Kermit, Blueberry, ...)
+- Close a dev session: `tools\dev-stop.cmd`
+- Dev database: `.localdata/server.db` (git-ignored). Use `--db <path>` on the server for a throwaway test database.
 - Run the server headless: `<godot>_console.exe --headless --path . -- --server`
 - Run a client: `<godot>_console.exe --path . -- --connect 127.0.0.1 --name Alice`
 - Scripted network test: run a server plus headless clients with `--dev-quit-after N`, `--dev-autowalk`, `--dev-log` and read their output (see Main.cs for all args).

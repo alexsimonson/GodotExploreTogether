@@ -82,9 +82,18 @@ Each phase ends with something runnable.
 - ✅ **Done:** verified with a headless server and two headless clients (`--dev-autowalk`, `--dev-log`). `tools/dev-run.cmd` opens a server plus client windows for manual play.
 
 ### Phase 2 — Accounts and characters
-- SQLite, migrations, register/login, create/select character.
-- Character position and basic stats saved and restored.
-- **Done when:** you can quit, log back in and get the same character back.
+- ✅ SQLite (`Microsoft.Data.Sqlite` 10.x) in `core/Persistence`, with versioned migrations (`PRAGMA user_version`). Steps can be SQL or C#.
+  - Before upgrading an existing database, the server backs it up (`server.db.v{N}.{time}.bak`, newest 5 kept).
+  - The server refuses to open a database newer than its code.
+  - A failing step leaves the file at the last good version.
+  - `TempDatabase` in the tests builds an old-version database with sample rows, to prove each upgrade keeps data.
+  - Data policy: shipped steps may still be edited until real player data matters; after that, only add new steps.
+- ✅ Register/login with PBKDF2 password hashes (computed off the game thread). One login per account at a time.
+- ✅ Character select: up to 5 characters per account, names unique server-wide, color chosen at creation.
+- ✅ Hub position and play time saved on disconnect, autosaved every 15 s and at shutdown, and restored on login.
+- ✅ Dev auto-login (`--user/--password/--character/--color`); `dev-run.cmd` uses it. `dev-stop.cmd` closes a dev session.
+- ✅ **Done:** verified with two headless sessions against one database (the character comes back at its saved spot), plus wrong-password and double-login rejection. 30 unit tests.
+- ⚠️ **Before hosting publicly:** ENet traffic is unencrypted, so passwords cross the network in plain text. Enable ENet's DTLS (or move login to Steam auth) first.
 
 ### Phase 3 — Instances and dungeons
 - `InstanceManager` with separate worlds and per-instance network filtering.
