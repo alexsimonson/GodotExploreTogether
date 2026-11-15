@@ -1,0 +1,19 @@
+# Godot
+.godot/
+/android/
+export_presets.cfg.local
+*.translation
+
+# .NET
+bin/
+obj/
+*.user
+.vs/
+.idea/
+
+# Local data
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+/builds/
