@@ -74,10 +74,12 @@ Each phase ends with something runnable.
 - ✅ **Done:** the project runs as server (`-- --server`) and as client on Godot 4.7.2 / .NET 10.0.15, and `dotnet test` passes.
 
 ### Phase 1 — Server and two clients
-- `--server` startup path with headless mode. Client main menu: server address + Connect.
-- One hard-coded hub instance with a floor. The server spawns a player for each connecting client. First-person controller (port of `PlayerMovement`/`PlayerLook`); each player's camera is active only on their own machine.
-- Clean disconnects in both directions.
-- **Done when:** one server and two clients on this PC see each other walk around.
+- ✅ `--server` startup path with headless mode. Client connect menu: name + server address.
+- ✅ Hub instance (floor, walls, crates using the old textures), already built through the instance system: a `SubViewport` with its own world on the server, and visibility per instance.
+- ✅ Join handshake: `RequestJoin` → `EnterInstance` → client builds the instance → `InstanceReady` → server spawns the player.
+- ✅ First-person controller (walk, sprint, jump, mouse look). Clients send their own transform; the server relays it to the instance.
+- ✅ Clean disconnects in both directions.
+- ✅ **Done:** verified with a headless server and two headless clients (`--dev-autowalk`, `--dev-log`). `tools/dev-run.cmd` opens a server plus client windows for manual play.
 
 ### Phase 2 — Accounts and characters
 - SQLite, migrations, register/login, create/select character.

@@ -1,6 +1,12 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene format=3]
 
 [ext_resource type="Script" path="res://scripts/Core/Main.cs" id="1_main"]
+[ext_resource type="Script" path="res://scripts/Net/NetSession.cs" id="2_session"]
 
 [node name="Main" type="Node"]
 script = ExtResource("1_main")
+
+[node name="Session" type="Node" parent="."]
+script = ExtResource("2_session")
+
+[node name="Instances" type="Node" parent="."]
