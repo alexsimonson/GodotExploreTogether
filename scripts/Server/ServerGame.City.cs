@@ -17,7 +17,7 @@ namespace ExploreTogether.Server;
 ///
 /// Server args: --city-size N (tiles per side, default 5), --city-seed S (fixed seed, default random),
 /// --city-loops P (extra streets in percent, default 15), --city-favor NAME (dev: place that building design wherever it fits),
-/// --city-people N (residents, default about 1.6 per tile), --city-start-hour H (default 8), --city-day-minutes M
+/// --city-people N (residents, default about 1.6 per tile), --city-start-hour H (default 0, midnight), --city-day-minutes M
 /// (real minutes per game day, default 48), --dev-log-npcs (log what the residents are doing every 5 s).
 /// </summary>
 public partial class ServerGame
@@ -27,7 +27,7 @@ public partial class ServerGame
     private static readonly int? CitySeed = CmdArgs.Has("city-seed") ? CmdArgs.GetInt("city-seed", 0) : null;
     private static readonly string? CityFavor = CmdArgs.Has("city-favor") ? CmdArgs.Get("city-favor") : null;
     private static readonly int? CityPeople = CmdArgs.Has("city-people") ? CmdArgs.GetInt("city-people", 0) : null;
-    private static readonly float CityStartHour = CmdArgs.GetFloat("city-start-hour", 8);
+    private static readonly float CityStartHour = CmdArgs.GetFloat("city-start-hour", 0);
     private static readonly float CityDayMinutes = CmdArgs.GetFloat("city-day-minutes", 48);
 
     private static readonly int DevKillNpcs = CmdArgs.GetInt("dev-kill-npcs", 0);

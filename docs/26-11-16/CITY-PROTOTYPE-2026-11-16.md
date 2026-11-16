@@ -152,7 +152,7 @@ Each one ends with something runnable and a screenshot. Trespass detection is pu
      - Everyone shifts their times by up to ±45 minutes.
    - Server: `CitySimulation` (one per city, brains at 20 Hz) drives the replicated `CityNpc` nodes. They are placeholder bodies colored by role: guards in blue with helmets, workers in browns with caps, civilians in varied colors. Each has a name and activity tag.
    - The clock is sent to clients on arrival and every 5 s. The HUD shows "City time 09:42". Sun, sky and ambient light follow the clock, with dark nights.
-   - Server args: `--city-people N`, `--city-start-hour H` (default 8), `--city-day-minutes M` (default 48, so one game hour is 2 real minutes), `--dev-log-npcs`.
+   - Server args: `--city-people N`, `--city-start-hour H` (default 0, midnight), `--city-day-minutes M` (default 48, so one game hour is 2 real minutes), `--dev-log-npcs`.
    - Client: `--dev-overview near`. `--dev-check-city` also reports the residents in view.
    - Tests:
      - Over a simulated day, nobody is ever on a parcel they may not be on.
