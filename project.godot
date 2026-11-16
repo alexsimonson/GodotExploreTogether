@@ -27,3 +27,8 @@ file_logging/enable_file_logging.pc=false
 3d_physics/layer_1="world"
 3d_physics/layer_2="players"
 3d_physics/layer_3="interactables"
+
+[navigation]
+
+3d/default_cell_size=0.2
+3d/default_cell_height=0.2

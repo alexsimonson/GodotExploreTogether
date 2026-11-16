@@ -89,6 +89,43 @@ public static class DungeonBuilder
         return exit;
     }
 
+    /// <summary>
+    /// Server: bakes the navigation mesh for enemies from the maze's collision geometry (the original
+    /// used NavMeshSurface per piece). Only the floor level is kept, so the tops of the ceiling slabs
+    /// don't become walkable. Each instance has its own world, so its own navigation map.
+    /// </summary>
+    public static void BakeNavigation(Node level, MazeLayout layout)
+    {
+        // Geometry is parsed in the Pieces node's own space (floor surface at y = FloorSurfaceY), so the
+        // region lives under Pieces too. Bake only the maze's area, from the floor slab to below the ceiling.
+        var min = new Vector3(-Cell / 2 - 1, FloorSurfaceY - 1f, -Cell / 2 - 1);
+        var size = new Vector3(layout.Width * Cell + 2, 2.5f, layout.Height * Cell + 2);
+        var pieces = level.GetNode<Node3D>("Pieces");
+        var navMesh = new NavigationMesh
+        {
+            AgentRadius = 0.4f,
+            AgentHeight = 1.8f,
+            AgentMaxClimb = 0.4f,
+            CellSize = 0.2f,   // radius, height and climb are whole multiples of the cell size
+            CellHeight = 0.2f, // (must match navigation/3d/default_cell_size/height in project.godot)
+            GeometryParsedGeometryType = NavigationMesh.ParsedGeometryType.StaticColliders,
+            GeometryCollisionMask = 1,
+            FilterBakingAabb = new Aabb(min, size),
+        };
+        var source = new NavigationMeshSourceGeometryData3D();
+        NavigationServer3D.ParseSourceGeometryData(navMesh, source, pieces);
+        NavigationServer3D.BakeFromSourceGeometryData(navMesh, source);
+        var region = new NavigationRegion3D { Name = "Navigation", NavigationMesh = navMesh };
+        pieces.AddChild(region);
+    }
+
+    /// <summary>Where an enemy starts in a node (cell center, on the floor).</summary>
+    public static Vector3 EnemyPosition(MazeLayout layout, int nodeIndex, float offsetX = 0)
+    {
+        var n = layout.Nodes[nodeIndex].mazePosition;
+        return new Vector3(n.X * Cell + offsetX, n.Y + 0.1f, n.Z * Cell);
+    }
+
     /// <summary>World position of an item placed in a node (floor surface, plus a little height).</summary>
     public static Vector3 ItemPosition(MazeLayout layout, Core.Dungeon.ItemPlacement p)
     {

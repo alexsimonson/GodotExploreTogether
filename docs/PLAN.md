@@ -125,9 +125,28 @@ Each phase ends with something runnable.
 - ✅ **Done:** two groups at once, headless. In one, a player opened the exit and escaped, a mid-run joiner escaped too, and a third left early, recorded as "completed, 2/3 escaped". In the other, the pass was dropped when its holder left, and the run was recorded as "abandoned". Inventory survives a re-login without the pass. 76 unit tests.
 
 ### Phase 5 — Enemies and combat
-- Port `NPC`/`GenericNPC`/`VisionSystem` as server-run AI on each instance's navigation map.
-- Health and damage handled by the server. Melee first, then guns and magic.
-- Death and respawn rules (hardcore death returns as an option).
+- ✅ Enemies: `GenericNPC`'s state machine ported to `core/Combat/EnemyBrain`, unit-tested. It runs on the server (`EnemyCharacter`) and is replicated per instance.
+  - Prefab values: 100 health; chases at 5 within 10 m; attacks within 2 m, a 2 s attack dealing 20 at 1 s if the target is still within 2 m. Freeze and knockback.
+  - 5 per dungeon, placed like `FillMazeWithItems` (nodes in [10, count − 10)).
+  - Placeholder look (the user chose this; the original model wasn't used).
+- ✅ Navigation: baked per dungeon on the server from the maze colliders (about 40 ms for 5×5). Enemies use `NavigationAgent3D`.
+- ✅ Vision: same rule as `VisionSystem` (90°×45° view, 10 m, eye at 1.7 m, walls block), but checked directly per player instead of with 1,500 rays per frame.
+- ✅ Player combat, decided by the server (`ServerGame.Combat.cs`), from the original numbers:
+  - Melee/Tool: 4 m, 20 damage + knockback. Tool also uses interactables, as in the original.
+  - Gun: 100 damage, magazine 10 + 30 reserve, R to reload. Ammo is per player; the original stored it on the shared item asset.
+  - Magic: hold right-click to aim, left-click to place a 5 s area within 10 m that rolls 0–49 damage once per enemy entering. Frost freezes for 5 s; Blood heals the caster 10 per hit.
+  - Added short cooldowns (the original had none).
+- ✅ Health: 100, replicated, restored in the hub. HUD: health, weapon + ammo, crosshair, red flash when hurt.
+- ✅ Death:
+  - Non-hardcore: back to the hub keeping items (the run doesn't count you as escaped; the Dungeon Pass drops).
+  - Hardcore: a checkbox at character creation (database v4). Death deletes the character with its inventory and gear, and returns the player to character select.
+- ✅ Players stay out of enemies horizontally (same scheme as player-vs-player). Enemies don't collide with each other (avoids corridor deadlocks).
+- ✅ **Done:** five dungeons at once, headless:
+  - Kills with sword, pistol and both wands (Frost froze, Blood healed).
+  - A non-hardcore death returned to the hub with items intact.
+  - A hardcore death deleted the character.
+  - A screenshot confirmed the look. 102 unit tests.
+- Not ported: the original's enemy model and animations (placeholder for now), the held-weapon models, trees/resources, the Wave Survival mode.
 
 ### Later (not ordered)
 - Steam login/friends/invites.

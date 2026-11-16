@@ -22,6 +22,8 @@ public partial class PlayerCharacter : CharacterBody3D
     [Export] public float NetYaw { get; set; }
     [Export] public string DisplayName { get; set; } = "";
     [Export] public Color PlayerColor { get; set; } = PlayerLook.DefaultColor;
+    /// <summary>Server-owned health, replicated for the HUD (own player) and others' view.</summary>
+    [Export] public int NetHealth { get; set; } = 100;
 
     private const float WalkSpeed = 5f;
     private const float SprintSpeed = 8f;
@@ -145,7 +147,7 @@ public partial class PlayerCharacter : CharacterBody3D
             input = new Vector2(0, -1);
             RotateY(0.8f * delta);
         }
-        if (DevChase && OtherPlayers().FirstOrDefault() is { } target)
+        if (DevChase && SolidNeighbours().OfType<PlayerCharacter>().FirstOrDefault() is { } target)
         {
             // Walk straight at another player (tests player-vs-player collision).
             LookAt(new Vector3(target.Position.X, Position.Y, target.Position.Z));
@@ -194,18 +196,25 @@ public partial class PlayerCharacter : CharacterBody3D
 
     private static readonly bool DevChase = CmdArgs.Has("dev-chase");
 
-    private IEnumerable<PlayerCharacter> OtherPlayers() =>
-        GetParent().GetChildren().OfType<PlayerCharacter>().Where(p => p != this);
+    /// <summary>Other players, and living enemies, in this instance: the bodies we keep out of horizontally.</summary>
+    private IEnumerable<CharacterBody3D> SolidNeighbours()
+    {
+        foreach (var p in GetParent().GetChildren().OfType<PlayerCharacter>())
+            if (p != this) yield return p;
+        if (GetParent().GetParent()?.GetNodeOrNull("Enemies") is { } enemies)
+            foreach (var e in enemies.GetChildren().OfType<Enemies.EnemyCharacter>())
+                if (!e.IsDead) yield return e;
+    }
 
     /// <summary>Horizontal offset from another player and whether we overlap them vertically.</summary>
-    private (Vector2 Offset, bool SameLevel) Relative(PlayerCharacter other) =>
+    private (Vector2 Offset, bool SameLevel) Relative(CharacterBody3D other) =>
         (new Vector2(Position.X - other.Position.X, Position.Z - other.Position.Z),
          Mathf.Abs(Position.Y - other.Position.Y) < BodyHeight);
 
     /// <summary>Removes the part of our horizontal velocity that would take us into another player.</summary>
     private Vector3 BlockByOtherPlayers(Vector3 velocity)
     {
-        foreach (var other in OtherPlayers())
+        foreach (var other in SolidNeighbours())
         {
             var (offset, sameLevel) = Relative(other);
             var dist = offset.Length();
@@ -226,14 +235,16 @@ public partial class PlayerCharacter : CharacterBody3D
     /// <summary>If we overlap another player, slide ourselves sideways out (respecting walls).</summary>
     private void SeparateFromOtherPlayers()
     {
-        foreach (var other in OtherPlayers())
+        foreach (var other in SolidNeighbours())
         {
             var (offset, sameLevel) = Relative(other);
             var dist = offset.Length();
             if (!sameLevel || dist >= PersonalSpace) continue;
-            // Exactly on top of each other: split along X, decided by peer id so the two clients agree.
-            var away = dist > 0.0001f ? offset / dist : new Vector2(OwnerPeerId > other.OwnerPeerId ? 1 : -1, 0);
-            var push = (PersonalSpace - dist) * 0.5f + 0.01f; // the other client moves its player the other half
+            // Exactly on top: split along X; between players the peer ids decide, so both clients agree.
+            var otherId = other is PlayerCharacter op ? op.OwnerPeerId : 0;
+            var away = dist > 0.0001f ? offset / dist : new Vector2(OwnerPeerId > otherId ? 1 : -1, 0);
+            // Another player moves itself the other half; an enemy doesn't yield, so take the whole gap.
+            var push = (other is PlayerCharacter ? (PersonalSpace - dist) * 0.5f : PersonalSpace - dist) + 0.01f;
             MoveAndCollide(new Vector3(away.X * push, 0, away.Y * push));
         }
     }

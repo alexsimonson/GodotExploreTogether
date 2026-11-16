@@ -97,6 +97,10 @@ public static class Migrations
                 PRIMARY KEY (character_id, slot)
             );
             """),
+
+        new(4, "hardcore characters", Sql: """
+            ALTER TABLE characters ADD COLUMN hardcore INTEGER NOT NULL DEFAULT 0;
+            """),
     ];
 
     public static int LatestVersion => All.Count;

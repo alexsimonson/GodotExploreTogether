@@ -10,12 +10,13 @@ namespace ExploreTogether.UI;
 public partial class CharacterMenu : CanvasLayer
 {
     public event Action<long>? PlayRequested;          // character id
-    public event Action<string, Color>? CreateRequested; // name, color
+    public event Action<string, Color, bool>? CreateRequested; // name, color, hardcore
     public event Action? LogoutRequested;
 
     private VBoxContainer _list = null!;
     private LineEdit _newName = null!;
     private ColorPickerButton _newColor = null!;
+    private CheckBox _hardcore = null!;
     private Button _create = null!;
     private Label _status = null!;
     private readonly List<Button> _playButtons = new();
@@ -52,6 +53,10 @@ public partial class CharacterMenu : CanvasLayer
         createRow.AddChild(_create);
         box.AddChild(createRow);
 
+        // Port of the original HardcoreToggle: dying deletes the character for good.
+        _hardcore = new CheckBox { Text = "Hardcore (death is permanent)" };
+        box.AddChild(_hardcore);
+
         _status = UiKit.Status();
         box.AddChild(_status);
 
@@ -78,7 +83,7 @@ public partial class CharacterMenu : CanvasLayer
             row.AddChild(new ColorRect { Color = c.Color, CustomMinimumSize = new Vector2(20, 20) });
             row.AddChild(new Label
             {
-                Text = $"{c.Name}   ({UiKit.FormatPlayTime(c.PlayTimeSeconds)} played)",
+                Text = $"{c.Name}{(c.Hardcore ? "  [Hardcore]" : "")}   ({UiKit.FormatPlayTime(c.PlayTimeSeconds)} played)",
                 SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             });
             var play = new Button { Text = "Play" };
@@ -100,7 +105,8 @@ public partial class CharacterMenu : CanvasLayer
             SetStatus(error);
             return;
         }
-        CreateRequested?.Invoke(name, _newColor.Color);
+        CreateRequested?.Invoke(name, _newColor.Color, _hardcore.ButtonPressed);
+        _hardcore.ButtonPressed = false;
         _newName.Text = "";
     }
 

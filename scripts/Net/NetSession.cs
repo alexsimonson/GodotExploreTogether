@@ -7,7 +7,7 @@ using GDict = Godot.Collections.Dictionary;
 namespace ExploreTogether.Net;
 
 /// <summary>A character as shown on the character-select screen.</summary>
-public sealed record CharacterSummary(long Id, string Name, Color Color, double PlayTimeSeconds);
+public sealed record CharacterSummary(long Id, string Name, Color Color, double PlayTimeSeconds, bool Hardcore = false);
 
 /// <summary>Shared state of the dungeon run the client is in.</summary>
 public sealed record DungeonStatus(bool ExitOpen, string PassHolder, string[] Escaped, int PlayersInside);
@@ -34,7 +34,7 @@ public partial class NetSession : Node
     // ---- Server-side events (a client called us). First argument is the sender's peer id. ----
     public event Action<long, string, string>? LoginRequested;          // user, password
     public event Action<long, string, string>? RegisterRequested;       // user, password
-    public event Action<long, string, Color>? CreateCharacterRequested; // name, color
+    public event Action<long, string, Color, bool>? CreateCharacterRequested; // name, color, hardcore
     public event Action<long, long>? SelectCharacterRequested;          // character id
     public event Action<long, int>? InstanceReadyReceived;              // instance id
     public event Action<long, string>? InteractRequested;               // interaction id
@@ -43,6 +43,8 @@ public partial class NetSession : Node
     public event Action<long, int, Vector3, float>? PlayerTransformReceived; // instance id, position, yaw
     public event Action<long, int, int, int, int>? MoveItemRequested;   // from container, from slot, to container, to slot
     public event Action<long, int, int>? DropItemRequested;             // container, slot
+    public event Action<long, Vector3>? AttackRequested;                // aim direction (camera forward)
+    public event Action<long>? ReloadRequested;
 
     // ---- Client-side events (the server called us) ----
     public event Action<bool, string, string>? AuthResultReceived;       // ok, code, message
@@ -53,12 +55,16 @@ public partial class NetSession : Node
     public event Action<string>? NoticeReceived;                         // short message for the HUD
     public event Action<int[], int[]>? InventoryReceived;                // inventory (slot, item id, count) triples; gear item ids (-1 = empty)
     public event Action<DungeonStatus>? DungeonStatusReceived;
+    public event Action<int, int>? AmmoReceived;                         // magazine, reserve
+    public event Action<Vector3, int, float>? MagicAreaReceived;         // position, magic style, lifetime
+    public event Action<string>? CharacterLostReceived;                  // hardcore death: back to character select
 
     // =========================================================== client -> server
 
     public void SendLogin(string user, string password) => RpcId(1, MethodName.Login, user, password);
     public void SendRegister(string user, string password) => RpcId(1, MethodName.Register, user, password);
-    public void SendCreateCharacter(string name, Color color) => RpcId(1, MethodName.CreateCharacter, name, color);
+    public void SendCreateCharacter(string name, Color color, bool hardcore) =>
+        RpcId(1, MethodName.CreateCharacter, name, color, hardcore);
     public void SendSelectCharacter(long characterId) => RpcId(1, MethodName.SelectCharacter, characterId);
     public void SendInstanceReady(int instanceId) => RpcId(1, MethodName.InstanceReady, instanceId);
     public void SendInteract(string interactionId) => RpcId(1, MethodName.Interact, interactionId);
@@ -68,6 +74,23 @@ public partial class NetSession : Node
     /// <summary>A drag-and-drop between slots (see Core.Items.SlotContainerLogic).</summary>
     public void SendMoveItem(int fromContainer, int fromSlot, int toContainer, int toSlot) =>
         RpcId(1, MethodName.MoveItem, fromContainer, fromSlot, toContainer, toSlot);
+
+    /// <summary>Left-click with a weapon: the server raycasts from the player's head along this direction.</summary>
+    public void SendAttack(Vector3 aimDirection) => RpcId(1, MethodName.Attack, aimDirection);
+
+    public void SendReload() => RpcId(1, MethodName.Reload);
+
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void Attack(Vector3 aimDirection)
+    {
+        if (Main.IsServer) AttackRequested?.Invoke(Multiplayer.GetRemoteSenderId(), aimDirection);
+    }
+
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void Reload()
+    {
+        if (Main.IsServer) ReloadRequested?.Invoke(Multiplayer.GetRemoteSenderId());
+    }
 
     /// <summary>Ctrl + right-click: drop a slot's contents into the world.</summary>
     public void SendDropItem(int container, int slot) => RpcId(1, MethodName.DropItem, container, slot);
@@ -129,9 +152,9 @@ public partial class NetSession : Node
     }
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
-    private void CreateCharacter(string name, Color color)
+    private void CreateCharacter(string name, Color color, bool hardcore)
     {
-        if (Main.IsServer) CreateCharacterRequested?.Invoke(Multiplayer.GetRemoteSenderId(), name, color);
+        if (Main.IsServer) CreateCharacterRequested?.Invoke(Multiplayer.GetRemoteSenderId(), name, color, hardcore);
     }
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
@@ -159,6 +182,13 @@ public partial class NetSession : Node
 
     public void SendNotice(long peer, string message) => RpcId(peer, MethodName.Notice, message);
 
+    public void SendAmmo(long peer, int magazine, int reserve) => RpcId(peer, MethodName.Ammo, magazine, reserve);
+
+    public void SendMagicArea(long peer, Vector3 position, int style, float lifetime) =>
+        RpcId(peer, MethodName.MagicArea, position, style, lifetime);
+
+    public void SendCharacterLost(long peer, string message) => RpcId(peer, MethodName.CharacterLost, message);
+
     /// <summary>The player's whole inventory as (slot, item id, count) triples, plus gear item ids per slot.</summary>
     public void SendInventory(long peer, int[] triples, int[] gear) => RpcId(peer, MethodName.Inventory, triples, gear);
 
@@ -181,7 +211,7 @@ public partial class NetSession : Node
     {
         var list = new GArray();
         foreach (var c in characters)
-            list.Add(new GDict { ["id"] = c.Id, ["name"] = c.Name, ["color"] = c.Color, ["play_time"] = c.PlayTimeSeconds });
+            list.Add(new GDict { ["id"] = c.Id, ["name"] = c.Name, ["color"] = c.Color, ["play_time"] = c.PlayTimeSeconds, ["hardcore"] = c.Hardcore });
         RpcId(peer, MethodName.CharacterList, list);
     }
 
@@ -197,6 +227,15 @@ public partial class NetSession : Node
 
     [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void Notice(string message) => NoticeReceived?.Invoke(message);
+
+    [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void Ammo(int magazine, int reserve) => AmmoReceived?.Invoke(magazine, reserve);
+
+    [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void MagicArea(Vector3 position, int style, float lifetime) => MagicAreaReceived?.Invoke(position, style, lifetime);
+
+    [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void CharacterLost(string message) => CharacterLostReceived?.Invoke(message);
 
     [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void Inventory(int[] triples, int[] gear) => InventoryReceived?.Invoke(triples, gear);
@@ -225,7 +264,8 @@ public partial class NetSession : Node
         foreach (var item in list)
         {
             var d = item.AsGodotDictionary();
-            result.Add(new CharacterSummary(d["id"].AsInt64(), d["name"].AsString(), d["color"].AsColor(), d["play_time"].AsDouble()));
+            result.Add(new CharacterSummary(d["id"].AsInt64(), d["name"].AsString(), d["color"].AsColor(), d["play_time"].AsDouble(),
+                d.ContainsKey("hardcore") && d["hardcore"].AsBool()));
         }
         CharacterListReceived?.Invoke(result);
     }

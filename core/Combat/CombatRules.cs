@@ -1,0 +1,120 @@
+using ExploreTogether.Core.Items;
+
+namespace ExploreTogether.Core.Combat;
+
+/// <summary>How an attack with a weapon works (port of Weapon.Stab/Shoot, Tool.Attack, Magic + AreaOfEffect).</summary>
+public sealed record WeaponProfile(
+    ItemClass Class,
+    float Range,          // how far the attack reaches (m)
+    int Damage,           // fixed damage (melee/gun); for magic the maximum of a random roll
+    bool Knockback,       // melee/tool knock the target back
+    float Cooldown);      // seconds between attacks (not in the original; see CombatRules)
+
+/// <summary>
+/// The original combat numbers, ported:
+/// - Melee (Weapon.Stab): ray 4 m from the camera, 20 damage + knockback. (Note: Stab ignored the
+///   weapon's own damage field and always dealt 20; kept.)
+/// - Tool (Tool.Attack): same as melee: 4 m, 20 damage + knockback.
+/// - Gun (Weapon.Shoot): ray with unlimited range, 100 damage; uses ammo (GunAmmo).
+/// - Magic (Magic.Attack + PlayerGhostAim + AreaOfEffect): place an area within 10 m where you aim;
+///   enemies entering it take Random.Range(0, max_damage) damage once; the area lasts 5 s.
+///   Frost freezes them for `timer` (5 s); Blood heals the caster 10 per enemy hit.
+/// Difference: attacks have a short cooldown. The original had none (one attack per click), which in
+/// multiplayer would let an auto-clicker attack every frame.
+/// </summary>
+public static class CombatRules
+{
+    public const float MeleeRange = 4f;
+    public const int MeleeDamage = 20;
+    public const int GunDamage = 100;
+    public const float GunRange = 1000f;
+    public const float MagicPlaceRange = 10f;
+    public const float MagicAreaRadius = 1.5f;
+    public const float MagicAreaLifetime = 5f;
+    public const float FrostFreezeSeconds = 5f;
+    public const int BloodHealPerHit = 10;
+    public const int MagicMaxDamage = 50;
+
+    public static WeaponProfile? ProfileFor(ItemDef? weapon) => weapon?.Class switch
+    {
+        ItemClass.Melee => new(ItemClass.Melee, MeleeRange, MeleeDamage, true, 0.5f),
+        ItemClass.Tool => new(ItemClass.Tool, MeleeRange, MeleeDamage, true, 0.5f),
+        ItemClass.Gun => new(ItemClass.Gun, GunRange, GunDamage, false, 0.25f),
+        ItemClass.Magic => new(ItemClass.Magic, MagicPlaceRange, MagicMaxDamage, false, 0.75f),
+        _ => null,
+    };
+
+    /// <summary>Port of Magic.Attack's damage roll: Random.Range(0, max_damage), i.e. 0..max-1.</summary>
+    public static int RollMagicDamage(Random random, int maxDamage = MagicMaxDamage) => random.Next(0, maxDamage);
+
+    /// <summary>Blood Wand vs Ice Wand: the original Magic.MagicStyle (asset values Blood = 0, Frost = 1).</summary>
+    public static MagicStyle MagicStyleOf(ItemDef weapon) => weapon.Id switch
+    {
+        567 => MagicStyle.Frost, // Ice Wand
+        _ => MagicStyle.Blood,   // Blood Wand (and the class default)
+    };
+}
+
+public enum MagicStyle { Blood, Frost, Fire, Earth }
+
+/// <summary>Port of the Health component: clamp at 0 and max, report death once.</summary>
+public sealed class Health(int max = 100)
+{
+    public int Max { get; } = max;
+    public int Current { get; private set; } = max;
+    public bool IsDead => Current <= 0;
+
+    /// <summary>Returns true if this damage killed (it was alive before, dead now).</summary>
+    public bool Damage(int amount)
+    {
+        if (IsDead || amount <= 0) return false;
+        Current = Math.Max(0, Current - amount);
+        return IsDead;
+    }
+
+    /// <summary>Port of AddHealthAmount: heal, capped at max. Dead stays dead.</summary>
+    public void Heal(int amount)
+    {
+        if (IsDead || amount <= 0) return;
+        Current = Math.Min(Max, Current + amount);
+    }
+
+    public void Reset() => Current = Max;
+}
+
+/// <summary>
+/// Port of Gun's ammo: a magazine (10) and a reserve (30). Firing needs a round in the magazine;
+/// reloading tops the magazine up from the reserve. In the original these numbers lived on the
+/// shared item asset (every player's pistol shared one magazine); here each player has their own.
+/// </summary>
+public sealed class GunAmmo
+{
+    public int magazineSizeMax = 10;
+    public int magazineRounds = 10;
+    public int bulletCount = 30;
+
+    public bool TryFire()
+    {
+        if (magazineRounds <= 0) return false; // "Out of ammo"
+        magazineRounds -= 1;
+        return true;
+    }
+
+    /// <summary>Returns false if there was nothing to reload.</summary>
+    public bool Reload()
+    {
+        int bulletsToFill = magazineSizeMax - magazineRounds;
+        if (bulletCount == 0 || bulletsToFill == 0) return false;
+        if (bulletCount < bulletsToFill)
+        {
+            magazineRounds += bulletCount;
+            bulletCount = 0;
+        }
+        else
+        {
+            magazineRounds = magazineSizeMax;
+            bulletCount -= bulletsToFill;
+        }
+        return true;
+    }
+}

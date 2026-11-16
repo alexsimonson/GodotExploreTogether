@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using ExploreTogether.Core.Dungeon;
 using ExploreTogether.Dungeon;
+using ExploreTogether.Enemies;
 using ExploreTogether.Items;
 using ExploreTogether.Net;
 using ExploreTogether.Player;
@@ -27,6 +28,9 @@ public sealed class ServerInstance
     /// <summary>Items lying in the instance, by node name.</summary>
     public Dictionary<string, ItemPickup> Items { get; } = new();
     public int NextItemNumber { get; set; } = 1;
+    /// <summary>Enemies in the instance (alive or corpses), by node name.</summary>
+    public Dictionary<string, EnemyCharacter> Enemies { get; } = new();
+    public int NextEnemyNumber { get; set; } = 1;
 
     // ---- Dungeon run state (unused for the hub) ----
     public long? RunId { get; set; }
@@ -36,7 +40,9 @@ public sealed class ServerInstance
 
     /// <summary>Every replicated object in the instance; each must be visible exactly to the peers inside.</summary>
     public IEnumerable<MultiplayerSynchronizer> Synchronizers =>
-        Players.Values.Select(p => p.Sync).Concat(Items.Values.Select(i => i.Sync));
+        Players.Values.Select(p => p.Sync)
+            .Concat(Items.Values.Select(i => i.Sync))
+            .Concat(Enemies.Values.Select(e => e.Sync));
 }
 
 /// <summary>
@@ -59,6 +65,13 @@ public sealed class InstanceManager
 
     public InstanceManager(Node instancesRoot) => _instancesRoot = instancesRoot;
 
+    /// <summary>An enemy's attack landed on a player: (instance, enemy, player, damage).</summary>
+    public event Action<ServerInstance, EnemyCharacter, PlayerCharacter, int>? PlayerHitByEnemy;
+    public event Action<ServerInstance, EnemyCharacter>? EnemyKilled;
+
+    /// <summary>Dev: put the enemies right next to the start instead of mid-maze (for testing fights).</summary>
+    private static readonly bool DevEnemiesNearStart = CmdArgs.Has("dev-enemies-near-start");
+
     public ServerInstance Hub { get; private set; } = null!;
 
     public IEnumerable<ServerInstance> Dungeons => _instances.Values.Where(i => i.Kind == InstanceKinds.Dungeon);
@@ -76,6 +89,18 @@ public sealed class InstanceManager
         // The original FillMazeWithItems: the Dungeon Pass plus 20 random items (seeded from the layout).
         foreach (var placement in DungeonContents.Generate(layout, seed ^ 0x5eed))
             SpawnItem(instance, placement.ItemId, DungeonBuilder.ItemPosition(layout, placement));
+
+        // Enemies walk the navigation mesh baked from the maze.
+        var started = DateTime.UtcNow;
+        DungeonBuilder.BakeNavigation(instance.Nodes.Level, layout);
+        var enemyNodes = DungeonContents.EnemyNodes(layout, seed ^ 0xe4e);
+        for (int i = 0; i < enemyNodes.Count; i++)
+        {
+            var node = DevEnemiesNearStart ? Math.Min(1 + i / 2, layout.Nodes.Count - 1) : enemyNodes[i];
+            SpawnEnemy(instance, DungeonBuilder.EnemyPosition(layout, node, (i % 2) * 0.9f - 0.45f));
+        }
+        GD.Print($"[server] dungeon {instance.Id}: navigation baked in {(DateTime.UtcNow - started).TotalMilliseconds:0} ms, " +
+                 $"{enemyNodes.Count} enemies");
         GD.Print($"[server] dungeon {instance.Id}: {width}x{height}, length {length}, seed {seed}, " +
                  $"{layout.Nodes.Count} cells (by '{createdBy}')");
         return instance;
@@ -186,6 +211,33 @@ public sealed class InstanceManager
         instance.Items.Remove(item.Name);
         item.GetParent().RemoveChild(item);
         item.QueueFree();
+    }
+
+    public EnemyCharacter SpawnEnemy(ServerInstance instance, Vector3 position)
+    {
+        var enemy = GD.Load<PackedScene>(InstanceFactory.EnemyScenePath).Instantiate<EnemyCharacter>();
+        enemy.Name = $"Enemy{instance.NextEnemyNumber++}";
+        enemy.Position = position;
+        enemy.NetPosition = position;
+        enemy.NetYaw = (float)GD.RandRange(0, Mathf.Tau);
+        enemy.Rotation = new Vector3(0, enemy.NetYaw, 0);
+        instance.Nodes.Enemies.AddChild(enemy, forceReadableName: true);
+        enemy.ServerInit(
+            players: () => instance.Players.Values,
+            onPlayerHit: (e, p, damage) => PlayerHitByEnemy?.Invoke(instance, e, p, damage),
+            onDeath: e => EnemyKilled?.Invoke(instance, e),
+            onRemove: e => RemoveEnemy(instance, e));
+        instance.Enemies[enemy.Name] = enemy;
+        foreach (var peer in instance.Players.Keys)
+            enemy.Sync.SetVisibilityFor((int)peer, true);
+        return enemy;
+    }
+
+    public void RemoveEnemy(ServerInstance instance, EnemyCharacter enemy)
+    {
+        if (!instance.Enemies.Remove(enemy.Name)) return;
+        enemy.GetParent().RemoveChild(enemy);
+        enemy.QueueFree();
     }
 
     /// <summary>Closes dungeons that have had no players for at least the timeout.</summary>

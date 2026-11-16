@@ -69,10 +69,10 @@ public partial class ClientGame : Node
             _characterMenu.SetBusy(true, "Entering world...");
             _session.SendSelectCharacter(id);
         };
-        _characterMenu.CreateRequested += (name, color) =>
+        _characterMenu.CreateRequested += (name, color, hardcore) =>
         {
             _characterMenu.SetStatus("Creating...");
-            _session.SendCreateCharacter(name, color);
+            _session.SendCreateCharacter(name, color, hardcore);
         };
         _characterMenu.LogoutRequested += () => ResetToLogin("Logged out.");
 
@@ -126,6 +126,8 @@ public partial class ClientGame : Node
         _weaponLabel.GrowVertical = Control.GrowDirection.Begin;
         _weaponLabel.Position += new Vector2(-12, -12);
 
+        SetUpCombatClient(hud);
+
         if (_devAuto)
         {
             // Try to register first; if the account already exists, OnAuthResult falls back to logging in.
@@ -137,6 +139,11 @@ public partial class ClientGame : Node
 
     public override void _UnhandledInput(InputEvent @event)
     {
+        if (HandleCombatInput(@event))
+        {
+            GetViewport().SetInputAsHandled();
+            return;
+        }
         if (@event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.F1 } && _currentInstanceId != null)
         {
             MaterialDebug.Toggle(_main.Instances);
@@ -157,6 +164,7 @@ public partial class ClientGame : Node
     {
         if (_noticeTimeLeft > 0 && (_noticeTimeLeft -= delta) <= 0)
             _noticeLabel.Visible = false;
+        CombatProcess(delta);
     }
 
     public override void _PhysicsProcess(double delta) => UpdateFocus();
@@ -191,9 +199,7 @@ public partial class ClientGame : Node
     private void OnInventory(int[] triples, int[] gear)
     {
         _inventory.SetState(triples, gear);
-        var weaponSlot = (int)Core.Items.EquipmentType.Weapon;
-        var weapon = weaponSlot < gear.Length && gear[weaponSlot] >= 0 ? Core.Items.ItemCatalog.NameOf(gear[weaponSlot]) : "none";
-        _weaponLabel.Text = $"Weapon: {weapon}";
+        UpdateEquippedWeapon(gear);
         _weaponLabel.Visible = true;
 
         var names = new List<string>();
@@ -223,6 +229,19 @@ public partial class ClientGame : Node
                 _session.SendMoveItem((int)Core.Items.ItemContainer.Inventory, triples[i], (int)Core.Items.ItemContainer.Gear, (int)type);
                 return; // one move per update; the next update continues
             }
+        }
+        // --dev-weapon NAME: equip that weapon (from the inventory) before heading out.
+        if (CmdArgs.Get("dev-weapon") is { Length: > 0 } weaponName)
+        {
+            var slot = (int)Core.Items.EquipmentType.Weapon;
+            var current = gear[slot] >= 0 ? Core.Items.ItemCatalog.NameOf(gear[slot]) : "";
+            if (current != weaponName)
+                for (int i = 0; i + 2 < triples.Length; i += 3)
+                    if (Core.Items.ItemCatalog.NameOf(triples[i + 1]) == weaponName)
+                    {
+                        _session.SendMoveItem((int)Core.Items.ItemContainer.Inventory, triples[i], (int)Core.Items.ItemContainer.Gear, slot);
+                        return;
+                    }
         }
         if (CmdArgs.Get("dev-drop") is { Length: > 0 } dropName && !_devDropDone)
         {
@@ -356,7 +375,8 @@ public partial class ClientGame : Node
         else if (!_devCreateAttempted)
         {
             _devCreateAttempted = true;
-            _session.SendCreateCharacter(wanted, PlayerLook.ParseColor(CmdArgs.Get("color"), PlayerLook.DefaultColor));
+            _session.SendCreateCharacter(wanted, PlayerLook.ParseColor(CmdArgs.Get("color"), PlayerLook.DefaultColor),
+                CmdArgs.Has("hardcore"));
         }
     }
 

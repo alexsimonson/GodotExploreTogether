@@ -141,7 +141,7 @@ public sealed class GameDatabase : IDisposable
     // -------------------------------------------------------------- characters
 
     private const string CharacterColumns =
-        "id, account_id, name, color, created_at, last_played_at, play_time_seconds, hub_x, hub_y, hub_z, hub_yaw";
+        "id, account_id, name, color, created_at, last_played_at, play_time_seconds, hub_x, hub_y, hub_z, hub_yaw, hardcore";
 
     public IReadOnlyList<CharacterRecord> ListCharacters(long accountId)
     {
@@ -159,7 +159,8 @@ public sealed class GameDatabase : IDisposable
         return r.Read() ? ReadCharacter(r) : null;
     }
 
-    public (CreateResult Result, CharacterRecord? Character) CreateCharacter(long accountId, string name, string colorHex)
+    public (CreateResult Result, CharacterRecord? Character) CreateCharacter(long accountId, string name, string colorHex,
+        bool hardcore = false)
     {
         using var tx = _connection.BeginTransaction();
 
@@ -171,8 +172,8 @@ public sealed class GameDatabase : IDisposable
         }
 
         using var insert = Command(
-            "INSERT INTO characters (account_id, name, color, created_at) VALUES ($a, $n, $c, $now) RETURNING id;",
-            ("$a", accountId), ("$n", name), ("$c", colorHex), ("$now", Now()));
+            "INSERT INTO characters (account_id, name, color, created_at, hardcore) VALUES ($a, $n, $c, $now, $h) RETURNING id;",
+            ("$a", accountId), ("$n", name), ("$c", colorHex), ("$now", Now()), ("$h", hardcore ? 1 : 0));
         insert.Transaction = tx;
         try
         {
@@ -184,6 +185,16 @@ public sealed class GameDatabase : IDisposable
         {
             return (CreateResult.NameTaken, null);
         }
+    }
+
+    /// <summary>
+    /// Permanently deletes a character (hardcore death). Its inventory, gear and run participation go with it
+    /// (ON DELETE CASCADE); runs it created keep existing with created_by cleared.
+    /// </summary>
+    public bool DeleteCharacter(long characterId)
+    {
+        using var cmd = Command("DELETE FROM characters WHERE id = $id;", ("$id", characterId));
+        return cmd.ExecuteNonQuery() > 0;
     }
 
     /// <summary>Saves progress: adds play time, stamps last played, and stores the hub position if given.</summary>
@@ -327,7 +338,7 @@ public sealed class GameDatabase : IDisposable
         return new CharacterRecord(
             r.GetInt64(0), r.GetInt64(1), r.GetString(2), r.GetString(3),
             ParseTime(r.GetString(4)), r.IsDBNull(5) ? null : ParseTime(r.GetString(5)),
-            r.GetDouble(6), hub);
+            r.GetDouble(6), hub, r.GetInt64(11) != 0);
     }
 
     private SqliteCommand Command(string sql, params (string Name, object? Value)[] parameters)

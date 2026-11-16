@@ -13,7 +13,8 @@ public sealed record CharacterRecord(
     DateTime CreatedAt,
     DateTime? LastPlayedAt,
     double PlayTimeSeconds,
-    SavedPosition? HubPosition);
+    SavedPosition? HubPosition,
+    bool Hardcore = false);
 
 public enum CreateResult
 {

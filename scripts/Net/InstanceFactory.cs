@@ -17,6 +17,7 @@ public static class InstanceFactory
     public const string PlayerScenePath = "res://scenes/Player.tscn";
     public const string HubScenePath = "res://scenes/levels/Hub.tscn";
     public const string ItemScenePath = "res://scenes/props/ItemPickup.tscn";
+    public const string EnemyScenePath = "res://scenes/Enemy.tscn";
 
     public static string NodeName(int instanceId) => $"Instance{instanceId}";
 
@@ -65,7 +66,13 @@ public static class InstanceFactory
         itemSpawner.AddSpawnableScene(ItemScenePath);
         container.AddChild(itemSpawner);
 
-        return new InstanceNodes(container, level, players, items);
+        var enemies = new Node3D { Name = "Enemies" };
+        container.AddChild(enemies);
+        var enemySpawner = new MultiplayerSpawner { Name = "EnemySpawner", SpawnPath = new NodePath("../Enemies") };
+        enemySpawner.AddSpawnableScene(EnemyScenePath);
+        container.AddChild(enemySpawner);
+
+        return new InstanceNodes(container, level, players, items, enemies);
     }
 
     /// <summary>Finds an interactable by id anywhere in an instance (level props and items).</summary>
@@ -84,4 +91,4 @@ public static class InstanceKinds
     public const string Dungeon = "dungeon";
 }
 
-public readonly record struct InstanceNodes(Node Container, Node Level, Node3D Players, Node3D Items);
+public readonly record struct InstanceNodes(Node Container, Node Level, Node3D Players, Node3D Items, Node3D Enemies);

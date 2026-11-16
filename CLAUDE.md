@@ -21,6 +21,7 @@ See `E:\claude\CLAUDE.md` for the environment setup (the .NET 10 SDK on E:, neve
 - Run a client: `<godot>_console.exe --path . -- --connect 127.0.0.1 --name Alice`
 - Scripted network test: run a server plus headless clients with `--dev-quit-after N`, `--dev-autowalk`, `--dev-log` and read their output (see Main.cs and ClientGame.cs for all args). Use a separate `--port` and `--db` so it doesn't clash with the user's `dev-run` session.
   - Dungeons: server `--dev-skip-proximity --dungeon-empty-timeout 3`; clients `--dev-dungeon new[:WxHxLEN]` or `join:NAME`, `--dev-return-after S`, `--dev-check-walls`, `--dev-solve` (take everything, open exit, escape), `--dev-escape-after S`.
+  - Combat: server `--dev-starter-kit` (new characters get every weapon), `--dev-enemies-near-start`, `--dev-log-enemies`; clients `--dev-weapon NAME`, `--dev-fight` (auto-attack the nearest enemy), `--hardcore` (auto-created character is hardcore).
   - Screenshots without disturbing the user: a windowed client with `--resolution 800x450 --position -3000,100` plus `--dev-camera YAW,PITCH --dev-screenshot E:\claude\_tmp\shots\x.png`, then view the PNG.
 - Dungeon pieces: regenerate with `python -I tools/import_unity_dungeon.py E:/claude/_reference/ExploreTogether`, then re-import.
 - Transforms written by hand in `.tscn` files are **row-major**: `Transform3D(row0, row1, row2, origin)`.

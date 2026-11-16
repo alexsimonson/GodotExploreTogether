@@ -21,6 +21,11 @@ public sealed class PeerSession(long peer)
     public Inventory? Inventory { get; set; }
     /// <summary>The character's equipment (12 slots), loaded with the inventory.</summary>
     public Gear? Gear { get; set; }
+    /// <summary>Health while playing (full again whenever the player reaches the hub).</summary>
+    public Core.Combat.Health Health { get; } = new(100);
+    /// <summary>This player's gun ammo (in the original it lived on the shared item asset).</summary>
+    public Core.Combat.GunAmmo Ammo { get; } = new();
+    public double LastAttackAt { get; set; } = -1000;
     /// <summary>Instance the client was told to load and hasn't confirmed yet.</summary>
     public int? PendingInstanceId { get; set; }
     /// <summary>True while a password hash is being computed for this peer.</summary>
@@ -106,6 +111,7 @@ public partial class ServerGame : Node
         _session.CreateDungeonRequested += OnCreateDungeon;
         _session.JoinDungeonRequested += OnJoinDungeon;
         _session.MoveItemRequested += OnMoveItem;
+        SetUpCombat();
         _session.DropItemRequested += OnDropItem;
         _session.PlayerTransformReceived += (peer, instanceId, position, yaw) =>
         {
@@ -218,11 +224,11 @@ public partial class ServerGame : Node
     private void SendCharacterList(PeerSession s)
     {
         var list = _db.ListCharacters(s.Account!.Id)
-            .Select(c => new CharacterSummary(c.Id, c.Name, ColorFromHex(c.ColorHex), c.PlayTimeSeconds));
+            .Select(c => new CharacterSummary(c.Id, c.Name, ColorFromHex(c.ColorHex), c.PlayTimeSeconds, c.Hardcore));
         _session.SendCharacterList(s.Peer, list);
     }
 
-    private void OnCreateCharacter(long peer, string name, Color color)
+    private void OnCreateCharacter(long peer, string name, Color color, bool hardcore)
     {
         if (!_sessions.TryGetValue(peer, out var s) || s.Account == null || s.Character != null) return;
 
@@ -235,7 +241,7 @@ public partial class ServerGame : Node
         }
 
         var hex = PlayerLook.Sanitize(color).ToHtml(false);
-        var (result, character) = _db.CreateCharacter(s.Account.Id, name, hex);
+        var (result, character) = _db.CreateCharacter(s.Account.Id, name, hex, hardcore);
         switch (result)
         {
             case CreateResult.NameTaken:
@@ -245,7 +251,8 @@ public partial class ServerGame : Node
                 _session.SendCharacterResult(peer, false, $"You can have at most {GameRules.MaxCharactersPerAccount} characters.");
                 return;
         }
-        GD.Print($"[server] '{s.Account.Username}' created character '{character!.Name}'");
+        GD.Print($"[server] '{s.Account.Username}' created {(hardcore ? "hardcore " : "")}character '{character!.Name}'");
+        if (DevStarterKit) GiveStarterKit(character);
         _session.SendCharacterResult(peer, true, "");
         SendCharacterList(s);
     }
@@ -308,11 +315,14 @@ public partial class ServerGame : Node
         }
 
         var c = s.Character;
+        if (instance == _instances.Hub) s.Health.Reset();
         var saved = instance == _instances.Hub ? c.HubPosition : null;
         _instances.AddPlayer(instance, peer, c.Name, ColorFromHex(c.ColorHex),
             saved is { } p ? new Vector3(p.X, p.Y, p.Z) : null, saved?.Yaw ?? 0f);
 
         SendInventory(s);
+        SyncHealth(s);
+        _session.SendAmmo(s.Peer, s.Ammo.magazineRounds, s.Ammo.bulletCount);
         if (instance.Kind == InstanceKinds.Dungeon)
         {
             if (instance.RunId is { } runId) _db.AddRunParticipant(runId, c.Id);
@@ -440,4 +450,14 @@ public partial class ServerGame : Node
     }
 
     private static Color ColorFromHex(string hex) => Color.FromString("#" + hex, PlayerLook.DefaultColor);
+
+    /// <summary>Dev (--dev-starter-kit): new characters start with one of each weapon and a helmet.</summary>
+    private static readonly bool DevStarterKit = CmdArgs.Has("dev-starter-kit");
+
+    private void GiveStarterKit(CharacterRecord character)
+    {
+        var inv = new Inventory();
+        foreach (var id in new[] { 1515, 1337, 567, 666, 8, 22 }) inv.AddItem(id); // Sword, Pistol, Ice/Blood Wand, Axe, Helmet
+        _db.SaveInventory(character.Id, inv.Occupied());
+    }
 }

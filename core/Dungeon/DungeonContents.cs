@@ -38,6 +38,23 @@ public static class DungeonContents
     }
 
     /// <summary>
+    /// Enemies, from the same FillMazeWithItems loop: one for every item where i % 4 == 2 (5 of the 20),
+    /// each at RandomSpawnPointInGenerated() with its default padding of 10. (The original interleaved these
+    /// with the item rolls; here they're drawn from their own seeded sequence.)
+    /// </summary>
+    public const int EnemyPadding = 10;
+
+    public static List<int> EnemyNodes(MazeLayout layout, int seed, int itemCount = DefaultItemCount)
+    {
+        var random = new Random(seed);
+        var nodes = new List<int>();
+        for (int i = 0; i < itemCount; i++)
+            if (i % 4 == 2)
+                nodes.Add(RandomNodeIndex(layout.Nodes.Count, EnemyPadding, random));
+        return nodes;
+    }
+
+    /// <summary>
     /// Port of RandomSpawnPointInGenerated's index choice: Random.Range(padding, count - padding).
     /// The original assumed big mazes; for small ones the padding shrinks so the range stays valid,
     /// still avoiding the entrance (node 0) and the exit (last node) when possible.
