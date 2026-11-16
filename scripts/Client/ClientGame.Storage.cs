@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using ExploreTogether.Core.Items;
 using ExploreTogether.Dungeon;
@@ -32,6 +33,63 @@ public partial class ClientGame
     private void SetUpStorageClient()
     {
         _session.StorageReceived += OnStorage;
+        _session.SupplyReceived += OnSupply;
+    }
+
+    // ---- the debug supply and the locksmith (hub) ----
+
+    private const string DebugSupplyId = "debug_supply", LocksmithId = "locksmith";
+    private bool _devSupplyDone, _devTradeDone;
+
+    private void OnSupply(int[] quads)
+    {
+        GD.Print($"[client] debug supply: {quads.Length / 4} items");
+        if (_inventory.SupplyOpen || !NearHubStation(DebugSupplyId)) return;
+        _inventory.ShowSupply(quads);
+        DevSupplyTake();
+    }
+
+    private bool NearHubStation(string id)
+    {
+        if (_currentKind != InstanceKinds.Hub || PlayerCharacter.Local is not { } player) return false;
+        if (CmdArgs.Has("dev-supply-take") || CmdArgs.Has("dev-trade-keys")) return true; // the automation doesn't walk over
+        return InstanceFactory.FindInteractable(_main.Instances, id) is { } station
+               && player.GlobalPosition.DistanceTo(station.GlobalPosition) <= Interactable.ServerMaxDistance;
+    }
+
+    /// <summary>
+    /// Dev: --dev-supply-take NAME[,NAME...] opens the debug supply in the hub and takes those items;
+    /// --dev-trade-keys trades the keys carried in at the locksmith (on reaching the hub carrying any).
+    /// </summary>
+    private void DevHubStations()
+    {
+        if (_currentKind != InstanceKinds.Hub) return;
+        if (CmdArgs.Has("dev-supply-take") && !_devSupplyDone)
+            GetTree().CreateTimer(1.0).Timeout += () => _session.SendInteract(DebugSupplyId);
+        if (CmdArgs.Has("dev-trade-keys") && !_devTradeDone && CountInInventory(ItemCatalog.KeyId) > 0)
+        {
+            _devTradeDone = true;
+            GetTree().CreateTimer(1.0).Timeout += () =>
+            {
+                GD.Print($"[client] dev: trading {CountInInventory(ItemCatalog.KeyId)} key(s) at the locksmith");
+                _session.SendInteract(LocksmithId);
+            };
+        }
+    }
+
+    private void DevSupplyTake()
+    {
+        if (!CmdArgs.Has("dev-supply-take") || _devSupplyDone) return;
+        _devSupplyDone = true;
+        var used = Enumerable.Range(0, _lastInventoryQuads.Length / 4).Select(i => _lastInventoryQuads[i * 4]).ToHashSet();
+        var free = new Queue<int>(Enumerable.Range(0, Inventory.DefaultMaxSlots).Where(i => !used.Contains(i)));
+        foreach (var name in CmdArgs.Get("dev-supply-take").Split(','))
+        {
+            var slot = Enumerable.Range(0, DebugSupply.Items.Count).FirstOrDefault(i => DebugSupply.Items[i].Name == name, -1);
+            if (slot < 0 || free.Count == 0) continue;
+            GD.Print($"[client] dev: taking {name} from the debug supply");
+            _session.SendMoveItem((int)ItemContainer.Supply, slot, (int)ItemContainer.Inventory, free.Dequeue());
+        }
     }
 
     private void OnStorage(int[] quads)
@@ -50,6 +108,7 @@ public partial class ClientGame
     private void StorageProcess(double delta)
     {
         if (_inventory.StorageOpen && !NearStorage()) _inventory.CloseStorage();
+        if (_inventory.SupplyOpen && !NearHubStation(DebugSupplyId)) _inventory.CloseSupply();
         DevGatherProcess(delta);
     }
 

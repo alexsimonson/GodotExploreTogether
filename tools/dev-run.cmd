@@ -33,7 +33,8 @@ call "%TOOLS%dev-stop.cmd"
 rem Build C# first so every process loads the latest code.
 dotnet build "%PROJECT%\ExploreTogether.csproj" -nologo -v q || exit /b 1
 
-start "ExploreTogether Server" "%GODOT_CONSOLE%" --headless --path "%PROJECT%" -- --server%SERVER_ARGS%
+rem --dev-supply: the hub's debug supply (every item, unlimited) is open in dev sessions.
+start "ExploreTogether Server" "%GODOT_CONSOLE%" --headless --path "%PROJECT%" -- --server --dev-supply%SERVER_ARGS%
 
 for /L %%i in (1,1,%COUNT%) do (
   call :client %%i

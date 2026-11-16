@@ -419,6 +419,7 @@ public partial class ClientGame : Node
         _draggingName = "";
         if (kind == InstanceKinds.City) _cityLayoutData = layoutData;
         _inventory.CloseLoot();
+        _inventory.CloseSupply();
         _dungeonMenu.Visible = false;
         _inventory.Visible = false;
         _statusLabel.Visible = false;
@@ -481,7 +482,9 @@ public partial class ClientGame : Node
                 me.LookAt(new Vector3(door.GlobalPosition.X, me.GlobalPosition.Y, door.GlobalPosition.Z));
             };
         if (kind == InstanceKinds.City && CmdArgs.Has("dev-drag"))
-            GetTree().CreateTimer(2.5).Timeout += () => { if (_currentInstanceId == instanceId) DevDragStart(instanceId); };
+            GetTree().CreateTimer(CmdArgs.GetFloat("dev-drag-delay", 2.5f)).Timeout +=
+                () => { if (_currentInstanceId == instanceId) DevDragStart(instanceId); };
+        if (kind == InstanceKinds.Hub) GetTree().CreateTimer(0.5).Timeout += DevHubStations;
         if (kind == InstanceKinds.City && CmdArgs.Has("dev-doors"))
             GetTree().CreateTimer(2.5).Timeout += () => { if (_currentInstanceId == instanceId) DevDoorsStart(instanceId); };
         if (kind == InstanceKinds.Hub && CmdArgs.Has("dev-city") && !_devCityDone)

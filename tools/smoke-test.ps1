@@ -16,9 +16,11 @@
               and the empty city is closed.
     crowd   - a player runs at walking city residents: it is stopped at arm's length, never inside them.
     doors   - a player searches a body, takes what it carried, and uses its key on the door it fits (lock, unlock,
-              open, close) and fails on a door without its key; another player shoots a resident dead.
-    drag    - a player drags a knocked-out resident away and lets go; they come round later; another player knocks
-              residents out with a bat.
+              open, close) and fails on a door without its key, then trades the keys in at the hub's locksmith;
+              another player shoots a resident dead.
+    drag    - a player drags a knocked-out resident away and lets go; a third player yanks the body away mid-drag;
+              they come round later; another player knocks residents out with a bat.
+    supply  - a player takes items from the hub's debug supply (dev servers).
     gather  - one player chops the hub's trees with an axe and puts the logs into the hub storage; another
               starts a dungeon, which must get its trees (and still bake navigation around them).
   Every scenario also checks: no engine/script errors, remote players never fly off vertically,
@@ -92,7 +94,8 @@ $Scenarios = [ordered]@{
         Server = @('--dev-skip-proximity', '--dev-starter-kit', '--city-seed', '4', '--city-start-hour', '9', '--dev-kill-npcs', '2',
                    '--dev-quit-after', '50')
         Clients = [ordered]@{
-            Kermit    = @('--dev-city', '--dev-doors', '--dev-check-city', '--dev-quit-after', '25')
+            Kermit    = @('--dev-city', '--dev-doors', '--dev-check-city', '--dev-return-after', '18', '--dev-trade-keys',
+                          '--dev-quit-after', '25')
             Blueberry = @('--dev-city', '--dev-weapon', 'Pistol', '--dev-fight', '--dev-quit-after', '40')
         }
         Checks = {
@@ -106,6 +109,7 @@ $Scenarios = [ordered]@{
             Expect server "door \d+ closed by 'Kermit'" 'and closes it'
             Expect Kermit "notice: You don't have the key to this door." "a door won't lock or unlock without its key"
             Expect server "'Blueberry' hit .* with Pistol .*killed in city" 'Blueberry shoots a resident dead'
+            Expect server "'Kermit' traded \d+ key\(s\) for \d+ coins at the locksmith" 'back in the hub, the locksmith buys the keys'
         }
     }
     drag = @{
@@ -115,13 +119,29 @@ $Scenarios = [ordered]@{
         Clients = [ordered]@{
             Kermit    = @('--dev-city', '--dev-drag', '--dev-quit-after', '25')
             Blueberry = @('--dev-city', '--dev-weapon', 'Bat', '--dev-fight', '--dev-chase-npc', '--dev-quit-after', '40')
+            Grape     = @('--dev-city', '--dev-drag', '--dev-drag-delay', '4', '--dev-quit-after', '27') # quits apart from Kermit (simultaneous disconnects race in ENet)
         }
         Checks = {
             Expect server "'Kermit' starts dragging .* \(unconscious\)" 'Kermit takes hold of a knocked-out resident'
+            Expect server "'Grape' yanks .* away from 'Kermit'" 'Grape yanks the body away from Kermit'
+            Expect Kermit 'notice: Grape yanks .* away from you!' 'Kermit is told'
             Expect Kermit 'dragging ' "Kermit's client knows (slow walk)"
             Expect server "'Kermit' lets go of .*, ([3-9]|\d{2,})\.\d m from where" 'and drags them a good way before letting go'
             Expect server ' comes round' 'the knocked-out resident comes round later'
             Expect server "'Blueberry' knocked out .* with Bat" 'a bat knocks a resident out'
+        }
+    }
+    supply = @{
+        Port   = 7949
+        Server = @('--dev-skip-proximity', '--dev-supply', '--dev-quit-after', '15')
+        Clients = [ordered]@{
+            Kermit = @('--dev-supply-take', 'Bat,Pistol Rounds,Concrete Block', '--dev-quit-after', '8')
+        }
+        Checks = {
+            Expect Kermit 'debug supply: \d+ items' 'the debug supply opens'
+            Expect server "'Kermit' took Bat from the debug supply" 'a weapon from the supply'
+            Expect server "'Kermit' took Pistol Rounds x30 from the debug supply" 'a stack from the supply'
+            Expect Kermit 'inventory .*Bat.*Pistol Rounds x30.*Concrete Block' 'all of it lands in the inventory'
         }
     }
     coop = @{

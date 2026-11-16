@@ -373,6 +373,16 @@ public partial class ServerGame : Node
             OpenStorage(s);
             return;
         }
+        if (interactionId == DebugSupplyId && instance == _instances.Hub)
+        {
+            OpenSupply(s);
+            return;
+        }
+        if (interactionId == LocksmithId && instance == _instances.Hub)
+        {
+            TradeInKeys(s);
+            return;
+        }
         if (interactionId == DungeonExit.Id && instance.Kind == InstanceKinds.Dungeon)
         {
             UseExit(s, instance);

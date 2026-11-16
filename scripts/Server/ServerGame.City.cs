@@ -115,10 +115,13 @@ public partial class ServerGame
         }
         if (!interactionId.StartsWith(CityNpc.LootPrefix) || !IsNear(s, interactionId, out var city)) return;
         if (!city.Npcs.TryGetValue(interactionId[CityNpc.LootPrefix.Length..], out var npc) || !npc.IsDown) return;
-        if (npc.DraggedBy != 0 && npc.DraggedBy != peer)
+        if (npc.DraggedBy != 0 && npc.DraggedBy != peer && _sessions.TryGetValue(npc.DraggedBy, out var holder))
         {
-            _session.SendNotice(peer, "Someone else is dragging them.");
-            return;
+            // Fighting over a body: grabbing it yanks it out of the other player's hands.
+            LetGoOfBody(holder, notify: true);
+            _session.SendNotice(holder.Peer, $"{s.Character!.Name} yanks {npc.NetName} away from you!");
+            _session.SendNotice(peer, $"You yank {npc.NetName} away from {holder.Character?.Name}!");
+            GD.Print($"[server] '{s.Character.Name}' yanks {npc.NetName} away from '{holder.Character?.Name}'");
         }
         npc.DraggedBy = peer;
         s.DraggingNpc = npc.Name;
@@ -214,15 +217,18 @@ public partial class ServerGame
     /// <summary>E on a body: show what it carries (take-only).</summary>
     private void SearchBody(PeerSession s, ServerInstance city, string npcName)
     {
-        if (!city.Npcs.TryGetValue(npcName, out var npc) || !npc.IsDown || npc.Loot == null) return;
+        if (!city.Npcs.TryGetValue(npcName, out var npc) || !npc.IsDown) return;
         s.LootingNpc = npcName;
         SendLoot(s, npc);
-        GD.Print($"[server] '{s.Character!.Name}' searches the body of {npc.NetName} ({npc.Loot.Occupied().Count()} item(s))");
+        GD.Print($"[server] '{s.Character!.Name}' searches the body of {npc.NetName} ({ItemsOn(npc)} item(s))");
     }
 
+    private static int ItemsOn(CityNpc npc) => npc.Inventory.Occupied().Count() + npc.Gear.Occupied().Count();
+
     private void SendLoot(PeerSession s, CityNpc npc) =>
-        _session.SendLoot(s.Peer, $"Body of {npc.NetName}",
-            npc.Loot!.Occupied().SelectMany(o => new[] { o.Slot, o.ItemId, o.Count, o.Data ?? -1 }).ToArray());
+        _session.SendLoot(s.Peer, npc.NetName,
+            npc.Inventory.Occupied().SelectMany(o => new[] { o.Slot, o.ItemId, o.Count, o.Data ?? -1 }).ToArray(),
+            npc.Gear.ExportGear(), npc.Gear.ExportGearData());
 
     /// <summary>The body this player is searching, if they're still at it.</summary>
     private bool CanSearch(PeerSession s, out ServerInstance city, out CityNpc npc)
@@ -230,7 +236,7 @@ public partial class ServerGame
         city = null!;
         npc = null!;
         if (s.LootingNpc is not { } name || _instances.FindPlayer(s.Peer)?.Instance is not { Kind: InstanceKinds.City } c) return false;
-        if (!c.Npcs.TryGetValue(name, out var n) || !n.IsDown || n.Loot == null || !IsNear(s, n.LootId, out _)) return false;
+        if (!c.Npcs.TryGetValue(name, out var n) || !n.IsDown || !IsNear(s, n.LootId, out _)) return false;
         (city, npc) = (c, n);
         return true;
     }
@@ -247,12 +253,13 @@ public partial class ServerGame
             SendInventory(s);
             return;
         }
-        var loot = npc.Loot!;
-        var allowed = SlotContainerLogic.IsAllowedForLoot(s.Inventory!, s.Gear!, loot, from, fromSlot, to, toSlot);
-        var source = SlotContainerLogic.Slot(s.Inventory!, s.Gear!, from, fromSlot, loot: loot);
+        var (loot, lootGear) = (npc.Inventory, npc.Gear);
+        var allowed = SlotContainerLogic.IsAllowedForLoot(s.Inventory!, s.Gear!, loot, from, fromSlot, to, toSlot, lootGear);
+        var source = SlotContainerLogic.Slot(s.Inventory!, s.Gear!, from, fromSlot, loot: loot, lootGear: lootGear);
         var (itemId, count) = (source?.itemId, source?.stack_size ?? 0);
-        if (to == ItemContainer.Loot) _session.SendNotice(s.Peer, "You can only take from a body.");
-        if (!allowed || itemId is not { } id || !SlotContainerLogic.Move(s.Inventory!, s.Gear!, from, fromSlot, to, toSlot, loot: loot))
+        if (to is ItemContainer.Loot or ItemContainer.LootGear) _session.SendNotice(s.Peer, "You can only take from a body.");
+        if (!allowed || itemId is not { } id
+            || !SlotContainerLogic.Move(s.Inventory!, s.Gear!, from, fromSlot, to, toSlot, loot: loot, lootGear: lootGear))
         {
             SendInventory(s);
             SendLoot(s, npc);
@@ -294,7 +301,7 @@ public partial class ServerGame
         foreach (var npc in onStreet.Take(DevKillNpcs))
         {
             npc.TakeDamage(CityNpc.MaxHealth);
-            GD.Print($"[server] dev: {npc.NetName} ({npc.Role}) dies in city {city.Id}, carrying {npc.Loot!.Occupied().Count()} item(s)");
+            GD.Print($"[server] dev: {npc.NetName} ({npc.Role}) dies in city {city.Id}, carrying {ItemsOn(npc)} item(s)");
         }
         foreach (var npc in onStreet.Skip(DevKillNpcs).Take(DevKnockOutNpcs))
         {

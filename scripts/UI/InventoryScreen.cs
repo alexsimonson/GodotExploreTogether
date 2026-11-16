@@ -12,7 +12,9 @@ namespace ExploreTogether.UI;
 /// - Inventory: a scrolling 4-column grid of 100x100 slots with 10 px spacing (InventoryScrollView prefab);
 /// - Storage (only while the hub's storage chest is open): the same kind of grid, next to the inventory
 ///   (port of the HUD's storage InventoryUI, which the original showed together with the player's inventory).
-/// - Loot (new, only while searching a body): what the dead person carried and wore, take-only, with "Take all".
+/// - Body (new, only while searching someone who's down): their equipment and inventory, laid out exactly like the
+///   player's own (paper doll + grid), next to the player's; take-only, with "Take all".
+/// - Debug supply (new, dev servers): every item, unlimited; drag one out to take a copy, drag an item onto it to delete it.
 /// Drags and drops are forwarded as requests; the screen redraws from the state the server sends.
 /// </summary>
 public partial class InventoryScreen : CanvasLayer
@@ -23,7 +25,7 @@ public partial class InventoryScreen : CanvasLayer
     /// <summary>The loot panel's "Take all" button.</summary>
     public event Action? TakeAllRequested;
 
-    public const int LootSlots = Inventory.DefaultMaxSlots + Gear.SlotCount;
+
 
     // Original EquipmentScrollView anchored positions (Unity UI: center origin, y up) per Equipment.Type.
     private static readonly Dictionary<EquipmentType, Vector2> UnityGearPositions = new()
@@ -39,17 +41,23 @@ public partial class InventoryScreen : CanvasLayer
     private readonly List<ItemSlotButton> _gearSlots = new();
     private readonly List<ItemSlotButton> _storageSlots = new();
     private readonly List<ItemSlotButton> _lootSlots = new();
+    private readonly List<ItemSlotButton> _lootGearSlots = new();
+    private readonly List<ItemSlotButton> _supplySlots = new();
     private Control _root = null!;
     private Control _storagePanel = null!;
     private Control _lootPanel = null!;
-    private Label _lootTitle = null!;
+    private Control _supplyPanel = null!;
+    private Label _lootGearTitle = null!, _lootInventoryTitle = null!;
     private Label _hint = null!;
 
     /// <summary>True while the storage panel is showing.</summary>
     public bool StorageOpen => Visible && _storagePanel.Visible;
 
-    /// <summary>True while the loot panel is showing.</summary>
+    /// <summary>True while a body's equipment and inventory are showing.</summary>
     public bool LootOpen => Visible && _lootPanel.Visible;
+
+    /// <summary>True while the debug supply is showing.</summary>
+    public bool SupplyOpen => Visible && _supplyPanel.Visible;
 
     public override void _Ready()
     {
@@ -70,6 +78,9 @@ public partial class InventoryScreen : CanvasLayer
         _lootPanel = BuildLootPanel();
         _lootPanel.Visible = false;
         panels.AddChild(_lootPanel);
+        _supplyPanel = SlotGridPanel("Debug supply (unlimited)", ItemContainer.Supply, DebugSupply.Items.Count, _supplySlots);
+        _supplyPanel.Visible = false;
+        panels.AddChild(_supplyPanel);
 
         _hint = new Label { HorizontalAlignment = HorizontalAlignment.Center };
         _hint.AddThemeColorOverride("font_outline_color", Colors.Black);
@@ -83,20 +94,23 @@ public partial class InventoryScreen : CanvasLayer
         FitToScreen();
     }
 
-    private Control BuildGearPanel()
+    private Control BuildGearPanel() => GearPanel("Equipment", ItemContainer.Gear, _gearSlots);
+
+    /// <summary>The paper doll: the 12 equipment slots at the original positions.</summary>
+    private Control GearPanel(string title, ItemContainer container, List<ItemSlotButton> into)
     {
-        var box = PanelWithTitle("Equipment", out var content);
+        var box = PanelWithTitle(title, out var content);
         // Convert the Unity positions to a top-left layout: x offset by half the panel, y flipped.
         const float left = 117 + ItemSlotButton.SlotSize / 2, top = 66 + ItemSlotButton.SlotSize / 2;
         var area = new Control { CustomMinimumSize = new Vector2(2 * left, top + 408 + ItemSlotButton.SlotSize / 2) };
         content.AddChild(area);
         for (int i = 0; i < Gear.SlotCount; i++)
         {
-            var slot = NewSlot(ItemContainer.Gear, i);
+            var slot = NewSlot(container, i);
             var p = UnityGearPositions[Gear.TypeOf(i)];
             slot.Position = new Vector2(left + p.X - ItemSlotButton.SlotSize / 2, top - p.Y - ItemSlotButton.SlotSize / 2);
             area.AddChild(slot);
-            _gearSlots.Add(slot);
+            into.Add(slot);
         }
         return box;
     }
@@ -107,16 +121,24 @@ public partial class InventoryScreen : CanvasLayer
     private Control BuildStoragePanel() =>
         SlotGridPanel("Storage", ItemContainer.Storage, Inventory.HubStorageSlots, _storageSlots);
 
+    /// <summary>Someone else's equipment and inventory, laid out like the player's own, with "Take all".</summary>
     private Control BuildLootPanel()
     {
-        var panel = SlotGridPanel("Body", ItemContainer.Loot, LootSlots, _lootSlots);
-        var content = (VBoxContainer)panel.GetChild(0).GetChild(0);
-        _lootTitle = (Label)content.GetChild(0);
+        var row = new HBoxContainer();
+        row.AddThemeConstantOverride("separation", 16);
+        var gear = GearPanel("Equipment", ItemContainer.LootGear, _lootGearSlots);
+        _lootGearTitle = TitleOf(gear);
+        row.AddChild(gear);
+        var inventory = SlotGridPanel("Inventory", ItemContainer.Loot, Inventory.DefaultMaxSlots, _lootSlots);
+        _lootInventoryTitle = TitleOf(inventory);
         var takeAll = new Button { Text = "Take all" };
         takeAll.Pressed += () => TakeAllRequested?.Invoke();
-        content.AddChild(takeAll);
-        return panel;
+        ((VBoxContainer)inventory.GetChild(0).GetChild(0)).AddChild(takeAll);
+        row.AddChild(inventory);
+        return row;
     }
+
+    private static Label TitleOf(Control panel) => (Label)panel.GetChild(0).GetChild(0).GetChild(0);
 
     /// <summary>A titled, scrolling 4-column grid of slots (the original InventoryScrollView).</summary>
     private Control SlotGridPanel(string title, ItemContainer container, int count, List<ItemSlotButton> into)
@@ -170,8 +192,13 @@ public partial class InventoryScreen : CanvasLayer
     public void SetState(int[] inventoryQuads, int[] gear, int[] gearData)
     {
         Fill(_inventorySlots, inventoryQuads);
-        for (int i = 0; i < _gearSlots.Count; i++)
-            _gearSlots[i].SetItem(i < gear.Length && gear[i] >= 0 ? gear[i] : null, 0,
+        FillGear(_gearSlots, gear, gearData);
+    }
+
+    private static void FillGear(List<ItemSlotButton> slots, int[] gear, int[] gearData)
+    {
+        for (int i = 0; i < slots.Count; i++)
+            slots[i].SetItem(i < gear.Length && gear[i] >= 0 ? gear[i] : null, 0,
                 i < gearData.Length && gearData[i] >= 0 ? gearData[i] : null);
     }
 
@@ -196,18 +223,40 @@ public partial class InventoryScreen : CanvasLayer
         UpdateHint();
     }
 
-    /// <summary>Shows a body's loot (title: whose it is), opening the screen if needed.</summary>
-    public void ShowLoot(string title, int[] lootQuads)
+    /// <summary>Shows a downed person's equipment and inventory (whose: <paramref name="name"/>), opening the screen if needed.</summary>
+    public void ShowLoot(string name, int[] quads, int[] gear, int[] gearData)
     {
-        _lootTitle.Text = title;
-        Fill(_lootSlots, lootQuads);
+        _lootGearTitle.Text = $"{name}: equipment";
+        _lootInventoryTitle.Text = $"{name}: inventory";
+        UpdateLoot(quads, gear, gearData);
         if (_lootPanel.Visible && Visible) return;
         _lootPanel.Visible = true;
         UpdateHint();
         if (!Visible) Toggle();
     }
 
-    public void UpdateLoot(int[] lootQuads) => Fill(_lootSlots, lootQuads);
+    public void UpdateLoot(int[] quads, int[] gear, int[] gearData)
+    {
+        Fill(_lootSlots, quads);
+        FillGear(_lootGearSlots, gear, gearData);
+    }
+
+    /// <summary>Shows the debug supply, opening the screen if needed.</summary>
+    public void ShowSupply(int[] quads)
+    {
+        Fill(_supplySlots, quads);
+        if (_supplyPanel.Visible && Visible) return;
+        _supplyPanel.Visible = true;
+        UpdateHint();
+        if (!Visible) Toggle();
+    }
+
+    public void CloseSupply()
+    {
+        if (!_supplyPanel.Visible) return;
+        _supplyPanel.Visible = false;
+        UpdateHint();
+    }
 
     public void CloseLoot()
     {
@@ -223,6 +272,7 @@ public partial class InventoryScreen : CanvasLayer
         {
             CloseStorage();
             CloseLoot();
+            CloseSupply();
         }
         Input.MouseMode = Visible ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
     }
@@ -239,7 +289,9 @@ public partial class InventoryScreen : CanvasLayer
     }
 
     private void UpdateHint() => _hint.Text = _lootPanel.Visible
-        ? "Drag items from the body to take them  ·  Tab to close"
+        ? "Drag items from them to take them  ·  Tab to close"
+        : _supplyPanel.Visible
+        ? "Drag an item out to take a copy  ·  Drag one of yours onto the supply to delete it  ·  Tab to close"
         : _storagePanel.Visible
         ? "Drag between inventory and storage  ·  Ctrl + right-click to drop  ·  Tab to close"
         : "Drag to move or equip  ·  Ctrl + right-click to drop  ·  Tab to close";

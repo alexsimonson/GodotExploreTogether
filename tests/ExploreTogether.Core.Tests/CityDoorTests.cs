@@ -69,19 +69,6 @@ public class NpcLoadoutTests
             else Assert.Null(gear.EquippedWeapon);
         }
     }
-
-    [Fact]
-    public void Loot_HoldsEverythingTheyCarriedAndWore()
-    {
-        var city = CityLayout.Generate(5, 5, 2);
-        var doors = new CityDoors(city);
-        var guard = CityPopulation.Generate(city, 2).People.First(p => p.Role == NpcRole.Guard);
-        var (inv, gear) = NpcLoadout.Generate(guard, city, doors, 2);
-        var loot = NpcLoadout.ToLoot(inv, gear);
-        var before = inv.slots.Concat(gear.slots).Where(s => s.itemId != null).Select(s => (s.itemId, s.stack_size, s.data)).Order().ToList();
-        var after = loot.slots.Where(s => s.itemId != null).Select(s => (s.itemId, s.stack_size, s.data)).Order().ToList();
-        Assert.Equal(before, after);
-    }
 }
 
 public class LootRulesTests
@@ -120,6 +107,21 @@ public class LootRulesTests
         Assert.False(SlotContainerLogic.IsAllowedForLoot(inv, gear, loot, ItemContainer.Loot, 0, ItemContainer.Inventory, 0));
         Assert.False(SlotContainerLogic.IsAllowedForLoot(inv, gear, loot, ItemContainer.Loot, 5, ItemContainer.Inventory, 6)); // empty
         Assert.True(SlotContainerLogic.IsAllowedForLoot(inv, gear, loot, ItemContainer.Inventory, 0, ItemContainer.Inventory, 7)); // no loot involved
+    }
+
+    [Fact]
+    public void TheBodysEquipment_CanBeTakenAndWorn_ButNothingGoesOntoIt()
+    {
+        var (inv, gear, loot) = Setup();
+        var bodyGear = new Gear();
+        bodyGear.slots[(int)EquipmentType.Head].itemId = 22; // helmet
+        bodyGear.slots[(int)EquipmentType.Head].stack_size = 1;
+        var head = (int)EquipmentType.Head;
+        Assert.True(SlotContainerLogic.IsAllowedForLoot(inv, gear, loot, ItemContainer.LootGear, head, ItemContainer.Gear, head, bodyGear));
+        Assert.True(SlotContainerLogic.Move(inv, gear, ItemContainer.LootGear, head, ItemContainer.Gear, head, loot: loot, lootGear: bodyGear));
+        Assert.Equal(22, gear.slots[head].itemId);
+        Assert.Null(bodyGear.slots[head].itemId);
+        Assert.False(SlotContainerLogic.IsAllowedForLoot(inv, gear, loot, ItemContainer.Gear, head, ItemContainer.LootGear, head, bodyGear));
     }
 }
 
@@ -160,31 +162,24 @@ public class BodyDragTests
 public class KnockOutLootTests
 {
     [Fact]
-    public void WakingUp_PutsBackWhatWasntTaken()
-    {
-        var city = CityLayout.Generate(5, 5, 2);
-        var doors = new CityDoors(city);
-        var guard = CityPopulation.Generate(city, 2).People.First(p => p.Role == NpcRole.Guard);
-        var (inv, gear) = NpcLoadout.Generate(guard, city, doors, 2);
-        var weapon = gear.EquippedWeapon!.Id;
-        var loot = NpcLoadout.ToLoot(inv, gear);
-        // A player takes the key.
-        var key = loot.slots.First(s => s.itemId == ItemCatalog.KeyId);
-        key.itemId = null;
-        key.stack_size = 0;
-        key.data = null;
-        var (inv2, gear2) = NpcLoadout.FromLoot(loot);
-        Assert.False(doors.HasKey(inv2, guard.Home));
-        Assert.Equal(weapon, gear2.EquippedWeapon!.Id);
-        Assert.Equal(22, gear2.slots[(int)EquipmentType.Head].itemId);
-    }
-
-    [Fact]
     public void BluntWeapons_KnockOut_AndAreNotRandomLoot()
     {
         Assert.True(ItemCatalog.Get(ItemCatalog.BatId)!.KnocksOut);
         Assert.True(ItemCatalog.Get(ItemCatalog.ConcreteBlockId)!.KnocksOut);
         Assert.False(ItemCatalog.Get(1515)!.KnocksOut);
         Assert.Equal(ItemClass.Melee, ItemCatalog.Get(ItemCatalog.BatId)!.Class);
+    }
+}
+
+public class DebugSupplyTests
+{
+    [Fact]
+    public void Supply_OffersEveryUsableItem_ButNoPassOrKeys()
+    {
+        Assert.DoesNotContain(DebugSupply.Items, i => i.Id is ItemCatalog.DungeonPassId or ItemCatalog.KeyId);
+        Assert.Contains(DebugSupply.Items, i => i.Id == ItemCatalog.BatId);
+        Assert.Equal(DebugSupply.Items.Count * 4, DebugSupply.Quads().Length);
+        Assert.Equal(30, DebugSupply.CountPerTake(ItemCatalog.Get(ItemCatalog.PistolRoundsId)!));
+        Assert.Equal(1, DebugSupply.CountPerTake(ItemCatalog.Get(1515)!));
     }
 }

@@ -11,6 +11,8 @@
 [ext_resource type="PackedScene" path="res://scenes/props/DungeonEntrance.tscn" id="9_entrance"]
 [ext_resource type="PackedScene" path="res://scenes/props/StorageChest.tscn" id="10_storage"]
 [ext_resource type="PackedScene" path="res://scenes/props/CityGate.tscn" id="11_city_gate"]
+[ext_resource type="PackedScene" path="res://scenes/props/DebugSupply.tscn" id="12_debug_supply"]
+[ext_resource type="PackedScene" path="res://scenes/props/Locksmith.tscn" id="13_locksmith"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_sky"]
 
@@ -227,6 +229,12 @@ transform = Transform3D(-1, 0, 0, 0, 1, 0, 0, 0, -1, 0, 0, 19.2)
 
 [node name="CityGate" parent="." instance=ExtResource("11_city_gate")]
 transform = Transform3D(-1, 0, 0, 0, 1, 0, 0, 0, -1, -6, 0, 19.2)
+
+[node name="DebugSupply" parent="." instance=ExtResource("12_debug_supply")]
+transform = Transform3D(0, 0, -1, 0, 1, 0, 1, 0, 0, 9, 0, 14)
+
+[node name="Locksmith" parent="." instance=ExtResource("13_locksmith")]
+transform = Transform3D(0, 0, -1, 0, 1, 0, 1, 0, 0, 13, 0, 14)
 
 [node name="HubStorage" parent="." instance=ExtResource("10_storage")]
 transform = Transform3D(0, 0, -1, 0, 1, 0, 1, 0, 0, 5, 0, 14)

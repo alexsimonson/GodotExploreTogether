@@ -74,7 +74,9 @@ public partial class NetSession : Node
     public event Action<DungeonStatus>? DungeonStatusReceived;
     public event Action<float, float>? CityClockReceived;                // hour of day, game hours per real second
     public event Action<int[]>? DoorStatesReceived;                      // (parcel, open, locked) triples
-    public event Action<string, int[]>? LootReceived;                    // whose body, (slot, item, count, data) quads
+    /// <summary>whose body; their inventory as (slot, item, count, data) quads; their gear item ids and data per slot</summary>
+    public event Action<string, int[], int[], int[]>? LootReceived;
+    public event Action<int[]>? SupplyReceived;                          // the debug supply as quads
     public event Action<string>? DragStateReceived;                      // the name of whoever we're dragging, or "" 
     public event Action<int, int>? AmmoReceived;                         // magazine, reserve
     public event Action<Vector3, int, float, Color>? MagicAreaReceived;  // position, magic style, lifetime, caster's color
@@ -245,7 +247,10 @@ public partial class NetSession : Node
 
     public void SendDoorStates(long peer, int[] triples) => RpcId(peer, MethodName.DoorStates, triples);
 
-    public void SendLoot(long peer, string title, int[] quads) => RpcId(peer, MethodName.Loot, title, quads);
+    public void SendLoot(long peer, string name, int[] quads, int[] gear, int[] gearData) =>
+        RpcId(peer, MethodName.Loot, name, quads, gear, gearData);
+
+    public void SendSupply(long peer, int[] quads) => RpcId(peer, MethodName.Supply, quads);
 
     public void SendDragState(long peer, string draggingName) => RpcId(peer, MethodName.DragState, draggingName);
 
@@ -308,7 +313,10 @@ public partial class NetSession : Node
     private void DoorStates(int[] triples) => DoorStatesReceived?.Invoke(triples);
 
     [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
-    private void Loot(string title, int[] quads) => LootReceived?.Invoke(title, quads);
+    private void Loot(string name, int[] quads, int[] gear, int[] gearData) => LootReceived?.Invoke(name, quads, gear, gearData);
+
+    [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void Supply(int[] quads) => SupplyReceived?.Invoke(quads);
 
     [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void DragState(string draggingName) => DragStateReceived?.Invoke(draggingName);

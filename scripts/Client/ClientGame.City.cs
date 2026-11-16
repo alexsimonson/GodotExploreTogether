@@ -112,17 +112,19 @@ public partial class ClientGame
 
     // ---- searching bodies ----
 
-    private void OnLoot(string title, int[] quads)
+    private void OnLoot(string name, int[] quads, int[] gear, int[] gearData)
     {
-        GD.Print($"[client] {title}: " + string.Join(", ", Enumerable.Range(0, quads.Length / 4)
-            .Select(i => ItemCatalog.NameOf(quads[i * 4 + 1]) + (quads[i * 4 + 2] > 1 ? $" x{quads[i * 4 + 2]}" : ""))));
-        _lastLootQuads = quads;
-        if (_inventory.LootOpen) _inventory.UpdateLoot(quads);
-        else _inventory.ShowLoot(title, quads);
+        var worn = gear.Where(g => g >= 0).Select(ItemCatalog.NameOf);
+        GD.Print($"[client] {name} carries: " + string.Join(", ", Enumerable.Range(0, quads.Length / 4)
+            .Select(i => ItemCatalog.NameOf(quads[i * 4 + 1]) + (quads[i * 4 + 2] > 1 ? $" x{quads[i * 4 + 2]}" : "")))
+            + $" | wears: {string.Join(", ", worn)}");
+        (_lastLootQuads, _lastLootGear) = (quads, gear);
+        if (_inventory.LootOpen) _inventory.UpdateLoot(quads, gear, gearData);
+        else _inventory.ShowLoot(name, quads, gear, gearData);
         DevDoorsAfterLoot();
     }
 
-    private int[] _lastLootQuads = [];
+    private int[] _lastLootQuads = [], _lastLootGear = [];
 
     /// <summary>Remember which body E was pressed on, so the panel can close when the player walks away.</summary>
     private void NoteInteraction(string interactionId)
@@ -141,20 +143,23 @@ public partial class ClientGame
         if (!near && !CmdArgs.Has("dev-doors")) _inventory.CloseLoot();
     }
 
-    /// <summary>"Take all": each item into the stack it merges with, or the next free inventory slot.</summary>
+    /// <summary>"Take all": what they wear, then what they carry, each into the stack it merges with or the next free inventory slot.</summary>
     private void TakeAllLoot()
     {
         var used = Enumerable.Range(0, _lastInventoryQuads.Length / 4).ToDictionary(i => _lastInventoryQuads[i * 4], i => _lastInventoryQuads[i * 4 + 1]);
         var free = new Queue<int>(Enumerable.Range(0, Inventory.DefaultMaxSlots).Where(i => !used.ContainsKey(i)));
-        for (var i = 0; i + 3 < _lastLootQuads.Length; i += 4)
+        var items = Enumerable.Range(0, _lastLootGear.Length).Where(g => _lastLootGear[g] >= 0)
+            .Select(g => (Container: ItemContainer.LootGear, Slot: g, Item: _lastLootGear[g]))
+            .Concat(Enumerable.Range(0, _lastLootQuads.Length / 4)
+                .Select(i => (Container: ItemContainer.Loot, Slot: _lastLootQuads[i * 4], Item: _lastLootQuads[i * 4 + 1])));
+        foreach (var (container, slot, item) in items)
         {
-            var (slot, item) = (_lastLootQuads[i], _lastLootQuads[i + 1]);
             var stackOnto = ItemCatalog.Get(item) is { Stack: true } ? used.FirstOrDefault(u => u.Value == item).Key : -1;
             if (stackOnto < 0 || !used.ContainsKey(stackOnto) || used[stackOnto] != item) stackOnto = -1;
             var target = stackOnto >= 0 ? stackOnto : free.Count > 0 ? free.Dequeue() : -1;
             if (target < 0) break; // inventory full
             used[target] = item;
-            _session.SendMoveItem((int)ItemContainer.Loot, slot, (int)ItemContainer.Inventory, target);
+            _session.SendMoveItem((int)container, slot, (int)ItemContainer.Inventory, target);
         }
     }
 

@@ -59,37 +59,4 @@ public static class NpcLoadout
         if (random.Next(100) < 20) inventory.AddItems(HealthKitId, 1);
         return (inventory, gear);
     }
-
-    /// <summary>
-    /// Waking up: whatever is left on them goes back on (equipment into its empty gear slot, the rest into the
-    /// inventory). What a player took stays taken.
-    /// </summary>
-    public static (Inventory Inventory, Gear Gear) FromLoot(Inventory loot)
-    {
-        var inventory = new Inventory();
-        var gear = new Gear();
-        foreach (var s in loot.slots.Where(s => s.itemId != null))
-        {
-            var def = ItemCatalog.Get(s.itemId!.Value);
-            var target = def?.Slot is { } type && gear.slots[(int)type].itemId == null
-                ? gear.slots[(int)type]
-                : inventory.FindEmptySlot() is var free and >= 0 ? inventory.slots[free] : null;
-            if (target != null) (target.itemId, target.stack_size, target.data, target.uid) = (s.itemId, s.stack_size, s.data, s.uid);
-        }
-        return (inventory, gear);
-    }
-
-    /// <summary>
-    /// Everything a body carries, as one container to loot: the inventory's items, then the gear's.
-    /// </summary>
-    public static Inventory ToLoot(Inventory inventory, Gear gear)
-    {
-        var loot = new Inventory(Inventory.DefaultMaxSlots + Gear.SlotCount);
-        foreach (var s in inventory.slots.Concat(gear.slots).Where(s => s.itemId != null))
-        {
-            var target = loot.slots[loot.FindEmptySlot()];
-            (target.itemId, target.stack_size, target.data, target.uid) = (s.itemId, s.stack_size, s.data, s.uid);
-        }
-        return loot;
-    }
 }

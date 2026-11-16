@@ -44,10 +44,9 @@ public partial class CityNpc : Node3D
 
     // ---- server ----
     public CityNpcBrain Brain { get; set; } = null!;
+    /// <summary>What they carry. While they're down, players searching them take from this (and <see cref="Gear"/>).</summary>
     public Inventory Inventory { get; set; } = new();
     public Gear Gear { get; set; } = new();
-    /// <summary>What the body holds while down (inventory and gear together); players take from it.</summary>
-    public Inventory? Loot { get; private set; }
     /// <summary>The peer dragging this body, or 0.</summary>
     public long DraggedBy { get; set; }
     /// <summary>Server: they came round (whoever was dragging or searching them has to let go).</summary>
@@ -125,21 +124,29 @@ public partial class CityNpc : Node3D
         return true;
     }
 
-    /// <summary>Down: everything they carry becomes one searchable container.</summary>
-    private void GoDown()
+    /// <summary>Down: they can be searched (their inventory and equipment, as they are) and dragged.</summary>
+    private void GoDown() => MarkDown();
+
+    /// <summary>
+    /// Poses the body and its hitbox for a fall of 0 (standing) to 1 (lying on its back, head toward local +Z), so
+    /// aiming, interacting and the server's reach checks all use where the body actually is. The hitbox sits at the
+    /// body's middle (0.9 m up the body from the feet).
+    /// </summary>
+    private void Pose(float fall)
     {
-        if (Loot == null)
-        {
-            Loot = NpcLoadout.ToLoot(Inventory, Gear);
-            Inventory = new Inventory();
-            Gear = new Gear();
-        }
-        MarkDown();
+        var tilt = Mathf.Pi / 2 * fall * fall;
+        var lift = 0.15f * fall;
+        _body.Rotation = new Vector3(tilt, 0, 0);
+        _body.Position = new Vector3(0, lift, 0);
+        _hitbox.Rotation = new Vector3(tilt, 0, 0);
+        _hitbox.Position = new Vector3(0, 0.9f * Mathf.Cos(tilt) + lift, 0.9f * Mathf.Sin(tilt));
+        _label.Position = new Vector3(0, 2.15f - 1.4f * fall, 0.9f * fall);
     }
 
     /// <summary>The body becomes searchable and draggable (and stops counting as solid).</summary>
     private void MarkDown()
     {
+        if (Main.IsServer) Pose(1); // clients animate the fall
         _hitbox.InteractionId = LootId;
         _hitbox.Prompt = $"Search {NetName}  ·  [G] Drag";
     }
@@ -148,11 +155,10 @@ public partial class CityNpc : Node3D
     {
         if (!Main.IsServer || !NetUnconscious || NetDead) return;
         if ((_wakeIn -= delta) > 0) return;
-        // Coming round: what's left goes back on, and they find their way back to the street.
-        (Inventory, Gear) = NpcLoadout.FromLoot(Loot!);
-        Loot = null;
+        // Coming round (minus whatever was taken), they find their way back to the street.
         NetUnconscious = false;
         _hitbox.InteractionId = "";
+        Pose(0);
         Brain.WakeUp();
         NetActivity = Brain.Activity;
         WokeUp?.Invoke(this);
@@ -181,8 +187,8 @@ public partial class CityNpc : Node3D
             // A little bob while walking.
             _walkPhase = NetMoving ? _walkPhase + dt * 9f : 0;
         }
-        _body.Rotation = new Vector3(Mathf.Pi / 2 * _fall * _fall, 0, 0);
-        _body.Position = new Vector3(0, 0.15f * _fall + (NetMoving && !IsDown ? Mathf.Abs(Mathf.Sin(_walkPhase)) * 0.06f : 0), 0);
+        Pose(_fall);
+        if (NetMoving && !IsDown) _body.Position += new Vector3(0, Mathf.Abs(Mathf.Sin(_walkPhase)) * 0.06f, 0);
 
         var text = NetDead ? $"{NetName}\n(dead)"
             : NetUnconscious ? $"{NetName}\n(unconscious)"
