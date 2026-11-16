@@ -250,6 +250,7 @@ public sealed class InstanceManager
         player.Name = peer.ToString();
         player.DisplayName = displayName;
         player.PlayerColor = color;
+        player.NetOutfit = color; // until a shirt says otherwise (see ServerGame.LookOf)
 
         Vector3 spawn;
         float yaw;

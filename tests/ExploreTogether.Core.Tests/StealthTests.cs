@@ -547,18 +547,94 @@ public class ReactionTests
         Assert.Equal("fleeing", walker.Activity);
     }
 
+    private static readonly Look Red = Look.FromRgb(0.8f, 0.2f, 0.18f, WeaponKind.Gun);
+    private static readonly Look Blue = Look.FromRgb(0.2f, 0.35f, 0.8f, WeaponKind.None);
+
+    private static Percepts SeenLooking(CityNpcBrain b, Look look, float distance = 6, float clarity = 1)
+    {
+        var p = new Percepts();
+        p.Players.Add(new PlayerSighting(42, "Suspect", b.X - MathF.Sin(b.Yaw) * distance, b.Z - MathF.Cos(b.Yaw) * distance,
+            Conduct.None, -1, clarity, 0, look));
+        return p;
+    }
+
     [Fact]
-    public void ADispatchedOfficer_RecognizesTheSuspectOnSight()
+    public void ADispatchedOfficer_WithADescription_RecognizesTheSuspect_AfterAGoodLook()
     {
         var w = Start(hour: 10);
         w.Run(1);
         var cop = w.Brains.First(b => b.Person.Role == NpcRole.Police && b.Activity == "patrolling");
-        Assert.True(cop.Dispatch(cop.X + 30, cop.Z, 42, Severity.Crime));
+        Assert.True(cop.Dispatch(cop.X + 30, cop.Z, 42, Severity.Crime, description: Red, confidence: 0.6f));
         Assert.Equal("responding", cop.Activity);
-        // Seen doing nothing wrong, the description is enough.
-        var (px, pz) = (cop.X - MathF.Sin(cop.Yaw) * 6, cop.Z - MathF.Cos(cop.Yaw) * 6);
-        cop.Perceive(SeeingPlayer(cop, px, pz, Conduct.None, -1), 0.2f, 10);
+        cop.Perceive(SeenLooking(cop, Red), 0.2f, 10);
+        Assert.NotEqual("arresting", cop.Activity); // not at a glance
+        for (var i = 0; i < 20 && cop.Activity != "arresting"; i++) cop.Perceive(SeenLooking(cop, Red), 0.2f, 10);
         Assert.Equal("arresting", cop.Activity);
+    }
+
+    [Fact]
+    public void ADifferentShirt_ThrowsOffADescription()
+    {
+        var w = Start(hour: 10);
+        w.Run(1);
+        var cop = w.Brains.First(b => b.Person.Role == NpcRole.Police && b.Activity == "patrolling");
+        cop.Dispatch(cop.X + 30, cop.Z, 42, Severity.Crime, description: Red, confidence: 0.8f);
+        for (var i = 0; i < 50; i++) cop.Perceive(SeenLooking(cop, Blue), 0.2f, 10);
+        Assert.NotEqual("arresting", cop.Activity);
+        Assert.True(cop.SuspicionOf(42).Level < Stealth.Alarmed);
+    }
+
+    [Fact]
+    public void WithoutADescription_TheyOnlyKnowWhere()
+    {
+        var w = Start(hour: 10);
+        w.Run(1);
+        var cop = w.Brains.First(b => b.Person.Role == NpcRole.Police && b.Activity == "patrolling");
+        cop.Dispatch(cop.X + 30, cop.Z, 42, Severity.Violent);
+        for (var i = 0; i < 50; i++) cop.Perceive(SeenLooking(cop, Red), 0.2f, 10);
+        Assert.True(cop.SuspicionOf(42).Level < Stealth.Alarmed, "an innocent-looking passer-by, for all they know");
+    }
+
+    [Fact]
+    public void Descriptions_Match_AndDegradeWhenRetold()
+    {
+        Assert.Equal(1, Witness.Match(Red, Red), 3);
+        Assert.True(Witness.Match(Red, Blue) < 0.4f);
+        Assert.True(Witness.Match(Red, Red with { Weapon = WeaponKind.None }) > 0.8f); // put the gun away: still the red shirt
+        var grey = Look.FromRgb(0.5f, 0.5f, 0.5f, WeaponKind.None);
+        Assert.True(Witness.Match(grey, Red with { Weapon = WeaponKind.None }) < 0.4f);
+        var random = new Random(1);
+        Assert.All(Enumerable.Range(0, 50), _ => Assert.Equal(Red, Witness.Retell(Red, 1, random)));
+        var vague = Enumerable.Range(0, 400).Select(_ => Witness.Retell(Red, 0.3f, random)).ToList();
+        Assert.True(vague.Count(l => l.Weapon == WeaponKind.Unknown) > 150, "unsure tellers leave details out");
+        Assert.True(vague.Average(l => Witness.Match(Red, l)) < 0.9f, "and get things wrong");
+        Assert.True(Witness.Combine(0.5f, 0.5f) > 0.7f);
+        Assert.True(Witness.FirstHand(1) > Witness.FirstHand(0.2f));
+    }
+
+    [Fact]
+    public void LosingSight_TheyRunToWhereTheySawYou_LookAround_ThenSearch()
+    {
+        var w = Start(hour: 10);
+        w.Run(1);
+        var cop = w.Brains.First(b => b.Person.Role == NpcRole.Police && b.Activity == "patrolling");
+        cop.Obstacles = (_, _, _, _, _) => CityNav.Obstacle.None; // open ground between them
+        var (px, pz) = (cop.X - MathF.Sin(cop.Yaw) * 8, cop.Z - MathF.Cos(cop.Yaw) * 8);
+        for (var i = 0; i < 3; i++) cop.Perceive(SeeingPlayer(cop, px, pz, Conduct.Violent, -1), 0.2f, 10);
+        Assert.Equal(Mood.Hostile, cop.Mood);
+        // Out of sight from now on: they head for the spot, look around there, then search.
+        var seen = new List<string>();
+        for (var i = 0; i < 300; i++)
+        {
+            w.Run(0.05);
+            if (i % 4 == 0) cop.Perceive(new Percepts(), 0.2f, 10);
+            if (seen.Count == 0 || seen[^1] != cop.Activity) seen.Add(cop.Activity);
+        }
+        Assert.Contains("chasing", seen);
+        Assert.Contains("looking around", seen);
+        Assert.Contains("searching", seen);
+        Assert.True(seen.IndexOf("chasing") < seen.IndexOf("looking around") && seen.IndexOf("looking around") < seen.IndexOf("searching"),
+            string.Join(" > ", seen));
     }
 
     [Fact]

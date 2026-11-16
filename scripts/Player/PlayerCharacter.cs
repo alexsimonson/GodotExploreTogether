@@ -31,6 +31,9 @@ public partial class PlayerCharacter : CharacterBody3D
     [Export] public bool NetCrouching { get; set; }
     /// <summary>The equipped weapon's item id (-1: none), so everyone sees what a player is holding.</summary>
     [Export] public int NetWeapon { get; set; } = -1;
+    /// <summary>The colour of their outfit (shirt, or their own colour): what others see on their body, and remember.</summary>
+    [Export] public Color NetOutfit { get; set; } = PlayerLook.DefaultColor;
+    private Color _shownOutfit;
     private Node3D? _aimGhost;
     private MeshInstance3D? _weaponMesh;
     private int _shownWeapon = -1;
@@ -91,7 +94,8 @@ public partial class PlayerCharacter : CharacterBody3D
         var tag = GetNode<Label3D>("NameTag");
         tag.Text = DisplayName;
         tag.Modulate = PlayerColor.Lightened(0.35f);
-        GetNode<MeshInstance3D>("Body").MaterialOverride = new StandardMaterial3D { AlbedoColor = PlayerColor, Roughness = 0.6f };
+        _shownOutfit = NetOutfit;
+        GetNode<MeshInstance3D>("Body").MaterialOverride = new StandardMaterial3D { AlbedoColor = NetOutfit, Roughness = 0.6f };
 
         if (IsLocal)
         {
@@ -387,6 +391,11 @@ public partial class PlayerCharacter : CharacterBody3D
         UpdateRemoteAimGhost(delta);
         UpdateCrouchPose(delta);
         UpdateWeaponMesh();
+        if (!_shownOutfit.IsEqualApprox(NetOutfit))
+        {
+            _shownOutfit = NetOutfit;
+            ((StandardMaterial3D)GetNode<MeshInstance3D>("Body").MaterialOverride).AlbedoColor = NetOutfit;
+        }
         if (Position.DistanceTo(NetPosition) > RemoteSnapDistance)
             Position = NetPosition;
         else

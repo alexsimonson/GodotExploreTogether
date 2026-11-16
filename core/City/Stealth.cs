@@ -34,7 +34,9 @@ public static class Severity
 /// <summary>A player as one resident sees them right now (the server has already checked sight lines).</summary>
 /// <param name="Parcel">The parcel they're on, or -1 (street, alley).</param>
 /// <param name="Clarity">How well they're seen, 0..1 (distance against sight range).</param>
-public sealed record PlayerSighting(long Id, string Name, float X, float Z, Conduct Conduct, int Parcel, float Clarity, float Y = 0);
+/// <param name="Look">How they look (outfit colour, what they hold): what a witness remembers and descriptions are matched against.</param>
+public sealed record PlayerSighting(long Id, string Name, float X, float Z, Conduct Conduct, int Parcel, float Clarity, float Y = 0,
+    Look Look = default);
 
 /// <summary>A sound in the city: heard by residents within <see cref="Radius"/> m (half that through walls).</summary>
 /// <param name="Player">Who made it, if anyone (0: unknown, or a resident).</param>
@@ -190,4 +192,116 @@ public static class Stealth
     /// <summary>Does a noise this loud wake a sleeper (heavy sleepers only for gunfire)?</summary>
     public static bool Wakes(Noise n, Person sleeper) =>
         sleeper.Has(NpcTraits.HeavySleeper) ? n.Radius >= GunshotRadius : n.Radius >= KickRadius - 1;
+}
+
+/// <summary>What someone was holding, as a witness would put it.</summary>
+public enum WeaponKind { Unknown, None, Melee, Gun }
+
+/// <summary>
+/// How a player looks to a resident: the colour of their outfit (their shirt, or their own colour without one) as
+/// hue, saturation and brightness, and what they're holding. A description of someone is a <see cref="Look"/> too,
+/// possibly vague (<see cref="Hue"/> below 0: colour unknown; <see cref="Weapon"/> Unknown).
+/// </summary>
+public readonly record struct Look(float Hue, float Saturation, float Value, WeaponKind Weapon = WeaponKind.None)
+{
+    public static readonly Look Unknown = new(-1, 0, 0, WeaponKind.Unknown);
+
+    public bool ColourKnown => Hue >= 0;
+
+    public static Look FromRgb(float r, float g, float b, WeaponKind weapon)
+    {
+        float max = MathF.Max(r, MathF.Max(g, b)), min = MathF.Min(r, MathF.Min(g, b)), d = max - min;
+        var hue = 0f;
+        if (d > 1e-5f)
+        {
+            if (max == r) hue = ((g - b) / d % 6 + 6) % 6;
+            else if (max == g) hue = (b - r) / d + 2;
+            else hue = (r - g) / d + 4;
+            hue /= 6;
+        }
+        return new Look(hue, max <= 0 ? 0 : d / max, max, weapon);
+    }
+
+    public static WeaponKind WeaponOf(Conduct c) =>
+        (c & Conduct.GunOut) != 0 ? WeaponKind.Gun : (c & Conduct.Armed) != 0 ? WeaponKind.Melee : WeaponKind.None;
+
+    public override string ToString() =>
+        (ColourKnown ? $"hue {Hue:0.00} sat {Saturation:0.00} val {Value:0.00}" : "colour unknown") + $", {Weapon}";
+}
+
+/// <summary>
+/// Witnesses and descriptions: who knows what a culprit looks like, and how sure they are (0..1).
+///
+/// - A witness who sees the act first-hand remembers the look, as sure as they saw clearly (45% to 100%).
+/// - Retelling it (a call to the police, word passed to people nearby) loses confidence and detail: the colour
+///   drifts, the weapon may be left out. The less sure the teller, the worse it gets.
+/// - Recognizing someone from a description takes watching them: it builds up at
+///   <see cref="RecognitionRate"/> per second (recognized at 1), faster for a good match, a sure description and a
+///   clear view; a poor match never gets there. Changing shirt or putting the weapon away makes for a poorer match.
+/// - Combining accounts (police questioning witnesses) makes a description surer. Descriptions fade with time.
+/// </summary>
+public static class Witness
+{
+    /// <summary>How much of the teller's confidence survives a phone call to the police.</summary>
+    public const float CallFactor = 0.75f;
+    /// <summary>... and word of mouth to people nearby.</summary>
+    public const float HearsayFactor = 0.45f;
+    /// <summary>... and what a witness tells an officer who questions them in person.</summary>
+    public const float InterviewFactor = 0.85f;
+    /// <summary>Confidence lost per second (a sure description fades to useless over about 4 minutes).</summary>
+    public const float FadePerSecond = 0.0035f;
+    /// <summary>Below this, the description is too vague to use: forgotten.</summary>
+    public const float Useless = 0.12f;
+    /// <summary>Out of sight this long (s), and a pursuer has lost them: recognizing them again starts over.</summary>
+    public const float LoseAfterSeconds = 8f;
+
+    /// <summary>A first-hand witness's confidence, from how clearly they saw (0..1).</summary>
+    public static float FirstHand(float clarity) => 0.45f + 0.55f * Math.Clamp(clarity, 0, 1);
+
+    /// <summary>Two independent accounts together.</summary>
+    public static float Combine(float a, float b) => 1 - (1 - Math.Clamp(a, 0, 1)) * (1 - Math.Clamp(b, 0, 1));
+
+    /// <summary>How well what's seen fits a description, 0..1 (colour counts for three quarters, the weapon a quarter).</summary>
+    public static float Match(Look description, Look seen)
+    {
+        float colour;
+        if (!description.ColourKnown) colour = 0.5f;
+        else if (description.Saturation < 0.25f || seen.Saturation < 0.25f)
+            // Greys, whites, blacks: compare brightness; a grey never matches a strong colour.
+            colour = description.Saturation < 0.25f && seen.Saturation < 0.25f
+                ? Math.Clamp(1 - MathF.Abs(description.Value - seen.Value) / 0.3f, 0, 1)
+                : 0.1f;
+        else
+        {
+            var d = MathF.Abs(description.Hue - seen.Hue);
+            d = MathF.Min(d, 1 - d);
+            colour = Math.Clamp(1 - d / 0.12f, 0, 1);
+        }
+        var weapon = (description.Weapon, seen.Weapon) switch
+        {
+            (WeaponKind.Unknown, _) => 0.5f,
+            var (a, b) when a == b => 1f,
+            (WeaponKind.Gun or WeaponKind.Melee, WeaponKind.None) => 0.4f, // could have put it away
+            _ => 0.2f,
+        };
+        return 0.75f * colour + 0.25f * weapon;
+    }
+
+    /// <summary>
+    /// Per second, how fast someone with a description recognizes the person in front of them (1 = recognized).
+    /// Matches under 40% never count. <paramref name="context"/>: a boost for seeing them near where it happened.
+    /// </summary>
+    public static float RecognitionRate(float match, float confidence, float clarity, float context = 1) =>
+        2.5f * Math.Clamp((match - 0.4f) / 0.6f, 0, 1) * Math.Clamp(confidence, 0, 1) * Math.Clamp(clarity, 0, 1) * context;
+
+    /// <summary>A description passed on by someone this sure: the colour drifts, details drop out.</summary>
+    public static Look Retell(Look d, float confidence, Random random)
+    {
+        var doubt = 1 - Math.Clamp(confidence, 0, 1);
+        var weapon = random.NextDouble() < doubt * 0.8 ? WeaponKind.Unknown : d.Weapon;
+        if (!d.ColourKnown || random.NextDouble() < doubt * 0.35) return d with { Hue = -1, Weapon = weapon };
+        var hue = (d.Hue + (float)(random.NextDouble() * 2 - 1) * doubt * 0.15f + 1) % 1;
+        var value = Math.Clamp(d.Value + (float)(random.NextDouble() * 2 - 1) * doubt * 0.25f, 0, 1);
+        return new Look(hue, d.Saturation, value, weapon);
+    }
 }

@@ -221,7 +221,8 @@ public partial class ServerGame
         var at = _instances.FindPlayer(s.Peer)?.Player.NetPosition ?? npc.Position;
         if (npc.HeldBy != 0 && _sessions.TryGetValue(npc.HeldBy, out var holder)) LetGoOfResident(holder, escaped: false, notify: true);
         // They know who did it: they react (if they're still standing) and remember (if they come round).
-        if (knocksOut && !npc.IsDown) npc.Brain.Attacked(s.Peer, at.X, at.Z, at.Y);
+        var (look, clarity) = AttackerAsSeenBy(s, city, npc);
+        if (knocksOut && !npc.IsDown) npc.Brain.Attacked(s.Peer, at.X, at.Z, at.Y, look, clarity);
         if (knocksOut)
         {
             if (npc.KnockOut(WakeSeconds))
@@ -229,7 +230,7 @@ public partial class ServerGame
             return true;
         }
         var killed = npc.TakeDamage(damage);
-        if (!npc.IsDown) npc.Brain.Attacked(s.Peer, at.X, at.Z, at.Y);
+        if (!npc.IsDown) npc.Brain.Attacked(s.Peer, at.X, at.Z, at.Y, look, clarity);
         GD.Print($"[server] '{s.Character!.Name}' hit {npc.NetName} ({npc.Role}) with {weaponName} for {damage} " +
                  $"({npc.NetHealth} left){(killed ? $", killed in city {city.Id}" : "")}");
         return true;

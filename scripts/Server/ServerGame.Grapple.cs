@@ -86,7 +86,7 @@ public partial class ServerGame
         s.HoldingSurprised = surprised;
         s.NextEscapeRoll = Now + 1;
         (s.Strangling, s.StrangleProgress) = (false, 0);
-        npc.Brain.GrabbedBy(s.Peer, me.X, me.Z, surprised);
+        npc.Brain.GrabbedBy(s.Peer, me.X, me.Z, surprised, LookOf(s, _instances.FindPlayer(s.Peer)!.Value.Player));
         _session.SendGrabState(s.Peer, "holding", npc.NetName);
         _session.SendNotice(s.Peer, surprised ? $"You grab {npc.NetName} from behind. Hold left mouse to strangle, F to let go."
                                               : $"You grab {npc.NetName}! They're struggling. Hold left mouse to strangle, F to let go.");
@@ -160,7 +160,8 @@ public partial class ServerGame
             s.HoldingNpc = null;
             (s.Strangling, s.StrangleProgress) = (false, 0);
             npc.HeldBy = 0;
-            npc.Brain.Attacked(s.Peer, p.X, p.Z, p.Y); // they'll remember who it was
+            // They'll remember who it was, if they ever saw them (not when taken from behind by surprise).
+            npc.Brain.Attacked(s.Peer, p.X, p.Z, p.Y, s.HoldingSurprised ? null : LookOf(s, found.Player), 1);
             npc.KnockOut(WakeSeconds);
             _session.SendGrabState(s.Peer, "", "");
             _session.SendProgress(s.Peer, "", 0);

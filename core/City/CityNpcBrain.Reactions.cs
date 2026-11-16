@@ -21,8 +21,10 @@ public enum NpcIntentKind
     Revive,
 }
 
+/// <param name="Look">Reports: what the culprit looked like, as the reporter remembers it (null: they didn't see).</param>
+/// <param name="Confidence">Reports: how sure the reporter is of that description (0..1).</param>
 public readonly record struct NpcIntent(NpcIntentKind Kind, long Player = 0, float X = 0, float Z = 0, float Radius = 0,
-    int Severity = 0, string Text = "", int NpcId = -1)
+    int Severity = 0, string Text = "", int NpcId = -1, Look? Look = null, float Confidence = 0)
 {
     public static NpcIntent MakeNoise(float x, float z, float radius, string cause, int severity) =>
         new(NpcIntentKind.Noise, X: x, Z: z, Radius: radius, Severity: severity, Text: cause);
@@ -64,8 +66,20 @@ public sealed partial class CityNpcBrain
         public Conduct Conduct;
         public double LastSeen = -1000;
         public bool Visible;
-        /// <summary>Alarmed by them before: recognized on sight.</summary>
+        /// <summary>
+        /// They have a description of this person (<see cref="Description"/>, this sure: <see cref="Confidence"/>),
+        /// from seeing them do something, or from being told. Recognizing them from it takes a look
+        /// (<see cref="Recognition"/> builds up to 1); <see cref="Recognized"/> lasts while they keep them in sight.
+        /// </summary>
         public bool Grudge;
+        public Look Description = Look.Unknown;
+        public float Confidence;
+        public float Recognition;
+        public bool Recognized;
+        /// <summary>How they looked, and how clearly, when last seen; and which way they were heading.</summary>
+        public Look LastLook = Look.Unknown;
+        public float LastClarity;
+        public float HeadingX, HeadingZ;
         public bool Reported;
         public bool Resisted;
     }
@@ -84,6 +98,9 @@ public sealed partial class CityNpcBrain
     private readonly HashSet<int> _knownBodies = new(), _knownDoors = new();
     private readonly Queue<NpcIntent> _intents = new();
     private long _attackedBy;
+    private double _lookingSince = -1; // lost sight of whoever they were after: looking around since then
+    private Look? _reportLook;
+    private float _reportConfidence;
 
     private double _frozenUntil = -1;
 
@@ -196,12 +213,29 @@ public sealed partial class CityNpcBrain
         foreach (var seen in p.Players)
         {
             if (!_suspects.TryGetValue(seen.Id, out var sus)) _suspects[seen.Id] = sus = new Suspect();
+            float mx = seen.X - sus.X, mz = seen.Z - sus.Z;
+            var moved = MathF.Sqrt(mx * mx + mz * mz);
+            if (now - sus.LastSeen < 1.5 && moved > 0.3f) (sus.HeadingX, sus.HeadingZ) = (mx / moved, mz / moved);
             (sus.X, sus.Z, sus.Floor, sus.Parcel, sus.Conduct, sus.LastSeen, sus.Visible) = (seen.X, seen.Z, Place.FloorAt(seen.Y), seen.Parcel, seen.Conduct, now, true);
+            (sus.LastLook, sus.LastClarity) = (seen.Look, seen.Clarity);
             var (rate, severity, reason) = Stealth.Judge(Person, seen, _city, hour);
-            if (sus.Grudge && sus.Level < Stealth.Alarmed)
+            if (sus.Grudge && !sus.Recognized)
             {
-                (rate, reason) = (float.PositiveInfinity, "recognized");
-                severity = Math.Max(severity, sus.Severity);
+                // Is that them? Watching builds recognition: a good match, a sure description, a clear view.
+                // Seeing someone matching near where it happened (when looking for them) helps.
+                var context = _act is Act.Respond or Act.Search && _target == seen.Id && Dist(seen.X, seen.Z, _point.X, _point.Z) < 30 ? 1.5f : 1f;
+                sus.Recognition += Witness.RecognitionRate(Witness.Match(sus.Description, seen.Look), sus.Confidence, seen.Clarity, context) * seconds;
+                if (sus.Recognition >= 1) sus.Recognized = true;
+            }
+            if (sus.Grudge && sus.Recognized && sus.Level < Stealth.Alarmed)
+            {
+                // Recognized: a crime they know of means alarm; something lesser, a closer look.
+                if (sus.Severity >= Severity.Crime)
+                {
+                    (rate, reason) = (float.PositiveInfinity, "recognized");
+                    severity = Math.Max(severity, sus.Severity);
+                }
+                else sus.Level = MathF.Max(sus.Level, Stealth.Suspicious);
             }
             if (rate > 0)
             {
@@ -211,7 +245,17 @@ public sealed partial class CityNpcBrain
             else if (_act != Act.Attack) sus.Level = MathF.Max(0, sus.Level - Stealth.Fade * seconds);
         }
         foreach (var s in _suspects.Values)
+        {
+            if (!s.Visible && now - s.LastSeen > Witness.LoseAfterSeconds && (s.Recognized || s.Recognition > 0))
+            {
+                // Lost them: next time, they have to recognize them all over again.
+                (s.Recognized, s.Recognition) = (false, 0);
+                if (_act is not (Act.Attack or Act.Arrest) || _target != PlayerOf(s)) s.Level = MathF.Min(s.Level, Stealth.Curious - 5);
+            }
             if (!s.Visible && !s.Grudge) s.Level = MathF.Max(0, s.Level - Stealth.Fade * 0.5f * seconds);
+            if (s.Grudge && (s.Confidence -= Witness.FadePerSecond * seconds) < Witness.Useless)
+                (s.Grudge, s.Description, s.Recognized) = (false, Look.Unknown, false); // the memory has faded
+        }
 
         // Someone seen doing something terrible: anyone close by them draws a little suspicion too (once per incident),
         // falling off fast with distance. Each player is otherwise judged on their own conduct.
@@ -233,6 +277,34 @@ public sealed partial class CityNpcBrain
     }
 
     private readonly HashSet<(long, int)> _associated = new();
+
+    private long PlayerOf(Suspect s) => _suspects.FirstOrDefault(kv => kv.Value == s).Key;
+
+    /// <summary>
+    /// Seen with their own eyes (doing something, or attacking them): they remember the look, as sure as they saw
+    /// clearly, and know them right now.
+    /// </summary>
+    private static void Learn(Suspect sus)
+    {
+        if (sus.LastLook.ColourKnown || sus.LastLook.Weapon != WeaponKind.Unknown)
+        {
+            var sure = Witness.FirstHand(sus.LastClarity);
+            if (!sus.Grudge || sure >= sus.Confidence) sus.Description = sus.LastLook;
+            sus.Confidence = MathF.Max(sus.Confidence, sure);
+        }
+        sus.Grudge = sus.Confidence >= Witness.Useless;
+        sus.Recognized = true;
+    }
+
+    /// <summary>What they'd tell the police about someone: their description (or what they last saw), and how sure.</summary>
+    private static (Look? Look, float Confidence) Account(Suspect sus) =>
+        sus.Grudge ? (sus.Description, sus.Confidence)
+        : sus.LastLook.ColourKnown ? (sus.LastLook, Witness.FirstHand(sus.LastClarity) * 0.8f)
+        : (null, 0);
+
+    /// <summary>What a description they know (of a player) says, for others to ask: null if they have none.</summary>
+    public (Look Look, float Confidence)? DescriptionOf(long player) =>
+        _suspects.TryGetValue(player, out var s) && s.Grudge ? (s.Description, s.Confidence) : null;
 
     /// <summary>Guilt by association (see <see cref="Stealth.Association"/>): capped below alarm, at "suspicious".</summary>
     private static void Associate(Suspect s, float distance, string reason)
@@ -262,7 +334,7 @@ public sealed partial class CityNpcBrain
     /// <summary>Alarmed: what they do depends on role, personality, what they carry and how bad it is.</summary>
     private void Escalate(long player, Suspect sus)
     {
-        sus.Grudge = true;
+        if (sus.Visible || sus.Recognized) Learn(sus);
         var severity = sus.Severity;
         var violent = severity >= Severity.Violent || sus.Resisted;
         ReactionNote = $"{sus.Reason} ({severity})";
@@ -316,7 +388,9 @@ public sealed partial class CityNpcBrain
     {
         if (sus.Reported) return;
         sus.Reported = true;
-        Emit(new NpcIntent(NpcIntentKind.Report, player, sus.X, sus.Z, Severity: Math.Max(sus.Severity, Severity.Suspicious), Text: sus.Reason));
+        var (look, sure) = Account(sus);
+        Emit(new NpcIntent(NpcIntentKind.Report, player, sus.X, sus.Z, Severity: Math.Max(sus.Severity, Severity.Suspicious), Text: sus.Reason,
+            Look: look, Confidence: sure));
     }
 
     private void HearNoise(Noise n)
@@ -378,10 +452,11 @@ public sealed partial class CityNpcBrain
     // ================================================================ calls from the server
 
     /// <summary>
-    /// The police are told about trouble. Every resident told notes who it was (recognized on sight from now on);
-    /// with <paramref name="respond"/>, an officer who isn't busy goes to look. Returns true if they're on their way.
+    /// Told about trouble (the police, by a call; people nearby, by word of mouth). With a description, they may
+    /// recognize the culprit later, if they get a good look (see <see cref="Witness"/>); without one, they only know
+    /// where. With <paramref name="respond"/>, an officer who isn't busy goes to look. Returns true if they're on their way.
     /// </summary>
-    public bool Dispatch(float x, float z, long player, int severity, bool respond = true)
+    public bool Dispatch(float x, float z, long player, int severity, bool respond = true, Look? description = null, float confidence = 0)
     {
         if (player != 0)
         {
@@ -389,8 +464,14 @@ public sealed partial class CityNpcBrain
             sus.Severity = Math.Max(sus.Severity, severity);
             sus.Reason = sus.Reason == "" ? "wanted" : sus.Reason;
             sus.Reported = true;
-            if (severity >= Severity.Crime) sus.Grudge = true; // a description went out: recognized on sight
-            (sus.X, sus.Z) = (x, z);
+            if (description is { } d && confidence >= Witness.Useless)
+            {
+                // A second account adds to what they knew; a better one replaces the details.
+                if (!sus.Grudge || confidence > sus.Confidence) sus.Description = d;
+                sus.Confidence = sus.Grudge ? Witness.Combine(sus.Confidence, confidence * 0.5f) : confidence;
+                sus.Grudge = true;
+            }
+            if (!sus.Visible) (sus.X, sus.Z) = (x, z);
         }
         if (!respond || Person.Role != NpcRole.Police || IsDown || Held || Asleep) return false;
         if (_act is not (Act.None or Act.Watch or Act.Search or Act.Investigate)) return false;
@@ -400,11 +481,17 @@ public sealed partial class CityNpcBrain
     }
 
     /// <summary>A player hurt or tried to hurt them: they know who did it.</summary>
-    public void Attacked(long player, float px, float pz, float py = 0)
+    /// <param name="look">How the attacker looked to them (null: they didn't see), and how clearly.</param>
+    public void Attacked(long player, float px, float pz, float py = 0, Look? look = null, float clarity = 0.8f)
     {
         _attackedBy = player;
-        if (IsDown || Held) return;
         if (!_suspects.TryGetValue(player, out var sus)) _suspects[player] = sus = new Suspect();
+        if (look is { } l)
+        {
+            (sus.LastLook, sus.LastClarity) = (l, clarity);
+            Learn(sus); // remembered even if this knocks them out
+        }
+        if (IsDown || Held) return;
         (sus.X, sus.Z, sus.Floor, sus.LastSeen, sus.Level, sus.Severity, sus.Reason) = (px, pz, Place.FloorAt(py), _clockSeconds, Stealth.Alarmed, Severity.Violent, "attacked me");
         if (_act == Act.Holding) Emit(new NpcIntent(NpcIntentKind.Release, _target));
         _act = Act.None;
@@ -413,7 +500,7 @@ public sealed partial class CityNpcBrain
     }
 
     /// <summary>A player took hold of them (<paramref name="surprised"/>: from behind, unseen: they can't cry out).</summary>
-    public void GrabbedBy(long player, float px, float pz, bool surprised)
+    public void GrabbedBy(long player, float px, float pz, bool surprised, Look? look = null)
     {
         if (_act == Act.Holding) Emit(new NpcIntent(NpcIntentKind.Release, _target));
         EndReaction(returnToRoutine: false);
@@ -423,8 +510,13 @@ public sealed partial class CityNpcBrain
         _doorReady = false;
         Activity = "struggling";
         if (!_suspects.TryGetValue(player, out var sus)) _suspects[player] = sus = new Suspect();
-        (sus.X, sus.Z, sus.LastSeen, sus.Level, sus.Severity, sus.Reason, sus.Grudge) =
-            (px, pz, _clockSeconds, Stealth.Alarmed, Severity.Violent, "grabbed me", !surprised);
+        (sus.X, sus.Z, sus.LastSeen, sus.Level, sus.Severity, sus.Reason) =
+            (px, pz, _clockSeconds, Stealth.Alarmed, Severity.Violent, "grabbed me");
+        if (!surprised && look is { } l)
+        {
+            (sus.LastLook, sus.LastClarity) = (l, 1);
+            Learn(sus); // face to face
+        }
         if (!surprised)
         {
             Say(Pick("Get off me!", "Help! HELP!", "Let go of me!"));
@@ -450,7 +542,7 @@ public sealed partial class CityNpcBrain
         if (escaped) Say(Pick("Get away from me!", "Help! Police!", "You'll pay for that!"));
         if (_suspects.TryGetValue(player, out var sus))
         {
-            sus.Grudge = true;
+            if (escaped) Learn(sus); // they turned round and got a look at them
             Escalate(player, sus);
         }
         UpdateMood();
@@ -484,7 +576,8 @@ public sealed partial class CityNpcBrain
             Say(Person.Role == NpcRole.Police ? "Resisting arrest! Stop!" : Pick("Hey! Come back!", "Help! Police!"));
             Escalate(player, sus);
             if (Person.Role == NpcRole.Police)
-                Emit(new NpcIntent(NpcIntentKind.Report, player, sus.X, sus.Z, Severity: Severity.Violent, Text: "resisting arrest"));
+                Emit(new NpcIntent(NpcIntentKind.Report, player, sus.X, sus.Z, Severity: Severity.Violent, Text: "resisting arrest",
+                    Look: sus.Description, Confidence: sus.Confidence));
         }
         else EndReaction();
         UpdateMood();
@@ -540,7 +633,6 @@ public sealed partial class CityNpcBrain
     {
         if (_attackedBy == 0 || !_suspects.TryGetValue(_attackedBy, out var sus)) return;
         _recovering = false;
-        sus.Grudge = true;
         sus.Reported = false;
         Say(Pick("Ugh... my head... POLICE!", "Help! I was attacked!"));
         Escalate(_attackedBy, sus);
@@ -560,6 +652,7 @@ public sealed partial class CityNpcBrain
         _nextReplan = 0;
         _plannedTo = (float.NaN, float.NaN);
         _warned = _arrestWarned = false;
+        _lookingSince = -1;
         Activity = activity;
         if (act != Act.Watch) _route.Clear();
         _doorReady = false;
@@ -596,6 +689,7 @@ public sealed partial class CityNpcBrain
     private void StartFleeFrom(float x, float z, bool report, long player = 0, int severity = Severity.Crime, Suspect? sus = null)
     {
         Begin(Act.Flee, player, "fleeing", 2.6f, 25);
+        (_reportLook, _reportConfidence) = sus != null ? Account(sus) : (null, 0);
         Say(Pick("Help! Police!", "Somebody help!", "Aaah!"));
         Emit(NpcIntent.MakeNoise(X, Z, Stealth.ScreamRadius, "scream", Severity.Crime));
         _point = (x, z);
@@ -728,7 +822,8 @@ public sealed partial class CityNpcBrain
 
             case Act.Arrest:
                 if (sus == null) { EndReaction(); break; }
-                if (now - sus.LastSeen > 10) { StartSearch(sus.X, sus.Z, sus.Floor); break; }
+                if (!sus.Visible && Chase(sus, seconds)) break;
+                if (sus.Visible && _lookingSince >= 0) { _lookingSince = -1; Activity = _detainOnly ? "chasing" : "arresting"; Say(Pick("There you are!", "Stop!")); }
                 var da = Dist(sus.X, sus.Z, X, Z);
                 if (!_arrestWarned && da < 9)
                 {
@@ -770,7 +865,8 @@ public sealed partial class CityNpcBrain
 
             case Act.Attack:
                 if (sus == null) { EndReaction(); break; }
-                if (now - sus.LastSeen > 12) { StartSearch(sus.X, sus.Z, sus.Floor); break; }
+                if (!sus.Visible && Chase(sus, seconds)) break;
+                if (sus.Visible && _lookingSince >= 0) { _lookingSince = -1; Activity = "fighting"; Say(Pick("There!", "Got eyes on them!")); }
                 var dt = Dist(sus.X, sus.Z, X, Z);
                 WeaponOut = true;
                 if (HasGun)
@@ -801,7 +897,8 @@ public sealed partial class CityNpcBrain
                 {
                     // Calls for help on the way (shouting to someone, or on the phone).
                     _reportOnArrival = false;
-                    Emit(new NpcIntent(NpcIntentKind.Report, _target, _point.X, _point.Z, Severity: _reportSeverity, Text: "a call for help"));
+                    Emit(new NpcIntent(NpcIntentKind.Report, _target, _point.X, _point.Z, Severity: _reportSeverity, Text: "a call for help",
+                        Look: _reportLook, Confidence: _reportConfidence));
                 }
                 if (_route.Count == 0)
                 {
@@ -810,7 +907,8 @@ public sealed partial class CityNpcBrain
                         _reportOnArrival = false;
                         Activity = "calling the police";
                         Say(Pick("Hello, police? Come quick!", "Police! There's someone here!"));
-                        Emit(new NpcIntent(NpcIntentKind.Report, _target, _point.X, _point.Z, Severity: _reportSeverity, Text: "a call for help"));
+                        Emit(new NpcIntent(NpcIntentKind.Report, _target, _point.X, _point.Z, Severity: _reportSeverity, Text: "a call for help",
+                            Look: _reportLook, Confidence: _reportConfidence));
                         _actUntil = now + 6;
                         StandStill();
                     }
@@ -823,7 +921,11 @@ public sealed partial class CityNpcBrain
                 if (_route.Count == 0 && Dist(_point.X, _point.Z, X, Z) > 2f && double.IsNaN(_plannedTo.X)) SetRoute(_point, _pointFloor);
                 else if (_route.Count == 0)
                 {
-                    if (_act == Act.Respond) StartSearch(_point.X, _point.Z, _pointFloor);
+                    if (_act == Act.Respond)
+                    {
+                        Interview();
+                        StartSearch(_point.X, _point.Z, _pointFloor);
+                    }
                     else
                     {
                         // Look around for a few seconds.
@@ -874,6 +976,59 @@ public sealed partial class CityNpcBrain
                 break;
         }
         UpdateMood();
+    }
+
+    /// <summary>
+    /// The one they're after is out of sight: run to where they were last seen, then stop and look around; still
+    /// nothing, and they search the area (leaning the way they were heading). A blink doesn't count. Returns false
+    /// (carry on as usual) only for a moment's blink.
+    /// </summary>
+    private bool Chase(Suspect sus, float seconds)
+    {
+        var since = _clockSeconds - sus.LastSeen;
+        if (since < 0.6) return false;
+        if (_lookingSince < 0 && since < 15 && (Dist(sus.X, sus.Z, X, Z) > 1.3f || Floor != sus.Floor))
+        {
+            Activity = "chasing";
+            GoTo(sus.X, sus.Z, sus.Floor);
+            return true;
+        }
+        if (_lookingSince < 0)
+        {
+            _lookingSince = _clockSeconds;
+            Say(Pick("Where'd they go?", "Where are you?!", "Lost them..."));
+        }
+        StandStill();
+        Activity = "looking around";
+        Yaw += seconds * 2.2f;
+        if (_clockSeconds - _lookingSince > 3.5)
+        {
+            _lookingSince = -1;
+            StartSearch(sus.X + sus.HeadingX * 5, sus.Z + sus.HeadingZ * 5, sus.Floor);
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Arrived where trouble was reported: ask anyone around who saw it what they saw. Their accounts sharpen (or give)
+    /// a description of the culprit.
+    /// </summary>
+    private void Interview()
+    {
+        if (_target == 0 || _crowd == null) return;
+        if (!_suspects.TryGetValue(_target, out var sus)) _suspects[_target] = sus = new Suspect();
+        var asked = 0;
+        foreach (var other in _crowd.Npcs)
+        {
+            if (other == this || other.IsDown || Dist(other.X, other.Z, X, Z) > 8 || MathF.Abs(other.Y - Y) > 2) continue;
+            if (other.DescriptionOf(_target) is not { } told) continue;
+            var sure = told.Confidence * Witness.InterviewFactor;
+            if (!sus.Grudge || sure > sus.Confidence) sus.Description = Witness.Retell(told.Look, told.Confidence, _random);
+            sus.Confidence = sus.Grudge ? Witness.Combine(sus.Confidence, sure) : sure;
+            sus.Grudge = sus.Confidence >= Witness.Useless;
+            asked++;
+        }
+        if (asked > 0) Say(Pick("What did they look like?", "Which way did they go?", "Tell me exactly what you saw."));
     }
 
     private void StartSearchOrEnd(Suspect? sus)

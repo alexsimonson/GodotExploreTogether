@@ -161,7 +161,7 @@ public partial class ServerGame
                 if (!Sees(chest, range)) continue;
                 var d = new Vector2(chest.X - me.X, chest.Z - me.Z).Length();
                 _percepts.Players.Add(new PlayerSighting(peer, s.Character!.Name, player.NetPosition.X, player.NetPosition.Z, c,
-                    parcel, Stealth.Clarity(d, range), player.NetPosition.Y));
+                    parcel, Stealth.Clarity(d, range), player.NetPosition.Y, LookOf(s, player, c)));
             }
             foreach (var body in bodies)
             {
@@ -273,20 +273,65 @@ public partial class ServerGame
         var police = city.Npcs.Values.Where(n => n.Role == NpcRole.Police && !n.IsDown)
             .OrderBy(n => new Vector2(n.Position.X - report.X, n.Position.Z - report.Z).Length());
         foreach (var officer in police)
-            if (officer.Brain.Dispatch(report.X, report.Z, report.Player, report.Severity, respond: sent.Count < responders))
+            if (officer.Brain.Dispatch(report.X, report.Z, report.Player, report.Severity, respond: sent.Count < responders,
+                    Retold(report, Witness.CallFactor), report.Confidence * Witness.CallFactor))
                 sent.Add(officer.NetName);
         // Bystanders who were told (or saw it) recognize them too: tell everyone nearby.
         if (report.Player != 0)
             foreach (var other in city.Npcs.Values.Where(n => n.Role != NpcRole.Police && !n.IsDown
                          && new Vector2(n.Position.X - report.X, n.Position.Z - report.Z).Length() < 25))
-                other.Brain.Dispatch(report.X, report.Z, report.Player, report.Severity, respond: false);
+                other.Brain.Dispatch(report.X, report.Z, report.Player, report.Severity, respond: false,
+                    Retold(report, Witness.HearsayFactor), report.Confidence * Witness.HearsayFactor);
         if (duplicate) return;
         city.RecentReports.Add((now, report.X, report.Z, report.Player));
         var who = report.Player != 0 && _sessions.TryGetValue(report.Player, out var s) ? $" ('{s.Character?.Name}')" : "";
+        if (report.Look is { } said) who += $", described as {said} ({report.Confidence:P0} sure)";
         GD.Print($"[server] {reporter.NetName} ({reporter.Role}) reports {report.Text}{who} at ({report.X:0}, {report.Z:0}), " +
                  $"severity {report.Severity}: {(sent.Count > 0 ? string.Join(", ", sent) + " responding" : "no police free")}");
         if (report.Player != 0 && city.Players.ContainsKey(report.Player))
             _session.SendNotice(report.Player, sent.Count > 0 ? "Someone called the police!" : "Someone's calling for the police!");
+    }
+
+    /// <summary>A description passed on (each retelling with its own slips).</summary>
+    private Look? Retold(NpcIntent report, float factor) =>
+        report.Look is { } look ? Witness.Retell(look, report.Confidence * factor, _combatRandom) : null;
+
+    /// <summary>
+    /// The colour of a player's outfit: their shirt if they wear one, otherwise their own colour. It's what residents
+    /// remember and recognize (change shirts to throw off a description), and what other players see on their body.
+    /// </summary>
+    private static Color OutfitOf(PeerSession s, PlayerCharacter player) =>
+        s.Gear?.slots[(int)EquipmentType.Torso].itemId switch
+        {
+            21 => new Color(0.85f, 0.84f, 0.8f), // Shirt
+            23 => new Color(0.2f, 0.35f, 0.8f),  // Blue Shirt
+            24 => new Color(0.8f, 0.2f, 0.18f),  // Red Shirt
+            25 => new Color(0.25f, 0.6f, 0.25f), // Green Shirt
+            _ => player.PlayerColor,
+        };
+
+    /// <summary>How a player looks to residents right now (also keeps the replicated outfit colour up to date).</summary>
+    private static Look LookOf(PeerSession s, PlayerCharacter player, Conduct? conduct = null)
+    {
+        var outfit = OutfitOf(s, player);
+        if (!player.NetOutfit.IsEqualApprox(outfit)) player.NetOutfit = outfit;
+        var weapon = conduct is { } c ? Look.WeaponOf(c) : s.Gear?.EquippedWeapon?.Class switch
+        {
+            ItemClass.Gun => WeaponKind.Gun,
+            ItemClass.Melee or ItemClass.Magic => WeaponKind.Melee,
+            _ => WeaponKind.None,
+        };
+        return Look.FromRgb(outfit.R, outfit.G, outfit.B, weapon);
+    }
+
+    /// <summary>How a resident sees the player attacking them: their look, and how clearly (distance, light).</summary>
+    private (Look Look, float Clarity) AttackerAsSeenBy(PeerSession s, ServerInstance city, CityNpc npc)
+    {
+        if (_instances.FindPlayer(s.Peer) is not { } found) return (Look.Unknown, 0);
+        var p = found.Player.NetPosition;
+        var d = new Vector2(p.X - npc.Position.X, p.Z - npc.Position.Z).Length();
+        var range = Stealth.SightRange(LightAt(city, p.X, p.Z), found.Player.NetCrouching, false);
+        return (LookOf(s, found.Player), Stealth.Clarity(d, range));
     }
 
     /// <summary>Damage dealt to players by residents (players have 100 health).</summary>
