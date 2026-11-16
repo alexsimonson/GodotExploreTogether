@@ -130,26 +130,50 @@ Each one ends with something runnable and a screenshot. Trespass detection is pu
    - Measured: 5×5 builds in about 50–80 ms (about 120 parcels), 10×10 in about 150–200 ms (about 490 parcels).
      - City check: 363/363 (5×5, seed 1), 354/354 (seed 7), 1464/1464 (10×10, seed 3).
    - Smoke scenario `city`: two players end up in the same city, its geometry passes the check, both return, and the city closes.
-3. **Trespass detection (players only):**
-   - Every parcel is private except shops.
-   - The server tracks which parcel each player is on and flags trespass.
+3. ✅ **Custom buildings** (added on request): building scenes in `scenes/city/buildings/` join the randomization.
+   - `CityBuilding` is the root script, with an editor preview of the footprint. `CityCatalog` loads the scenes.
+   - `BuildingCatalog` (core) holds the designs. A checksum travels with the city, so server and client must match.
+   - A fit report runs at startup. `--city-favor NAME` places a design wherever it fits.
+   - Example: `ExampleCottage.tscn`. Guide: [docs/CITY-BUILDINGS.md](../CITY-BUILDINGS.md).
+4. ✅ **Residents and schedules** (moved ahead of trespass on request):
+   - `core/City/CityPopulation`: about 1.6 people per tile (40 for 5×5, 160 for 10×10).
+     - 2 guards per guardhouse, who live there.
+     - Workers: about 40% of the rest, filling shop (1), office (4) and warehouse (3) jobs.
+     - Civilians: everyone else.
+     - Households of 1 up to the home's capacity, sharing a family name.
+   - Access rule: home, workplace, and public parcels (shops). This is the basis for trespass.
+   - `core/City/CityPaths`: no navmesh needed (the old milestone "Navigation" is dropped for NPCs).
+     - Routes use only street cells (with a personal lane offset), plus the straight way through the person's own gate and door to a spot inside.
+     - So residents never cross other people's property.
+   - `core/City/CityNpcBrain` with `CityClock`:
+     - Civilians: home until 8, errands (nearby shops, walks) until 12, lunch at home, errands 13 to 18, home.
+     - Workers: at work 7 to 17, errands until 18:30, then home.
+     - Guards: day or night shift patrolling streets within about 100 m of their post, resting in the guardhouse off shift.
+     - Everyone shifts their times by up to ±45 minutes.
+   - Server: `CitySimulation` (one per city, brains at 20 Hz) drives the replicated `CityNpc` nodes. They are placeholder bodies colored by role: guards in blue with helmets, workers in browns with caps, civilians in varied colors. Each has a name and activity tag.
+   - The clock is sent to clients on arrival and every 5 s. The HUD shows "City time 09:42". Sun, sky and ambient light follow the clock, with dark nights.
+   - Server args: `--city-people N`, `--city-start-hour H` (default 8), `--city-day-minutes M` (default 48, so one game hour is 2 real minutes), `--dev-log-npcs`.
+   - Client: `--dev-overview near`. `--dev-check-city` also reports the residents in view.
+   - Tests:
+     - Over a simulated day, nobody is ever on a parcel they may not be on.
+     - At least 90% of workers are at work at 11:30. Everyone is home at 03:00, except night guards on patrol.
+     - People visit shops.
+     - A deliberately broken router is caught.
+   - The smoke scenario checks that 40 residents and the clock reach the client.
+   - NPCs have no collision yet. Players walk through them.
+5. **Trespass detection (players):**
+   - The server tracks which parcel each player is on and flags trespass, using the access rule above. Players have no home yet, so only shops are allowed.
    - HUD indicator and log line.
    - Smoke scenario: a headless client walks into a yard and is flagged, then walks back to the street and the flag clears.
-4. **Navigation:**
-   - Bake the navmesh for the whole city, including building interiors through the doors.
-   - Measure bake time at 5×5 and 10×10: dungeons use a 0.2 m cell size on 25×25 m, and the city is 180 m to 360 m across. If it's slow, bake in tiles.
-5. **Population and schedules:**
-   - Residents, workers and guards generated from the buildings. Not every house needs to be occupied, so cap the population at about 40 for 5×5.
-   - Game clock and daily routines.
-   - Capsules colored by role, with name tags.
 6. **Seen trespassing:**
-   - Occupants and guards check vision and report who saw the player.
+   - The people who belong on a parcel (`CityPopulation.PeopleOf`) and guards check vision (`EnemyBrain`'s rule) and report who saw the player.
    - Smoke scenario: a guard sees a player in a yard.
 
-**Performance watch:** server-side agents in many instances. If needed, update far-from-player NPCs less often, or simulate them off-navmesh (teleporting along their schedule) while no player is near.
+**Performance watch:** 160 residents in a 10×10 city run fine. With many cities at once, update residents far from any player less often.
 
 ## 5. Open questions
 
 - **Loops:** is 15% extra streets the right openness? Judge it from the greybox (milestone 2).
-- **Fences:** height. At 1.2 m players can jump them, and at 2 m they can't. Starting at 1.2 m leaves trespassing a choice.
-- **Shops:** public all the time for now; opening hours come with the game clock.
+- **Fences:** they're 0.9 m, so players can hop them (the jump reaches about 1 m). Raise them to make trespassing harder.
+- **Shops:** public all the time for now. The clock exists now, so opening hours are easy to add.
+- **Residents:** should they step aside for players (collision), and should upper floors be used?

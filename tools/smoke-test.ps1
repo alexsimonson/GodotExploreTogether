@@ -12,7 +12,8 @@
     death   - two unarmed players next to enemies: enemies must land hits (up close), the normal character
               returns to the hub, the hardcore one is deleted.
     city    - two players go through the City Gate and end up in the same generated city; its doorways, fences
-              and walls match the layout; both return to the hub, and the empty city is closed.
+              and walls match the layout; its 40 residents and its clock reach the clients; both return to the hub,
+              and the empty city is closed.
     gather  - one player chops the hub's trees with an axe and puts the logs into the hub storage; another
               starts a dungeon, which must get its trees (and still bake navigation around them).
   Every scenario also checks: no engine/script errors, remote players never fly off vertically,
@@ -62,6 +63,8 @@ $Scenarios = [ordered]@{
             Expect server "\('Kermit'\) entered instance 2" 'Kermit enters the city'
             Expect server "\('Blueberry'\) entered instance 2" 'Blueberry joins the same city'
             Expect Kermit 'city check: (\d+)/\1 doors, fences and walls match' 'built doorways, fences and walls match the layout'
+            Expect server 'city 2: 40 people \(\d+ civilians, \d+ workers, 6 guards\), clock 08:00' 'the city gets 40 residents and a clock'
+            Expect Kermit 'city: 40 residents in view \(.*\), \d+ walking, clock 08:\d\d' "Kermit sees all the residents, and the city's clock"
             Expect Kermit "remote player \d+ \('Blueberry', #4f86f7\) spawned" 'Kermit sees Blueberry in the city' -After 'entered instance 2 \(city\)'
             Expect Kermit 'entered instance 1 \(hub\)' 'Kermit returns to the hub' -After 'entered instance 2 \(city\)'
             Expect Blueberry 'entered instance 1 \(hub\)' 'Blueberry returns to the hub' -After 'entered instance 2 \(city\)'

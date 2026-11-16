@@ -24,6 +24,10 @@ public sealed class ServerInstance
     public MazeLayout? Layout { get; init; }
     /// <summary>Cities only.</summary>
     public CityLayout? City { get; init; }
+    /// <summary>Cities only: the clock, the residents' brains and their nodes.</summary>
+    public CitySimulation? Simulation { get; set; }
+    /// <summary>City residents, by node name.</summary>
+    public Dictionary<string, CityNpc> Npcs { get; } = new();
     public int[] LayoutData { get; init; } = [];
     public string CreatedBy { get; init; } = "";
     public DateTime CreatedAt { get; } = DateTime.UtcNow;
@@ -50,7 +54,8 @@ public sealed class ServerInstance
         Players.Values.Select(p => p.Sync)
             .Concat(Items.Values.Select(i => i.Sync))
             .Concat(Enemies.Values.Select(e => e.Sync))
-            .Concat(Resources.Values.Select(r => r.Sync));
+            .Concat(Resources.Values.Select(r => r.Sync))
+            .Concat(Npcs.Values.Select(n => n.Sync));
 }
 
 /// <summary>
@@ -131,7 +136,11 @@ public sealed class InstanceManager
 
     /// <summary>A new greybox city (seed random unless given). Closed like a dungeon once it has been empty a while.</summary>
     /// <param name="favor">Dev: a building design to place wherever it fits (--city-favor NAME).</param>
-    public ServerInstance CreateCity(int width, int height, int? seed, int loopPercent, string createdBy, string? favor = null)
+    /// <param name="people">How many residents (default: about 1.6 per tile).</param>
+    /// <param name="startHour">The city clock when it opens (game hours).</param>
+    /// <param name="dayMinutes">Real minutes per game day.</param>
+    public ServerInstance CreateCity(int width, int height, int? seed, int loopPercent, string createdBy, string? favor = null,
+        int? people = null, float startHour = 8, float dayMinutes = 48)
     {
         width = Math.Clamp(width, 1, MaxCitySide);
         height = Math.Clamp(height, 1, MaxCitySide);
@@ -143,6 +152,7 @@ public sealed class InstanceManager
         var started = DateTime.UtcNow;
         var city = CityLayout.Generate(width, height, seed ?? Random.Shared.Next(), loopPercent, CityCatalog.Catalog, favor);
         var instance = Create(InstanceKinds.City, null, createdBy, city);
+        AddResidents(instance, city, people, startHour, dayMinutes);
         var counts = city.Parcels.GroupBy(p => p.Building).Select(g => $"{g.Count()} {g.Key}");
         var custom = city.Parcels.Where(p => !p.Variant.IsGreybox).GroupBy(p => p.Variant.Name).Select(g => $"{g.Count()} {g.Key}").ToList();
         if (custom.Count > 0) counts = counts.Append($"custom: {string.Join(", ", custom)}");
@@ -153,6 +163,35 @@ public sealed class InstanceManager
     }
 
     public const int MaxCitySide = 20;
+
+    /// <summary>Generates the city's residents and starts its clock and simulation.</summary>
+    private void AddResidents(ServerInstance instance, CityLayout city, int? people, float startHour, float dayMinutes)
+    {
+        var population = CityPopulation.Generate(city, city.Seed, people);
+        var clock = new CityClock(startHour, 24f / Math.Max(0.1f, dayMinutes * 60f));
+        var simulation = new CitySimulation { Name = "CitySimulation" };
+        simulation.Init($"city {instance.Id}", clock, population);
+        instance.Nodes.Container.AddChild(simulation);
+        instance.Simulation = simulation;
+
+        var paths = new CityPaths(city);
+        var scene = GD.Load<PackedScene>(InstanceFactory.NpcScenePath);
+        foreach (var person in population.People)
+        {
+            var brain = new CityNpcBrain(person, city, paths, city.Seed, clock.Time);
+            var npc = scene.Instantiate<CityNpc>();
+            npc.Name = $"Npc{person.Id}";
+            npc.NetName = person.Name;
+            npc.NetRole = (int)person.Role;
+            npc.NetId = person.Id;
+            simulation.Add(brain, npc); // sets the position before the node enters the tree (and is spawned)
+            instance.Nodes.Npcs.AddChild(npc, forceReadableName: true);
+            instance.Npcs[npc.Name] = npc;
+        }
+        var roles = population.People.GroupBy(p => p.Role).OrderBy(g => g.Key).Select(g => $"{g.Count()} {g.Key.ToString().ToLowerInvariant()}s");
+        GD.Print($"[server] city {instance.Id}: {population.People.Count} people ({string.Join(", ", roles)}), " +
+                 $"clock {CityClock.Format(clock.HourOfDay)}, {dayMinutes:0.#} min per day; {simulation.Summary()}");
+    }
 
     private ServerInstance Create(string kind, MazeLayout? layout, string createdBy, CityLayout? city = null)
     {

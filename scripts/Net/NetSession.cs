@@ -70,6 +70,7 @@ public partial class NetSession : Node
     /// <summary>The hub storage as (slot, item id, count, data) quads: sent when the player opens it and after each change.</summary>
     public event Action<int[]>? StorageReceived;
     public event Action<DungeonStatus>? DungeonStatusReceived;
+    public event Action<float, float>? CityClockReceived;                // hour of day, game hours per real second
     public event Action<int, int>? AmmoReceived;                         // magazine, reserve
     public event Action<Vector3, int, float, Color>? MagicAreaReceived;  // position, magic style, lifetime, caster's color
     public event Action<string>? CharacterLostReceived;                  // hardcore death: back to character select
@@ -220,6 +221,9 @@ public partial class NetSession : Node
 
     public void SendStorage(long peer, int[] quads) => RpcId(peer, MethodName.Storage, quads);
 
+    public void SendCityClock(long peer, float hour, float hoursPerSecond) =>
+        RpcId(peer, MethodName.CityClock, hour, hoursPerSecond);
+
     public void SendDungeonStatus(long peer, DungeonStatus status) =>
         RpcId(peer, MethodName.DungeonStatusUpdate, status.ExitOpen, status.PassHolder, status.Escaped, status.PlayersInside);
 
@@ -271,6 +275,9 @@ public partial class NetSession : Node
 
     [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void Storage(int[] quads) => StorageReceived?.Invoke(quads);
+
+    [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void CityClock(float hour, float hoursPerSecond) => CityClockReceived?.Invoke(hour, hoursPerSecond);
 
     [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void DungeonStatusUpdate(bool exitOpen, string passHolder, string[] escaped, int playersInside) =>

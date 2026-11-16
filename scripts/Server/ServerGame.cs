@@ -343,6 +343,7 @@ public partial class ServerGame : Node
             if (instance.RunId is { } runId) _db.AddRunParticipant(runId, c.Id);
             BroadcastDungeonStatus(instance);
         }
+        if (instance.Kind == InstanceKinds.City) OnEnteredCity(s, instance);
     }
 
     private void OnInteract(long peer, string interactionId)

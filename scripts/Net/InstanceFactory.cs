@@ -9,7 +9,7 @@ namespace ExploreTogether.Net;
 /// <summary>
 /// Builds the node structure of an instance identically on server and client, so that
 /// replication node paths match: Instances/Instance{id}/{Level, Players, PlayerSpawner, Items, ItemSpawner,
-/// Enemies, EnemySpawner, Resources, ResourceSpawner}.
+/// Enemies, EnemySpawner, Resources, ResourceSpawner, Npcs, NpcSpawner}.
 ///
 /// On the server the container is a SubViewport with its own World3D, which gives each
 /// instance a separate physics space and navigation map. The client only ever has its own
@@ -22,6 +22,7 @@ public static class InstanceFactory
     public const string ItemScenePath = "res://scenes/props/ItemPickup.tscn";
     public const string EnemyScenePath = "res://scenes/Enemy.tscn";
     public const string ResourceScenePath = "res://scenes/props/ResourceNode.tscn";
+    public const string NpcScenePath = "res://scenes/CityNpc.tscn";
 
     public static string NodeName(int instanceId) => $"Instance{instanceId}";
 
@@ -83,7 +84,14 @@ public static class InstanceFactory
         resourceSpawner.AddSpawnableScene(ResourceScenePath);
         container.AddChild(resourceSpawner);
 
-        return new InstanceNodes(container, level, players, items, enemies, resources);
+        // City residents (empty in other instances).
+        var npcs = new Node3D { Name = "Npcs" };
+        container.AddChild(npcs);
+        var npcSpawner = new MultiplayerSpawner { Name = "NpcSpawner", SpawnPath = new NodePath("../Npcs") };
+        npcSpawner.AddSpawnableScene(NpcScenePath);
+        container.AddChild(npcSpawner);
+
+        return new InstanceNodes(container, level, players, items, enemies, resources, npcs);
     }
 
     /// <summary>Finds an interactable by id anywhere in an instance (level props and items).</summary>
@@ -104,4 +112,4 @@ public static class InstanceKinds
 }
 
 public readonly record struct InstanceNodes(Node Container, Node Level, Node3D Players, Node3D Items, Node3D Enemies,
-    Node3D Resources);
+    Node3D Resources, Node3D Npcs);

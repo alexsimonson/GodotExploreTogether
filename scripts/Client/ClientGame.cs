@@ -27,7 +27,7 @@ namespace ExploreTogether.Client;
 /// Dev city automation (needs the server's --dev-skip-proximity):
 ///   --dev-city                      on reaching the hub, go through the City Gate
 ///   --dev-return-after SECONDS      (also) in the city, go back to the hub after this long
-///   --dev-overview angle|top        in the city, view it from a camera high above (for screenshots)
+///   --dev-overview angle|top|near   in the city, view it from a fixed camera (high above, or low over the start)
 ///   --dev-check-city                in the city, raycast every doorway, gate fence and front wall against the layout
 /// </summary>
 public partial class ClientGame : Node
@@ -95,6 +95,7 @@ public partial class ClientGame : Node
         _session.NoticeReceived += ShowNotice;
         _session.InventoryReceived += OnInventory;
         _session.DungeonStatusReceived += OnDungeonStatus;
+        _session.CityClockReceived += OnCityClock;
 
         _inventory = new InventoryScreen { Name = "Inventory", Visible = false };
         AddChild(_inventory);
@@ -174,6 +175,7 @@ public partial class ClientGame : Node
             _noticeLabel.Visible = false;
         CombatProcess(delta);
         StorageProcess(delta);
+        CityProcess(delta);
     }
 
     public override void _PhysicsProcess(double delta) => UpdateFocus();
@@ -397,6 +399,7 @@ public partial class ClientGame : Node
     private void OnEnterInstance(int instanceId, string kind, int[] layoutData)
     {
         ClearInstances();
+        _cityHour = -1; // until the city's clock arrives
         _dungeonMenu.Visible = false;
         _inventory.Visible = false;
         _statusLabel.Visible = false;
@@ -443,6 +446,7 @@ public partial class ClientGame : Node
                 GD.Print($"[client] city check: {count - failures.Count}/{count} doors, fences and walls match the layout");
                 foreach (var f in failures) GD.Print($"[client]   {f}");
             };
+            GetTree().CreateTimer(3.0).Timeout += () => { if (_currentInstanceId == instanceId) DevReportNpcs(instanceId); };
         }
         if (kind == InstanceKinds.Hub && CmdArgs.Has("dev-city") && !_devCityDone)
         {
@@ -500,6 +504,12 @@ public partial class ClientGame : Node
             camera.Size = size * 1.05f;
             camera.Position = center + new Vector3(0, 300, 0);
             camera.Rotation = new Vector3(-Mathf.Pi / 2, Mathf.Pi, 0); // looking straight down, north (+Z) at the top
+        }
+        else if (mode == "near")
+        {
+            // Low over the start junction, looking along the streets: close enough to see people.
+            camera.Position = new Vector3(-10, 14, -10);
+            camera.LookAt(new Vector3(18, 0, 18), Vector3.Up);
         }
         else
         {

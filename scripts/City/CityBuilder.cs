@@ -56,15 +56,20 @@ public static class CityBuilder
     public static Node3D Build(CityLayout city)
     {
         var level = new Node3D { Name = "City" };
-        level.AddChild(new WorldEnvironment { Name = "Environment", Environment = CreateEnvironment() });
-        level.AddChild(new DirectionalLight3D
+        var environment = CreateEnvironment();
+        level.AddChild(new WorldEnvironment { Name = "Environment", Environment = environment });
+        var sun = new DirectionalLight3D
         {
             Name = "Sun",
             ShadowEnabled = true,
             DirectionalShadowMaxDistance = 150,
             LightEnergy = 1.3f,
             RotationDegrees = new Vector3(-58, 35, 0),
-        });
+        };
+        level.AddChild(sun);
+        var daylight = new CityDaylight { Name = "Daylight" }; // clients drive it from the city clock
+        daylight.Init(sun, environment);
+        level.AddChild(daylight);
 
         var b = new Boxes(level);
         var bounds = city.Bounds;

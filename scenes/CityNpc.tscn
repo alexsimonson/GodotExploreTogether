@@ -1,0 +1,91 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/City/CityNpc.cs" id="1_npc"]
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_torso"]
+radius = 0.28
+height = 1.45
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_skin"]
+albedo_color = Color(0.86, 0.68, 0.55, 1)
+roughness = 0.8
+
+[sub_resource type="SphereMesh" id="SphereMesh_head"]
+material = SubResource("StandardMaterial3D_skin")
+radius = 0.17
+height = 0.34
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_hat"]
+top_radius = 0.15
+bottom_radius = 0.2
+height = 0.14
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_eye"]
+shading_mode = 0
+albedo_color = Color(0.08, 0.08, 0.1, 1)
+
+[sub_resource type="SphereMesh" id="SphereMesh_eye"]
+material = SubResource("StandardMaterial3D_eye")
+radius = 0.03
+height = 0.06
+
+[sub_resource type="SceneReplicationConfig" id="SceneReplicationConfig_npc"]
+properties/0/path = NodePath(".:NetPosition")
+properties/0/spawn = true
+properties/0/replication_mode = 1
+properties/1/path = NodePath(".:NetYaw")
+properties/1/spawn = true
+properties/1/replication_mode = 1
+properties/2/path = NodePath(".:NetMoving")
+properties/2/spawn = true
+properties/2/replication_mode = 2
+properties/3/path = NodePath(".:NetActivity")
+properties/3/spawn = true
+properties/3/replication_mode = 2
+properties/4/path = NodePath(".:NetName")
+properties/4/spawn = true
+properties/4/replication_mode = 0
+properties/5/path = NodePath(".:NetRole")
+properties/5/spawn = true
+properties/5/replication_mode = 0
+properties/6/path = NodePath(".:NetId")
+properties/6/spawn = true
+properties/6/replication_mode = 0
+
+[node name="CityNpc" type="Node3D"]
+script = ExtResource("1_npc")
+
+[node name="Body" type="Node3D" parent="."]
+
+[node name="Torso" type="MeshInstance3D" parent="Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.73, 0)
+mesh = SubResource("CapsuleMesh_torso")
+
+[node name="Head" type="MeshInstance3D" parent="Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.58, 0)
+mesh = SubResource("SphereMesh_head")
+
+[node name="EyeLeft" type="MeshInstance3D" parent="Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.06, 1.61, -0.15)
+mesh = SubResource("SphereMesh_eye")
+
+[node name="EyeRight" type="MeshInstance3D" parent="Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.06, 1.61, -0.15)
+mesh = SubResource("SphereMesh_eye")
+
+[node name="Hat" type="MeshInstance3D" parent="Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.75, 0)
+mesh = SubResource("CylinderMesh_hat")
+
+[node name="Label" type="Label3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.15, 0)
+billboard = 1
+pixel_size = 0.004
+font_size = 40
+outline_size = 8
+visibility_range_end = 14.0
+
+[node name="Sync" type="MultiplayerSynchronizer" parent="."]
+replication_interval = 0.1
+public_visibility = false
+replication_config = SubResource("SceneReplicationConfig_npc")
