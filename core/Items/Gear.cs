@@ -43,4 +43,21 @@ public sealed class Gear
     }
 
     public ItemSlot WeaponSlot => slots[(int)EquipmentType.Weapon];
+
+    /// <summary>Equipped items as records (Slot = the gear slot index), e.g. for saving.</summary>
+    public IEnumerable<SlotRecord> Occupied() =>
+        slots.Where(s => s.itemId != null).Select(s => new SlotRecord(s.index, s.itemId!.Value, 1, s.data, s.uid));
+
+    /// <summary>Restores saved gear (unknown items and items that don't fit their slot are skipped).</summary>
+    public void Load(IEnumerable<SlotRecord> saved)
+    {
+        foreach (var r in saved)
+        {
+            if (r.Slot < 0 || r.Slot >= SlotCount || ItemCatalog.Get(r.ItemId) is not { } def || def.Slot != TypeOf(r.Slot)) continue;
+            slots[r.Slot].itemId = def.Id;
+            slots[r.Slot].stack_size = 1;
+            slots[r.Slot].data = r.Data ?? def.InitialData;
+            slots[r.Slot].uid = r.Uid;
+        }
+    }
 }

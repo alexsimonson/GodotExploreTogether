@@ -79,6 +79,8 @@ public partial class ServerGame : Node
         if (_db.BackupPath != null)
             GD.Print($"[server] backed up database before upgrading: {_db.BackupPath}");
         GD.Print($"[server] database {dbPath} (schema v{_db.SchemaVersion})");
+        if (RunItemToolIfRequested()) return; // --audit-items, --item-history, --item-log: report and quit
+        AuditItemsAtStartup();
 
         _instances = new InstanceManager(main.Instances);
         _instances.CreateHub();
@@ -270,8 +272,8 @@ public partial class ServerGame : Node
         s.Inventory = new Inventory();
         s.Inventory.Load(_db.LoadInventory(character.Id));
         s.Gear = new Gear();
-        var (gearIds, gearData) = _db.LoadGearWithData(character.Id, Gear.SlotCount);
-        s.Gear.ImportGear(gearIds, gearData);
+        s.Gear.Load(_db.LoadGearRecords(character.Id));
+        OnCharacterItemsLoaded(s); // serials for old items, and a duplicate check against everyone online
         s.PlayTimeCountedUntil = DateTime.UtcNow;
         SendToInstance(s, _instances.Hub);
     }
@@ -454,9 +456,17 @@ public partial class ServerGame : Node
 
     private void GiveStarterKit(CharacterRecord character)
     {
+        const string origin = "dev starter kit";
         var inv = new Inventory();
-        foreach (var id in new[] { 1515, 1337, 567, 666, 8, 22 }) inv.AddItem(id); // Sword, Pistol, Ice/Blood Wand, Axe, Helmet
+        var events = new List<ItemEvent>();
+        foreach (var id in new[] { 1515, 1337, 567, 666, 8, 22 }) // Sword, Pistol, Ice/Blood Wand, Axe, Helmet
+        {
+            var uid = _db.RegisterItem(id, origin);
+            inv.AddItem(id, uid: uid);
+            events.Add(new ItemEvent(ItemActions.Created, id, 1, uid, character.Id, character.Name, Detail: origin));
+        }
         inv.AddItems(ItemCatalog.PistolRoundsId, 30);
-        _db.SaveInventory(character.Id, inv.Occupied());
+        events.Add(new ItemEvent(ItemActions.Created, ItemCatalog.PistolRoundsId, 30, null, character.Id, character.Name, Detail: origin));
+        _db.SaveItems(character.Id, inv.Occupied(), [], events);
     }
 }

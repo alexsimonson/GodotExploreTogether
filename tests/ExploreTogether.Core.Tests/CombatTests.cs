@@ -69,7 +69,7 @@ public class HealthAndAmmoTests
         Assert.Equal(4, gear.WeaponSlot.data);
         SlotContainerLogic.Move(inv, gear, ItemContainer.Gear, (int)EquipmentType.Weapon, ItemContainer.Inventory, 6);
         Assert.Equal(4, inv.slots[6].data);
-        Assert.Equal((1337, 1, 4), SlotContainerLogic.Drop(inv, gear, ItemContainer.Inventory, 6));
+        Assert.Equal((1337, 1, 4, (long?)null), SlotContainerLogic.Drop(inv, gear, ItemContainer.Inventory, 6));
         Assert.Null(inv.slots[6].data);
 
         var other = new Inventory();                                  // another player picks it up
@@ -238,7 +238,7 @@ public class EnemyPlacementAndHardcoreTests
         gearData[(int)EquipmentType.Weapon] = 7;
         db.SaveGear(c, gearIds, gearData);
 
-        Assert.Equal([(0, 1337, 1, (int?)3), (1, ItemCatalog.PistolRoundsId, 20, (int?)null)], db.LoadInventory(c));
+        Assert.Equal([new SlotRecord(0, 1337, 1, 3), new SlotRecord(1, ItemCatalog.PistolRoundsId, 20)], db.LoadInventory(c));
         var (ids, data) = db.LoadGearWithData(c, Gear.SlotCount);
         var gear = new Gear();
         gear.ImportGear(ids, data);

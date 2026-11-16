@@ -18,6 +18,11 @@ public partial class ItemPickup : Interactable
     [Export] public int Count { get; set; } = 1;
     /// <summary>Server only: the item's state (e.g. a dropped gun's loaded rounds), handed to whoever picks it up.</summary>
     public int? Data { get; set; }
+    /// <summary>
+    /// Server only: the copy's serial (non-stackables). Null for fresh loot, which gets one when first
+    /// picked up; a dropped item keeps the serial it had.
+    /// </summary>
+    public long? Uid { get; set; }
 
     public MultiplayerSynchronizer Sync => GetNode<MultiplayerSynchronizer>("Sync");
 

@@ -15,6 +15,7 @@ See `E:\claude\CLAUDE.md` for the environment setup (the .NET 10 SDK on E:, neve
 - Build: `dotnet build ExploreTogether.sln`
 - Test: `dotnet test ExploreTogether.sln`
 - Smoke test (server + headless clients through co-op, combat and death scenarios; pass/fail, ~90 s): `tools\smoke-test.cmd [-Only coop,combat,death] [-NoBuild]`. Logs in `E:\claude\_tmp\smoke\<scenario>\`. Run after changes to networking, dungeons or combat.
+- Item tracking tools (server args; print a report and quit, add `--db <path>` for another database): `--audit-items` (duplicated/unregistered item serials; exit code 1 if any), `--item-history SERIAL`, `--item-log CHARACTER`. E.g. `<godot>_console.exe --headless --path . -- --server --audit-items`.
 - Play locally: `tools\dev-run.cmd [clients]` (closes any previous session, builds, then opens a server console and client windows that auto-log in as Kermit, Blueberry, ...)
 - Close a dev session: `tools\dev-stop.cmd`
 - Dev database: `.localdata/server.db` (git-ignored). Use `--db <path>` on the server for a throwaway test database.

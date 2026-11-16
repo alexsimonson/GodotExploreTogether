@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using ExploreTogether.Core.Items;
+using ExploreTogether.Core.Persistence;
 using Godot;
 
 namespace ExploreTogether.Server;
@@ -16,13 +18,27 @@ public partial class ServerGame
         if (!IsContainer(fromContainer) || !IsContainer(toContainer)) return;
 
         var weaponBefore = s.Gear.EquippedWeapon?.Id;
-        var changed = SlotContainerLogic.Move(s.Inventory, s.Gear,
-            (ItemContainer)fromContainer, fromSlot, (ItemContainer)toContainer, toSlot);
+        var (from, to) = ((ItemContainer)fromContainer, (ItemContainer)toContainer);
+        // What's in both slots before the move, for the log (a move into an occupied slot swaps the two).
+        var moved = SlotSnapshot(s, from, fromSlot);
+        var displaced = SlotSnapshot(s, to, toSlot);
+        var changed = SlotContainerLogic.Move(s.Inventory, s.Gear, from, fromSlot, to, toSlot);
 
         // Always answer, so a rejected drag snaps back to the server's state on the client.
         SendInventory(s);
         if (!changed) return;
-        SaveInventory(s);
+
+        // Log equipment changes (rearranging within one container isn't worth logging).
+        var events = new List<ItemEvent>();
+        if (from != to)
+        {
+            var (movedAction, displacedAction) = to == ItemContainer.Gear
+                ? (ItemActions.Equipped, ItemActions.Unequipped)
+                : (ItemActions.Unequipped, ItemActions.Equipped);
+            if (moved is { } m) events.Add(ItemEventFor(s, movedAction, m.ItemId, m.Count, m.Uid));
+            if (displaced is { } d) events.Add(ItemEventFor(s, displacedAction, d.ItemId, d.Count, d.Uid));
+        }
+        SaveInventory(s, events.ToArray());
         if (s.Gear.EquippedWeapon?.Id != weaponBefore)
             GD.Print($"[server] '{s.Character!.Name}' weapon: {s.Gear.EquippedWeapon?.Name ?? "none"}");
     }
@@ -39,8 +55,9 @@ public partial class ServerGame
         // Like the original: it lands at the player's position (a little in front and above, so it's visible).
         var forward = -found.Player.Transform.Basis.Z;
         var position = found.Player.NetPosition + forward * 0.8f + new Vector3(0, 0.8f, 0);
-        _instances.SpawnItem(found.Instance, d.ItemId, position, d.Count, d.Data);
-        SaveInventory(s);
+        _instances.SpawnItem(found.Instance, d.ItemId, position, d.Count, d.Data, d.Uid);
+        if (d.ItemId == ItemCatalog.DungeonPassId) SaveInventory(s); // the pass isn't tracked
+        else SaveInventory(s, ItemEventFor(s, ItemActions.Dropped, d.ItemId, d.Count, d.Uid, found.Instance));
         GD.Print($"[server] '{s.Character!.Name}' dropped {ItemCatalog.NameOf(d.ItemId)} x{d.Count} in instance {found.Instance.Id}");
 
         if (d.ItemId == ItemCatalog.DungeonPassId)
@@ -48,4 +65,9 @@ public partial class ServerGame
     }
 
     private static bool IsContainer(int c) => c is (int)ItemContainer.Inventory or (int)ItemContainer.Gear;
+
+    private static (int ItemId, int Count, long? Uid)? SlotSnapshot(PeerSession s, ItemContainer container, int index) =>
+        SlotContainerLogic.Slot(s.Inventory!, s.Gear!, container, index) is { itemId: { } id } slot
+            ? (id, slot.stack_size, slot.uid)
+            : null;
 }

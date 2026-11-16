@@ -92,7 +92,7 @@ public class SlotContainerLogicTests
     public void Drop_ReturnsWholeStack_AndEmptiesSlot()
     {
         _inv.AddItems(Coin, 5);
-        Assert.Equal((Coin, 5, (int?)null), SlotContainerLogic.Drop(_inv, _gear, C.Inventory, 0));
+        Assert.Equal((Coin, 5, (int?)null, (long?)null), SlotContainerLogic.Drop(_inv, _gear, C.Inventory, 0));
         Assert.Null(Inv(0));
         Assert.Null(SlotContainerLogic.Drop(_inv, _gear, C.Inventory, 0));
     }
@@ -158,7 +158,7 @@ public class GearPersistenceTests
             Exec(conn, "INSERT INTO inventory_items (character_id, slot, item_id, count) VALUES (7, 0, 1, 4);");
         });
         using var db = GameDatabase.Open(temp.Path);
-        Assert.Equal([(0, 1, 4, (int?)null)], db.LoadInventory(7));
+        Assert.Equal([new SlotRecord(0, 1, 4)], db.LoadInventory(7));
         Assert.All(db.LoadGear(7, Gear.SlotCount), id => Assert.Equal(-1, id));
     }
 }

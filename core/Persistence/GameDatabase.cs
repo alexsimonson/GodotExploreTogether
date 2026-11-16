@@ -1,4 +1,5 @@
 using System.Globalization;
+using ExploreTogether.Core.Items;
 using Microsoft.Data.Sqlite;
 
 namespace ExploreTogether.Core.Persistence;
@@ -216,36 +217,63 @@ public sealed class GameDatabase : IDisposable
 
     // ------------------------------------------------------------- inventory
 
-    public List<(int Slot, int ItemId, int Count, int? Data)> LoadInventory(long characterId)
+    public List<SlotRecord> LoadInventory(long characterId)
     {
-        using var cmd = Command("SELECT slot, item_id, count, data FROM inventory_items WHERE character_id = $c ORDER BY slot;",
+        using var cmd = Command("SELECT slot, item_id, count, data, uid FROM inventory_items WHERE character_id = $c ORDER BY slot;",
             ("$c", characterId));
         using var r = cmd.ExecuteReader();
-        var list = new List<(int, int, int, int?)>();
-        while (r.Read()) list.Add((r.GetInt32(0), r.GetInt32(1), r.GetInt32(2), r.IsDBNull(3) ? null : r.GetInt32(3)));
+        var list = new List<SlotRecord>();
+        while (r.Read())
+            list.Add(new SlotRecord(r.GetInt32(0), r.GetInt32(1), r.GetInt32(2),
+                r.IsDBNull(3) ? null : r.GetInt32(3), r.IsDBNull(4) ? null : r.GetInt64(4)));
         return list;
     }
 
     public void SaveInventory(long characterId, IEnumerable<(int Slot, int ItemId, int Count)> slots) =>
-        SaveInventory(characterId, slots.Select(s => (s.Slot, s.ItemId, s.Count, (int?)null)));
+        SaveInventory(characterId, slots.Select(s => new SlotRecord(s.Slot, s.ItemId, s.Count)));
+
+    public void SaveInventory(long characterId, IEnumerable<(int Slot, int ItemId, int Count, int? Data)> slots) =>
+        SaveInventory(characterId, slots.Select(s => new SlotRecord(s.Slot, s.ItemId, s.Count, s.Data)));
 
     /// <summary>Replaces the character's saved inventory with these slots.</summary>
-    public void SaveInventory(long characterId, IEnumerable<(int Slot, int ItemId, int Count, int? Data)> slots)
+    public void SaveInventory(long characterId, IEnumerable<SlotRecord> slots)
     {
         using var tx = _connection.BeginTransaction();
+        WriteInventory(tx, characterId, slots);
+        tx.Commit();
+    }
+
+    /// <summary>
+    /// Replaces everything the character carries (inventory and gear), and appends any item events, in ONE
+    /// transaction. So a crash can never save one container without the other (which could duplicate an item
+    /// that was just unequipped, or lose one that was just equipped), and the event log always matches what
+    /// was saved. Anything that moves items between containers must be saved through here.
+    /// </summary>
+    public void SaveItems(long characterId, IEnumerable<SlotRecord> inventory, IEnumerable<SlotRecord> gear,
+        IEnumerable<ItemEvent>? events = null)
+    {
+        using var tx = _connection.BeginTransaction(); // rolled back on dispose unless committed
+        WriteGear(tx, characterId, gear);
+        WriteInventory(tx, characterId, inventory);
+        if (events != null) WriteEvents(tx, events);
+        tx.Commit();
+    }
+
+    private void WriteInventory(SqliteTransaction tx, long characterId, IEnumerable<SlotRecord> slots)
+    {
         using (var del = Command("DELETE FROM inventory_items WHERE character_id = $c;", ("$c", characterId)))
         {
             del.Transaction = tx;
             del.ExecuteNonQuery();
         }
-        foreach (var (slot, itemId, count, data) in slots)
+        foreach (var s in slots)
         {
-            using var ins = Command("INSERT INTO inventory_items (character_id, slot, item_id, count, data) VALUES ($c, $s, $i, $n, $d);",
-                ("$c", characterId), ("$s", slot), ("$i", itemId), ("$n", count), ("$d", data));
+            using var ins = Command(
+                "INSERT INTO inventory_items (character_id, slot, item_id, count, data, uid) VALUES ($c, $s, $i, $n, $d, $u);",
+                ("$c", characterId), ("$s", s.Slot), ("$i", s.ItemId), ("$n", s.Count), ("$d", s.Data), ("$u", s.Uid));
             ins.Transaction = tx;
             ins.ExecuteNonQuery();
         }
-        tx.Commit();
     }
 
     // ------------------------------------------------------------- equipment
@@ -258,36 +286,171 @@ public sealed class GameDatabase : IDisposable
     {
         var gear = Enumerable.Repeat(-1, slotCount).ToArray();
         var data = Enumerable.Repeat(-1, slotCount).ToArray();
-        using var cmd = Command("SELECT slot, item_id, data FROM equipment_items WHERE character_id = $c;", ("$c", characterId));
-        using var r = cmd.ExecuteReader();
-        while (r.Read())
+        foreach (var r in LoadGearRecords(characterId))
         {
-            var slot = r.GetInt32(0);
-            if (slot < 0 || slot >= slotCount) continue;
-            gear[slot] = r.GetInt32(1);
-            if (!r.IsDBNull(2)) data[slot] = r.GetInt32(2);
+            if (r.Slot < 0 || r.Slot >= slotCount) continue;
+            gear[r.Slot] = r.ItemId;
+            if (r.Data is { } d) data[r.Slot] = d;
         }
         return (gear, data);
     }
 
+    /// <summary>Saved gear as records (Slot = gear slot index), including serials.</summary>
+    public List<SlotRecord> LoadGearRecords(long characterId)
+    {
+        using var cmd = Command("SELECT slot, item_id, data, uid FROM equipment_items WHERE character_id = $c ORDER BY slot;",
+            ("$c", characterId));
+        using var r = cmd.ExecuteReader();
+        var list = new List<SlotRecord>();
+        while (r.Read())
+            list.Add(new SlotRecord(r.GetInt32(0), r.GetInt32(1), 1,
+                r.IsDBNull(2) ? null : r.GetInt32(2), r.IsDBNull(3) ? null : r.GetInt64(3)));
+        return list;
+    }
+
+    /// <summary>Saves gear given as an item id per slot (-1 = empty) and optional state per slot (-1 = none).</summary>
     public void SaveGear(long characterId, IReadOnlyList<int> gearItemIds, IReadOnlyList<int>? gearData = null)
     {
+        var records = new List<SlotRecord>();
+        for (int slot = 0; slot < gearItemIds.Count; slot++)
+        {
+            if (gearItemIds[slot] < 0) continue;
+            var d = gearData != null && slot < gearData.Count && gearData[slot] >= 0 ? gearData[slot] : (int?)null;
+            records.Add(new SlotRecord(slot, gearItemIds[slot], 1, d));
+        }
         using var tx = _connection.BeginTransaction();
+        WriteGear(tx, characterId, records);
+        tx.Commit();
+    }
+
+    private void WriteGear(SqliteTransaction tx, long characterId, IEnumerable<SlotRecord> gear)
+    {
         using (var del = Command("DELETE FROM equipment_items WHERE character_id = $c;", ("$c", characterId)))
         {
             del.Transaction = tx;
             del.ExecuteNonQuery();
         }
-        for (int slot = 0; slot < gearItemIds.Count; slot++)
+        foreach (var g in gear)
         {
-            if (gearItemIds[slot] < 0) continue;
-            var d = gearData != null && slot < gearData.Count && gearData[slot] >= 0 ? gearData[slot] : (int?)null;
-            using var ins = Command("INSERT INTO equipment_items (character_id, slot, item_id, data) VALUES ($c, $s, $i, $d);",
-                ("$c", characterId), ("$s", slot), ("$i", gearItemIds[slot]), ("$d", d));
+            using var ins = Command("INSERT INTO equipment_items (character_id, slot, item_id, data, uid) VALUES ($c, $s, $i, $d, $u);",
+                ("$c", characterId), ("$s", g.Slot), ("$i", g.ItemId), ("$d", g.Data), ("$u", g.Uid));
             ins.Transaction = tx;
             ins.ExecuteNonQuery();
         }
+    }
+
+    // ------------------------------------------------------- item tracking
+
+    /// <summary>
+    /// Registers a new copy of a non-stackable item and returns its serial (uid). Origin says where it came
+    /// from, e.g. "loot, run 12" or "dev starter kit".
+    /// </summary>
+    public long RegisterItem(int itemId, string origin)
+    {
+        using var cmd = Command("INSERT INTO item_serials (item_id, created_at, origin) VALUES ($i, $now, $o) RETURNING uid;",
+            ("$i", itemId), ("$now", Now()), ("$o", origin));
+        return (long)cmd.ExecuteScalar()!;
+    }
+
+    /// <summary>Where a serial came from, or null if the registry never issued it.</summary>
+    public (int ItemId, string CreatedAt, string Origin)? GetItemSerial(long uid)
+    {
+        using var cmd = Command("SELECT item_id, created_at, origin FROM item_serials WHERE uid = $u;", ("$u", uid));
+        using var r = cmd.ExecuteReader();
+        return r.Read() ? (r.GetInt32(0), r.GetString(1), r.GetString(2)) : null;
+    }
+
+    /// <summary>Appends events to the item log on their own (when nothing else is being saved).</summary>
+    public void LogItemEvents(IEnumerable<ItemEvent> events)
+    {
+        using var tx = _connection.BeginTransaction();
+        WriteEvents(tx, events);
         tx.Commit();
+    }
+
+    private void WriteEvents(SqliteTransaction tx, IEnumerable<ItemEvent> events)
+    {
+        foreach (var e in events)
+        {
+            using var ins = Command("""
+                INSERT INTO item_events (at, character_id, character_name, action, item_id, count, uid, instance_id, run_id, detail)
+                VALUES ($at, $c, $n, $a, $i, $k, $u, $inst, $run, $d);
+                """,
+                ("$at", Now()), ("$c", e.CharacterId), ("$n", e.CharacterName), ("$a", e.Action), ("$i", e.ItemId),
+                ("$k", e.Count), ("$u", e.Uid), ("$inst", e.InstanceId), ("$run", e.RunId), ("$d", e.Detail));
+            ins.Transaction = tx;
+            ins.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>Everything logged about one serial, oldest first.</summary>
+    public List<ItemEventRecord> GetItemHistory(long uid) =>
+        ReadEvents("WHERE uid = $u ORDER BY id;", ("$u", uid));
+
+    /// <summary>A character's most recent item events (looked up by name, so deleted characters work too), oldest first.</summary>
+    public List<ItemEventRecord> GetCharacterItemHistory(string characterName, int limit = 200) =>
+        ReadEvents("""
+            WHERE id IN (SELECT id FROM item_events WHERE character_name = $n COLLATE NOCASE ORDER BY id DESC LIMIT $l)
+            ORDER BY id;
+            """, ("$n", characterName), ("$l", limit));
+
+    private List<ItemEventRecord> ReadEvents(string where, params (string Name, object? Value)[] parameters)
+    {
+        using var cmd = Command(
+            "SELECT id, at, character_id, character_name, action, item_id, count, uid, instance_id, run_id, detail FROM item_events " + where,
+            parameters);
+        using var r = cmd.ExecuteReader();
+        var list = new List<ItemEventRecord>();
+        while (r.Read())
+            list.Add(new ItemEventRecord(r.GetInt64(0), r.GetString(1), new ItemEvent(
+                Action: r.GetString(4), ItemId: r.GetInt32(5), Count: r.GetInt32(6),
+                Uid: r.IsDBNull(7) ? null : r.GetInt64(7),
+                CharacterId: r.IsDBNull(2) ? null : r.GetInt64(2),
+                CharacterName: r.IsDBNull(3) ? null : r.GetString(3),
+                InstanceId: r.IsDBNull(8) ? null : r.GetInt32(8),
+                RunId: r.IsDBNull(9) ? null : r.GetInt64(9),
+                Detail: r.IsDBNull(10) ? null : r.GetString(10))));
+        return list;
+    }
+
+    /// <summary>
+    /// Checks every saved item that carries a serial and reports problems:
+    /// - Duplicate: the same serial is saved in more than one place (inventory or gear, any character).
+    /// - Unregistered: the registry never issued that serial (made up, or its registry row was lost).
+    /// - WrongItem: the serial was issued for a different item than the one carrying it.
+    /// </summary>
+    public List<ItemAuditProblem> AuditItems()
+    {
+        var places = new List<(long Uid, int ItemId, string Where)>();
+        using (var cmd = Command("""
+            SELECT i.uid, i.item_id, c.name || ' (#' || c.id || ') inventory slot ' || i.slot
+              FROM inventory_items i JOIN characters c ON c.id = i.character_id WHERE i.uid IS NOT NULL
+            UNION ALL
+            SELECT e.uid, e.item_id, c.name || ' (#' || c.id || ') gear slot ' || e.slot
+              FROM equipment_items e JOIN characters c ON c.id = e.character_id WHERE e.uid IS NOT NULL;
+            """))
+        using (var r = cmd.ExecuteReader())
+            while (r.Read())
+                places.Add((r.GetInt64(0), r.GetInt32(1), r.GetString(2)));
+
+        var registry = new Dictionary<long, int>();
+        using (var cmd = Command("SELECT uid, item_id FROM item_serials;"))
+        using (var r = cmd.ExecuteReader())
+            while (r.Read()) registry[r.GetInt64(0)] = r.GetInt32(1);
+
+        var problems = new List<ItemAuditProblem>();
+        foreach (var group in places.GroupBy(p => p.Uid).OrderBy(g => g.Key))
+        {
+            var where = group.Select(p => p.Where).ToList();
+            var itemId = group.First().ItemId;
+            if (group.Count() > 1)
+                problems.Add(new ItemAuditProblem(ItemAuditKind.Duplicate, group.Key, itemId, where));
+            if (!registry.TryGetValue(group.Key, out var registeredItem))
+                problems.Add(new ItemAuditProblem(ItemAuditKind.Unregistered, group.Key, itemId, where));
+            else if (group.Any(p => p.ItemId != registeredItem))
+                problems.Add(new ItemAuditProblem(ItemAuditKind.WrongItem, group.Key, itemId, where));
+        }
+        return problems;
     }
 
     // ------------------------------------------------------------------ runs

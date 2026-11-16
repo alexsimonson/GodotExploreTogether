@@ -106,6 +106,43 @@ public static class Migrations
             ALTER TABLE inventory_items ADD COLUMN data INTEGER;
             ALTER TABLE equipment_items ADD COLUMN data INTEGER;
             """),
+
+        // Duplication tracing (see docs/ITEM-SECURITY-REVIEW-2026-11-15.md, finding 8).
+        // - item_serials: every non-stackable copy ever created, with where it came from. Its uid is the
+        //   serial stored on the copy, so the same uid in two places means a duplicate.
+        // - item_events: append-only history of item movements. Deliberately NOT linked to characters
+        //   with a foreign key, so the history survives a character being deleted.
+        // The uid indexes aren't UNIQUE on purpose: a duplicate must be detected and reported, not make
+        // the owner's saves fail.
+        new(6, "item serials and item event log", Sql: """
+            ALTER TABLE inventory_items ADD COLUMN uid INTEGER;
+            ALTER TABLE equipment_items ADD COLUMN uid INTEGER;
+            CREATE INDEX idx_inventory_items_uid ON inventory_items(uid) WHERE uid IS NOT NULL;
+            CREATE INDEX idx_equipment_items_uid ON equipment_items(uid) WHERE uid IS NOT NULL;
+
+            CREATE TABLE item_serials (
+                uid         INTEGER PRIMARY KEY AUTOINCREMENT,
+                item_id     INTEGER NOT NULL,
+                created_at  TEXT NOT NULL,
+                origin      TEXT NOT NULL
+            );
+
+            CREATE TABLE item_events (
+                id              INTEGER PRIMARY KEY,
+                at              TEXT NOT NULL,
+                character_id    INTEGER,
+                character_name  TEXT,
+                action          TEXT NOT NULL,
+                item_id         INTEGER NOT NULL,
+                count           INTEGER NOT NULL,
+                uid             INTEGER,
+                instance_id     INTEGER,
+                run_id          INTEGER,
+                detail          TEXT
+            );
+            CREATE INDEX idx_item_events_uid ON item_events(uid) WHERE uid IS NOT NULL;
+            CREATE INDEX idx_item_events_character ON item_events(character_id);
+            """),
     ];
 
     public static int LatestVersion => All.Count;

@@ -1,5 +1,7 @@
+using System.Collections.Generic;
 using System.Linq;
 using ExploreTogether.Core.Items;
+using ExploreTogether.Core.Persistence;
 using ExploreTogether.Dungeon;
 using ExploreTogether.Items;
 using ExploreTogether.Net;
@@ -25,12 +27,23 @@ public partial class ServerGame
         var name = interactionId[ItemPickup.InteractionPrefix.Length..];
         if (!instance.Items.TryGetValue(name, out var item) || s.Inventory == null) return;
 
-        var added = s.Inventory.AddItems(item.ItemId, item.Count, item.Data);
+        // Fresh loot gets its serial on its first pickup (only once there's room for it). The ground item
+        // keeps it from then on, so the serial is issued once whoever ends up with it.
+        var events = new List<ItemEvent>();
+        if (item.Uid == null && item.Count == 1 && NeedsSerial(item.ItemId) && s.Inventory.FindEmptySlot() >= 0)
+        {
+            var origin = instance.RunId is { } run ? $"loot, run {run}" : $"loot, instance {instance.Id}";
+            (item.Uid, var created) = RegisterNewItem(s, item.ItemId, origin, instance);
+            events.Add(created);
+        }
+
+        var added = s.Inventory.AddItems(item.ItemId, item.Count, item.Data, item.Uid);
         if (added == 0)
         {
             _session.SendNotice(s.Peer, "Your inventory is full.");
             return;
         }
+        events.Add(ItemEventFor(s, ItemActions.PickedUp, item.ItemId, added, item.Uid, instance));
         var itemName = item.Count > 1 ? $"{ItemCatalog.NameOf(item.ItemId)} x{added}" : ItemCatalog.NameOf(item.ItemId);
         if (added < item.Count)
         {
@@ -41,7 +54,7 @@ public partial class ServerGame
         var isPass = item.ItemId == ItemCatalog.DungeonPassId;
         _instances.RemoveItem(instance, item);
         SendInventory(s);
-        if (!isPass) SaveInventory(s); // the pass is never saved
+        if (!isPass) SaveInventory(s, events.ToArray()); // the pass is never saved (or tracked)
 
         GD.Print($"[server] '{s.Character!.Name}' picked up {itemName} in instance {instance.Id}");
         if (isPass)
@@ -148,11 +161,16 @@ public partial class ServerGame
         SendAmmoState(s); // the equipped gun's loaded rounds and the rounds carried may have changed
     }
 
-    /// <summary>Saves the inventory and gear, leaving out the Dungeon Pass (it belongs to the dungeon).</summary>
-    private void SaveInventory(PeerSession s)
+    /// <summary>
+    /// Saves the inventory and gear, plus the item events describing the change, in one transaction (so a
+    /// crash can't duplicate or lose an item moving between them, and the log always matches the save).
+    /// Leaves out the Dungeon Pass (it belongs to the dungeon).
+    /// </summary>
+    private void SaveInventory(PeerSession s, params ItemEvent[] events)
     {
-        if (s.Inventory == null || s.Character == null) return;
-        _db.SaveInventory(s.Character.Id, s.Inventory.Occupied().Where(o => o.ItemId != ItemCatalog.DungeonPassId));
-        if (s.Gear != null) _db.SaveGear(s.Character.Id, s.Gear.ExportGear(), s.Gear.ExportGearData());
+        if (s.Inventory == null || s.Gear == null || s.Character == null) return;
+        _db.SaveItems(s.Character.Id,
+            s.Inventory.Occupied().Where(o => o.ItemId != ItemCatalog.DungeonPassId),
+            s.Gear.Occupied(), events);
     }
 }

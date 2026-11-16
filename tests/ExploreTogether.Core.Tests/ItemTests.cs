@@ -130,7 +130,39 @@ public class InventoryAndRunPersistenceTests : IDisposable
         var c = NewCharacter("Kermit");
         _db.SaveInventory(c, [(0, 1, 5), (3, 1515, 1)]);
         _db.SaveInventory(c, [(1, 22, 1)]);
-        Assert.Equal([(1, 22, 1, (int?)null)], _db.LoadInventory(c));
+        Assert.Equal([new SlotRecord(1, 22, 1)], _db.LoadInventory(c));
+    }
+
+    [Fact]
+    public void SaveItems_WritesInventoryAndGearTogether()
+    {
+        var c = NewCharacter("Kermit");
+        SlotRecord[] inventory = [new(0, 1, 5), new(2, 1515, 1, Uid: 41)];
+        SlotRecord[] gear = [new((int)EquipmentType.Weapon, 1337, 1, Data: 7, Uid: 42)]; // a pistol with 7 loaded
+
+        _db.SaveItems(c, inventory, gear);
+
+        Assert.Equal(inventory, _db.LoadInventory(c));
+        Assert.Equal(gear, _db.LoadGearRecords(c));
+    }
+
+    /// <summary>
+    /// The duplication case from the item security review: unequipping the sword puts it in the inventory.
+    /// If that save fails part-way, neither table may change, or the sword would be saved in both places.
+    /// </summary>
+    [Fact]
+    public void SaveItems_WhenAnyWriteFails_ChangesNeitherInventoryNorGear()
+    {
+        var c = NewCharacter("Kermit");
+        _db.SaveItems(c, [new(0, 1, 5)], [new((int)EquipmentType.Weapon, 1515, 1)]);
+
+        // Unequip: gear becomes empty, the sword moves to inventory slot 1. The inventory write then fails
+        // (two rows for slot 0 break the primary key), after the gear rows were already rewritten.
+        Assert.ThrowsAny<Exception>(() =>
+            _db.SaveItems(c, [new(0, 1, 5), new(0, 1, 5), new(1, 1515, 1)], []));
+
+        Assert.Equal([new SlotRecord(0, 1, 5)], _db.LoadInventory(c));
+        Assert.Equal(1515, _db.LoadGear(c, Gear.SlotCount)[(int)EquipmentType.Weapon]);
     }
 
     [Fact]
@@ -164,6 +196,6 @@ public class InventoryAndRunPersistenceTests : IDisposable
         Assert.Equal("Kermit", db.GetCharacter(7)!.Name);
         Assert.Empty(db.LoadInventory(7));
         db.SaveInventory(7, [(0, 1, 3)]);
-        Assert.Equal([(0, 1, 3, (int?)null)], db.LoadInventory(7));
+        Assert.Equal([new SlotRecord(0, 1, 3)], db.LoadInventory(7));
     }
 }

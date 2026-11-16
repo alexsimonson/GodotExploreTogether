@@ -202,6 +202,8 @@ function Check-Common([string[]]$names, [hashtable]$exits) {
             }
         }
     }
+    Expect server 'item audit: no duplicated or unknown item serials' 'the startup item audit is clean'
+    ExpectNot server 'DUPLICATE ITEM' 'no duplicated items are detected while playing'
     Expect server 'saved and closed database' 'the server saves and closes the database'
 }
 

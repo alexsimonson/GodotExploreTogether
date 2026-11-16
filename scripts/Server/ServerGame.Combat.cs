@@ -1,8 +1,9 @@
-using System;
 using System.Collections.Generic;
 using System.Linq;
+using System;
 using ExploreTogether.Core.Combat;
 using ExploreTogether.Core.Items;
+using ExploreTogether.Core.Persistence;
 using ExploreTogether.Dungeon;
 using ExploreTogether.Enemies;
 using ExploreTogether.Net;
@@ -194,13 +195,16 @@ public partial class ServerGame
     {
         if (!_sessions.TryGetValue(peer, out var s) || s.Inventory == null || s.Gear?.EquippedWeapon is not { Class: ItemClass.Gun } gun) return;
         var full = GunRules.Loaded(s.Gear.WeaponSlot) >= (gun.MagazineSize ?? 0);
-        if (GunRules.Reload(s.Gear.WeaponSlot, gun, s.Inventory) == 0)
+        var loaded = GunRules.Reload(s.Gear.WeaponSlot, gun, s.Inventory);
+        if (loaded == 0)
         {
             _session.SendNotice(peer, full ? "Already loaded." : $"No {ItemCatalog.NameOf(gun.AmmoItemId ?? -1)} to reload with.");
             return;
         }
         SendInventory(s); // the rounds moved from the inventory into the gun (also sends the ammo state)
-        SaveInventory(s);
+        var gunSerial = s.Gear.WeaponSlot.uid is { } uid ? $" #{uid}" : "";
+        SaveInventory(s, ItemEventFor(s, ItemActions.Loaded, gun.AmmoItemId!.Value, loaded, null,
+            _instances.FindPlayer(peer)?.Instance, $"into {gun.Name}{gunSerial}"));
     }
 
     /// <summary>The equipped gun's loaded rounds and the matching rounds carried; (-1, -1) if no gun is equipped.</summary>
@@ -250,6 +254,7 @@ public partial class ServerGame
         OnLeavingDungeon(s, instance, connected: true); // the Dungeon Pass still drops for the team
         _instances.RemovePeer(s.Peer);
         OnLeftDungeon(instance);
+        LogItemsDestroyed(s, instance, "hardcore death"); // the log outlives the character
         _db.DeleteCharacter(c.Id);
         s.Character = null;
         s.Inventory = null;
