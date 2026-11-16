@@ -23,6 +23,12 @@ namespace ExploreTogether.Client;
 ///   --dev-solve                     in a dungeon, pick up every item, open the exit and escape
 ///   --dev-escape-after SECONDS      in a dungeon, use the exit after this long
 ///   --dev-return-after SECONDS      in a dungeon, go back to the hub after this long
+///
+/// Dev city automation (needs the server's --dev-skip-proximity):
+///   --dev-city                      on reaching the hub, go through the City Gate
+///   --dev-return-after SECONDS      (also) in the city, go back to the hub after this long
+///   --dev-overview angle|top        in the city, view it from a camera high above (for screenshots)
+///   --dev-check-city                in the city, raycast every doorway, gate fence and front wall against the layout
 /// </summary>
 public partial class ClientGame : Node
 {
@@ -51,6 +57,7 @@ public partial class ClientGame : Node
     private bool _devCreateAttempted;
     private readonly string _devDungeon = CmdArgs.Get("dev-dungeon");
     private bool _devDungeonDone;
+    private bool _devCityDone;
     private readonly float _devReturnAfter = CmdArgs.GetFloat("dev-return-after", 0);
 
     public override void _Ready()
@@ -423,8 +430,31 @@ public partial class ClientGame : Node
         if (CmdArgs.Has("dev-open-inventory") && !_inventory.Visible)
             GetTree().CreateTimer(0.5).Timeout += () => { if (!_inventory.Visible) _inventory.Toggle(); };
 
-        // In the dungeon when --dev-dungeon is used, otherwise wherever the client arrives.
-        if (CmdArgs.Has("dev-screenshot") && (kind == InstanceKinds.Dungeon || !CmdArgs.Has("dev-dungeon")))
+        // In the dungeon when --dev-dungeon is used, in the city with --dev-city, otherwise wherever the client arrives.
+        var screenshotKind = CmdArgs.Has("dev-dungeon") ? InstanceKinds.Dungeon : CmdArgs.Has("dev-city") ? InstanceKinds.City : kind;
+        if (kind == InstanceKinds.City && CmdArgs.Has("dev-overview")) // after the local player (and its camera) has spawned
+            GetTree().CreateTimer(1.5).Timeout += () => DevOverviewCamera(instanceId, CmdArgs.Get("dev-overview"), layoutData);
+        if (kind == InstanceKinds.City && CmdArgs.Has("dev-check-city"))
+        {
+            GetTree().CreateTimer(0.5).Timeout += () =>
+            {
+                if (PlayerCharacter.Local is not { } p) return;
+                var (count, failures) = City.CityChecks.Verify(Core.City.CityLayout.Import(layoutData), p.GetWorld3D());
+                GD.Print($"[client] city check: {count - failures.Count}/{count} doors, fences and walls match the layout");
+                foreach (var f in failures) GD.Print($"[client]   {f}");
+            };
+        }
+        if (kind == InstanceKinds.Hub && CmdArgs.Has("dev-city") && !_devCityDone)
+        {
+            _devCityDone = true;
+            GetTree().CreateTimer(1.0).Timeout += () => _session.SendInteract(City.CityBuilder.GateId);
+        }
+        if (kind == InstanceKinds.City && _devReturnAfter > 0)
+            GetTree().CreateTimer(_devReturnAfter).Timeout += () =>
+            {
+                if (_currentInstanceId == instanceId) _session.SendInteract(City.CityBuilder.GateId);
+            };
+        if (CmdArgs.Has("dev-screenshot") && kind == screenshotKind)
         {
             GetTree().CreateTimer(CmdArgs.GetFloat("dev-screenshot-delay", 3)).Timeout += () =>
             {
@@ -452,6 +482,31 @@ public partial class ClientGame : Node
             {
                 if (_currentInstanceId == instanceId) _session.SendInteract("dungeon_entrance");
             };
+    }
+
+    /// <summary>--dev-overview: a fixed camera high above the city, straight down ("top") or at an angle from the south-west.</summary>
+    private void DevOverviewCamera(int instanceId, string mode, int[] layoutData)
+    {
+        var container = _main.Instances.GetNodeOrNull<Node>(InstanceFactory.NodeName(instanceId));
+        if (container == null) return;
+        var b = Core.City.CityLayout.Import(layoutData).Bounds;
+        var center = new Vector3(b.CenterX, 0, b.CenterZ);
+        var size = Mathf.Max(b.Width, b.Depth);
+        var camera = new Camera3D { Name = "DevOverview", Far = 4000 };
+        container.AddChild(camera);
+        if (mode == "top")
+        {
+            camera.Projection = Camera3D.ProjectionType.Orthogonal;
+            camera.Size = size * 1.05f;
+            camera.Position = center + new Vector3(0, 300, 0);
+            camera.Rotation = new Vector3(-Mathf.Pi / 2, Mathf.Pi, 0); // looking straight down, north (+Z) at the top
+        }
+        else
+        {
+            camera.Position = center + new Vector3(-size * 0.45f, size * 0.55f, -size * 0.75f);
+            camera.LookAt(center, Vector3.Up);
+        }
+        camera.MakeCurrent();
     }
 
     /// <summary>--dev-solve: pick up every item in this instance, then open the exit and escape.</summary>

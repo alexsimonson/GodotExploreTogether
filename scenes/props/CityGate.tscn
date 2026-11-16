@@ -1,0 +1,61 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/Dungeon/Interactable.cs" id="1_interactable"]
+[ext_resource type="Material" path="res://assets/materials/hub_rock_block.tres" id="2_rock"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_frame"]
+size = Vector3(1.8, 2.6, 0.4)
+
+[sub_resource type="BoxMesh" id="BoxMesh_post"]
+material = ExtResource("2_rock")
+size = Vector3(0.3, 2.6, 0.4)
+
+[sub_resource type="BoxMesh" id="BoxMesh_beam"]
+material = ExtResource("2_rock")
+size = Vector3(1.8, 0.3, 0.4)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_portal"]
+cull_mode = 2
+shading_mode = 0
+albedo_color = Color(1, 0.8, 0.35, 1)
+
+[sub_resource type="QuadMesh" id="QuadMesh_portal"]
+material = SubResource("StandardMaterial3D_portal")
+size = Vector2(1.2, 2.3)
+
+[node name="CityGate" type="StaticBody3D"]
+script = ExtResource("1_interactable")
+InteractionId = "city_gate"
+Prompt = "City Gate"
+
+[node name="Shape" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.3, 0)
+shape = SubResource("BoxShape3D_frame")
+
+[node name="PostLeft" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.75, 1.3, 0)
+mesh = SubResource("BoxMesh_post")
+
+[node name="PostRight" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.75, 1.3, 0)
+mesh = SubResource("BoxMesh_post")
+
+[node name="Beam" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.45, 0)
+mesh = SubResource("BoxMesh_beam")
+
+[node name="Portal" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.15, 0)
+mesh = SubResource("QuadMesh_portal")
+
+[node name="Glow" type="OmniLight3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.3, 0.8)
+light_color = Color(1, 0.8, 0.4, 1)
+light_energy = 1.5
+omni_range = 4.0
+
+[node name="Label" type="Label3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.95, 0)
+text = "City Gate"
+font_size = 48
+outline_size = 10

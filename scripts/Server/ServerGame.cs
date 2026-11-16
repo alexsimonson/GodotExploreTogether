@@ -46,6 +46,7 @@ public sealed class PeerSession(long peer)
 ///   -> EnterInstance(hub) -> client builds it -> InstanceReady -> player spawned
 ///   hub: Interact(dungeon_entrance) -> dungeon menu -> CreateDungeon/JoinDungeon -> EnterInstance(dungeon)
 ///   dungeon: Interact(dungeon_entrance) -> back to the hub
+///   hub: Interact(city_gate) -> EnterInstance(city), joining an occupied city or generating a new one (ServerGame.City); city: Interact(city_gate) -> back
 ///   anywhere: Interact(resource:NAME) -> gather (ServerGame.Gathering); hub: Interact(hub_storage) -> storage (ServerGame.Storage)
 /// Owns the database; character progress is saved on disconnect, every AutosaveSeconds, and at shutdown.
 /// </summary>
@@ -57,6 +58,8 @@ public partial class ServerGame : Node
 
     /// <summary>Where players reappear in the hub after a dungeon: in front of the entrance, facing away from it.</summary>
     private static readonly SavedPosition HubReturnPoint = new(0f, 0.5f, 16f, 0f);
+    /// <summary>Where players reappear in the hub after a city: in front of the City Gate.</summary>
+    private static readonly SavedPosition CityReturnPoint = new(-6f, 0.5f, 16f, 0f);
 
     private NetSession _session = null!;
     private InstanceManager _instances = null!;
@@ -135,7 +138,7 @@ public partial class ServerGame : Node
         AddChild(autosave);
 
         var cleanup = new Timer { WaitTime = 1, Autostart = true };
-        cleanup.Timeout += () => _instances.CloseEmptyDungeons(EmptyDungeonTimeout,
+        cleanup.Timeout += () => _instances.CloseEmptyInstances(EmptyDungeonTimeout,
             _sessions.Values.Where(s => s.PendingInstanceId != null).Select(s => s.PendingInstanceId!.Value).ToHashSet());
         AddChild(cleanup);
 
@@ -364,6 +367,11 @@ public partial class ServerGame : Node
         if (interactionId == DungeonExit.Id && instance.Kind == InstanceKinds.Dungeon)
         {
             UseExit(s, instance);
+            return;
+        }
+        if (interactionId == City.CityBuilder.GateId)
+        {
+            UseCityGate(s, instance);
             return;
         }
         if (interactionId != DungeonEntranceId) return;

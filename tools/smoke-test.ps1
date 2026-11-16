@@ -11,6 +11,8 @@
               the wand user's aim ghost must show up for a teammate.
     death   - two unarmed players next to enemies: enemies must land hits (up close), the normal character
               returns to the hub, the hardcore one is deleted.
+    city    - two players go through the City Gate and end up in the same generated city; its doorways, fences
+              and walls match the layout; both return to the hub, and the empty city is closed.
     gather  - one player chops the hub's trees with an axe and puts the logs into the hub storage; another
               starts a dungeon, which must get its trees (and still bake navigation around them).
   Every scenario also checks: no engine/script errors, remote players never fly off vertically,
@@ -47,6 +49,25 @@ $AllowedErrors = @()
 # A client's args: --connect/--user/--password are added automatically.
 
 $Scenarios = [ordered]@{
+    city = @{
+        Port   = 7945
+        Server = @('--dev-skip-proximity', '--dungeon-empty-timeout', '3', '--city-seed', '11', '--dev-quit-after', '20')
+        Clients = [ordered]@{
+            Kermit    = @('--color', '#3cb043', '--dev-city', '--dev-check-city', '--dev-return-after', '6', '--dev-log', '--dev-quit-after', '12')
+            Blueberry = @('--color', '#4f86f7', '--dev-city', '--dev-return-after', '7', '--dev-log', '--dev-quit-after', '13')
+        }
+        Checks = {
+            Expect server 'city 2: 5x5, seed 11, loops 15%, \d+ parcels' 'a 5x5 city is generated from the seed'
+            ExpectNot server 'city 3:' 'only one city is generated for the two players'
+            Expect server "\('Kermit'\) entered instance 2" 'Kermit enters the city'
+            Expect server "\('Blueberry'\) entered instance 2" 'Blueberry joins the same city'
+            Expect Kermit 'city check: (\d+)/\1 doors, fences and walls match' 'built doorways, fences and walls match the layout'
+            Expect Kermit "remote player \d+ \('Blueberry', #4f86f7\) spawned" 'Kermit sees Blueberry in the city' -After 'entered instance 2 \(city\)'
+            Expect Kermit 'entered instance 1 \(hub\)' 'Kermit returns to the hub' -After 'entered instance 2 \(city\)'
+            Expect Blueberry 'entered instance 1 \(hub\)' 'Blueberry returns to the hub' -After 'entered instance 2 \(city\)'
+            Expect server 'closed empty city 2' 'the empty city is closed'
+        }
+    }
     coop = @{
         Port   = 7941
         Server = @('--dev-skip-proximity', '--dungeon-empty-timeout', '3', '--dev-quit-after', '24')

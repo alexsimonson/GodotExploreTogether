@@ -1,3 +1,5 @@
+using ExploreTogether.City;
+using ExploreTogether.Core.City;
 using ExploreTogether.Core.Dungeon;
 using ExploreTogether.Dungeon;
 using Godot;
@@ -32,7 +34,7 @@ public static class InstanceFactory
         return -1;
     }
 
-    /// <param name="layoutData">For dungeons, the exported maze layout. Ignored for the hub.</param>
+    /// <param name="layoutData">For dungeons, the exported maze layout; for cities, the city's export. Ignored for the hub.</param>
     public static InstanceNodes Build(Node instancesRoot, int instanceId, string kind, int[] layoutData, bool isServer)
     {
         Node container = isServer
@@ -50,6 +52,7 @@ public static class InstanceFactory
         {
             InstanceKinds.Hub => GD.Load<PackedScene>(HubScenePath).Instantiate(),
             InstanceKinds.Dungeon => DungeonBuilder.Build(MazeLayout.Import(layoutData)),
+            InstanceKinds.City => CityBuilder.Build(CityLayout.Import(layoutData)),
             _ => throw new System.ArgumentException($"Unknown instance kind '{kind}'"),
         };
         level.Name = "Level";
@@ -97,6 +100,7 @@ public static class InstanceKinds
 {
     public const string Hub = "hub";
     public const string Dungeon = "dungeon";
+    public const string City = "city";
 }
 
 public readonly record struct InstanceNodes(Node Container, Node Level, Node3D Players, Node3D Items, Node3D Enemies,

@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using ExploreTogether.City;
+using ExploreTogether.Core.City;
 using ExploreTogether.Core.Dungeon;
 using ExploreTogether.Dungeon;
 using ExploreTogether.Enemies;
@@ -20,10 +22,12 @@ public sealed class ServerInstance
     public required InstanceNodes Nodes { get; init; }
     /// <summary>Dungeons only: the maze, and its export sent to joining clients.</summary>
     public MazeLayout? Layout { get; init; }
+    /// <summary>Cities only.</summary>
+    public CityLayout? City { get; init; }
     public int[] LayoutData { get; init; } = [];
     public string CreatedBy { get; init; } = "";
     public DateTime CreatedAt { get; } = DateTime.UtcNow;
-    /// <summary>When the last player left, for closing empty dungeons. Null while occupied.</summary>
+    /// <summary>When the last player left, for closing empty dungeons and cities. Null while occupied.</summary>
     public DateTime? EmptySince { get; set; }
     public Dictionary<long, PlayerCharacter> Players { get; } = new();
     /// <summary>Items lying in the instance, by node name.</summary>
@@ -79,6 +83,7 @@ public sealed class InstanceManager
     public ServerInstance Hub { get; private set; } = null!;
 
     public IEnumerable<ServerInstance> Dungeons => _instances.Values.Where(i => i.Kind == InstanceKinds.Dungeon);
+    public IEnumerable<ServerInstance> Cities => _instances.Values.Where(i => i.Kind == InstanceKinds.City);
 
     public void CreateHub()
     {
@@ -124,15 +129,32 @@ public sealed class InstanceManager
         return instance;
     }
 
-    private ServerInstance Create(string kind, MazeLayout? layout, string createdBy)
+    /// <summary>A new greybox city (seed random unless given). Closed like a dungeon once it has been empty a while.</summary>
+    public ServerInstance CreateCity(int width, int height, int? seed, int loopPercent, string createdBy)
+    {
+        width = Math.Clamp(width, 1, MaxCitySide);
+        height = Math.Clamp(height, 1, MaxCitySide);
+        var started = DateTime.UtcNow;
+        var city = CityLayout.Generate(width, height, seed ?? Random.Shared.Next(), loopPercent);
+        var instance = Create(InstanceKinds.City, null, createdBy, city);
+        var counts = city.Parcels.GroupBy(p => p.Building).Select(g => $"{g.Count()} {g.Key}");
+        GD.Print($"[server] city {instance.Id}: {width}x{height}, seed {city.Seed}, loops {city.LoopPercent}%, " +
+                 $"{city.Parcels.Count} parcels ({string.Join(", ", counts)}), built in " +
+                 $"{(DateTime.UtcNow - started).TotalMilliseconds:0} ms (by '{createdBy}')");
+        return instance;
+    }
+
+    public const int MaxCitySide = 20;
+
+    private ServerInstance Create(string kind, MazeLayout? layout, string createdBy, CityLayout? city = null)
     {
         var id = _nextId++;
-        var data = layout?.Export() ?? [];
+        var data = city?.Export() ?? layout?.Export() ?? [];
         var nodes = InstanceFactory.Build(_instancesRoot, id, kind, data, isServer: true);
         var instance = new ServerInstance
         {
-            Id = id, Kind = kind, Nodes = nodes, Layout = layout, LayoutData = data, CreatedBy = createdBy,
-            EmptySince = kind == InstanceKinds.Dungeon ? DateTime.UtcNow : null,
+            Id = id, Kind = kind, Nodes = nodes, Layout = layout, City = city, LayoutData = data, CreatedBy = createdBy,
+            EmptySince = kind != InstanceKinds.Hub ? DateTime.UtcNow : null,
         };
         _instances[id] = instance;
         GD.Print($"[server] created instance {id} ({kind})");
@@ -203,7 +225,7 @@ public sealed class InstanceManager
         if (stillConnected)
             foreach (var sync in instance.Synchronizers)
                 sync.SetVisibilityFor((int)peer, false);
-        if (instance.Players.Count == 0 && instance.Kind == InstanceKinds.Dungeon)
+        if (instance.Players.Count == 0 && instance.Kind != InstanceKinds.Hub)
             instance.EmptySince = DateTime.UtcNow;
         GD.Print($"[server] peer {peer} left instance {instance.Id}; {instance.Players.Count} player(s) remain");
     }
@@ -275,17 +297,17 @@ public sealed class InstanceManager
         enemy.QueueFree();
     }
 
-    /// <summary>Closes dungeons that have had no players for at least the timeout.</summary>
-    public void CloseEmptyDungeons(TimeSpan timeout, ICollection<int> instancesWithArrivals)
+    /// <summary>Closes dungeons and cities that have had no players for at least the timeout.</summary>
+    public void CloseEmptyInstances(TimeSpan timeout, ICollection<int> instancesWithArrivals)
     {
         var now = DateTime.UtcNow;
-        foreach (var instance in Dungeons.ToList())
+        foreach (var instance in _instances.Values.Where(i => i.Kind != InstanceKinds.Hub).ToList())
         {
             if (instance.EmptySince is not { } since || now - since < timeout) continue;
             if (instancesWithArrivals.Contains(instance.Id)) continue; // someone is loading into it
             _instances.Remove(instance.Id);
             instance.Nodes.Container.QueueFree();
-            GD.Print($"[server] closed empty dungeon {instance.Id}");
+            GD.Print($"[server] closed empty {instance.Kind} {instance.Id}");
         }
     }
 
@@ -316,6 +338,8 @@ public sealed class InstanceManager
     {
         if (instance.Layout != null)
             return DungeonBuilder.SpawnPoint(instance.Layout, index);
+        if (instance.City != null)
+            return CityBuilder.SpawnPoint(instance.City, index);
         // Hub: spread arrivals around a small ring so players don't spawn inside each other.
         var angle = index * Mathf.Tau / 8f;
         return (new Vector3(Mathf.Cos(angle) * 2f, 1f, Mathf.Sin(angle) * 2f), 0f);
