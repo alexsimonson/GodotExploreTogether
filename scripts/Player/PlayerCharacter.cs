@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Linq;
 using ExploreTogether.Net;
 using Godot;
 
@@ -143,6 +145,12 @@ public partial class PlayerCharacter : CharacterBody3D
             input = new Vector2(0, -1);
             RotateY(0.8f * delta);
         }
+        if (DevChase && OtherPlayers().FirstOrDefault() is { } target)
+        {
+            // Walk straight at another player (tests player-vs-player collision).
+            LookAt(new Vector3(target.Position.X, Position.Y, target.Position.Z));
+            input = new Vector2(0, -1);
+        }
 
         if (captured && Input.IsActionJustPressed(InputSetup.Jump) && IsOnFloor())
             velocity.Y = JumpVelocity;
@@ -151,8 +159,10 @@ public partial class PlayerCharacter : CharacterBody3D
         var direction = (Transform.Basis * new Vector3(input.X, 0, input.Y)).Normalized();
         velocity.X = direction.X * speed;
         velocity.Z = direction.Z * speed;
+        velocity = BlockByOtherPlayers(velocity);
         Velocity = velocity;
         MoveAndSlide();
+        SeparateFromOtherPlayers();
 
         if (Position.Y < FallRespawnY)
         {
@@ -166,6 +176,65 @@ public partial class PlayerCharacter : CharacterBody3D
             _lastSentPosition = Position;
             _lastSentYaw = Rotation.Y;
             GetNode<NetSession>("/root/Main/Session").SendPlayerTransform(InstanceFactory.InstanceIdOf(this), Position, Rotation.Y);
+        }
+    }
+
+    // ---- Player-vs-player collision ----------------------------------------------------------
+    // Players aren't solid to each other in the physics engine (collision_mask = world only).
+    // Physics resolves overlaps in the shortest direction, which for stacked capsules is up, and
+    // because each client moves only its own player against the others' copies, two clients pushing
+    // "up and out" of each other formed a loop that launched both players into the sky.
+    // Instead, each client keeps its own player out of the others HORIZONTALLY only: it can't walk
+    // into them, and if they overlap (spawning, lag), it slides itself sideways out. Both clients do
+    // this, so overlaps resolve in a frame or two, never vertically. (No standing on heads.)
+
+    private const float BodyRadius = 0.4f;   // matches the capsule in Player.tscn
+    private const float BodyHeight = 1.8f;
+    private const float PersonalSpace = BodyRadius * 2f;
+
+    private static readonly bool DevChase = CmdArgs.Has("dev-chase");
+
+    private IEnumerable<PlayerCharacter> OtherPlayers() =>
+        GetParent().GetChildren().OfType<PlayerCharacter>().Where(p => p != this);
+
+    /// <summary>Horizontal offset from another player and whether we overlap them vertically.</summary>
+    private (Vector2 Offset, bool SameLevel) Relative(PlayerCharacter other) =>
+        (new Vector2(Position.X - other.Position.X, Position.Z - other.Position.Z),
+         Mathf.Abs(Position.Y - other.Position.Y) < BodyHeight);
+
+    /// <summary>Removes the part of our horizontal velocity that would take us into another player.</summary>
+    private Vector3 BlockByOtherPlayers(Vector3 velocity)
+    {
+        foreach (var other in OtherPlayers())
+        {
+            var (offset, sameLevel) = Relative(other);
+            var dist = offset.Length();
+            if (!sameLevel || dist >= PersonalSpace + 0.05f || dist < 0.0001f) continue;
+            var away = offset / dist;
+            var horizontal = new Vector2(velocity.X, velocity.Z);
+            var into = horizontal.Dot(away);
+            if (into < 0)
+            {
+                horizontal -= away * into;
+                velocity.X = horizontal.X;
+                velocity.Z = horizontal.Y;
+            }
+        }
+        return velocity;
+    }
+
+    /// <summary>If we overlap another player, slide ourselves sideways out (respecting walls).</summary>
+    private void SeparateFromOtherPlayers()
+    {
+        foreach (var other in OtherPlayers())
+        {
+            var (offset, sameLevel) = Relative(other);
+            var dist = offset.Length();
+            if (!sameLevel || dist >= PersonalSpace) continue;
+            // Exactly on top of each other: split along X, decided by peer id so the two clients agree.
+            var away = dist > 0.0001f ? offset / dist : new Vector2(OwnerPeerId > other.OwnerPeerId ? 1 : -1, 0);
+            var push = (PersonalSpace - dist) * 0.5f + 0.01f; // the other client moves its player the other half
+            MoveAndCollide(new Vector3(away.X * push, 0, away.Y * push));
         }
     }
 

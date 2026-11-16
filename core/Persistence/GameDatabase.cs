@@ -203,6 +203,85 @@ public sealed class GameDatabase : IDisposable
         cmd.ExecuteNonQuery();
     }
 
+    // ------------------------------------------------------------- inventory
+
+    public List<(int Slot, int ItemId, int Count)> LoadInventory(long characterId)
+    {
+        using var cmd = Command("SELECT slot, item_id, count FROM inventory_items WHERE character_id = $c ORDER BY slot;",
+            ("$c", characterId));
+        using var r = cmd.ExecuteReader();
+        var list = new List<(int, int, int)>();
+        while (r.Read()) list.Add((r.GetInt32(0), r.GetInt32(1), r.GetInt32(2)));
+        return list;
+    }
+
+    /// <summary>Replaces the character's saved inventory with these slots.</summary>
+    public void SaveInventory(long characterId, IEnumerable<(int Slot, int ItemId, int Count)> slots)
+    {
+        using var tx = _connection.BeginTransaction();
+        using (var del = Command("DELETE FROM inventory_items WHERE character_id = $c;", ("$c", characterId)))
+        {
+            del.Transaction = tx;
+            del.ExecuteNonQuery();
+        }
+        foreach (var (slot, itemId, count) in slots)
+        {
+            using var ins = Command("INSERT INTO inventory_items (character_id, slot, item_id, count) VALUES ($c, $s, $i, $n);",
+                ("$c", characterId), ("$s", slot), ("$i", itemId), ("$n", count));
+            ins.Transaction = tx;
+            ins.ExecuteNonQuery();
+        }
+        tx.Commit();
+    }
+
+    // ------------------------------------------------------------------ runs
+
+    public long CreateRun(int seed, int width, int height, int length, long? createdByCharacterId)
+    {
+        using var cmd = Command(
+            "INSERT INTO runs (seed, width, height, length, created_by, started_at) VALUES ($s, $w, $h, $l, $c, $now) RETURNING id;",
+            ("$s", seed), ("$w", width), ("$h", height), ("$l", length), ("$c", createdByCharacterId), ("$now", Now()));
+        return (long)cmd.ExecuteScalar()!;
+    }
+
+    /// <summary>Records that a character took part (no-op if already recorded, e.g. after rejoining).</summary>
+    public void AddRunParticipant(long runId, long characterId)
+    {
+        using var cmd = Command(
+            "INSERT OR IGNORE INTO run_participants (run_id, character_id, joined_at) VALUES ($r, $c, $now);",
+            ("$r", runId), ("$c", characterId), ("$now", Now()));
+        cmd.ExecuteNonQuery();
+    }
+
+    public void MarkEscaped(long runId, long characterId)
+    {
+        using var cmd = Command(
+            "UPDATE run_participants SET escaped_at = COALESCE(escaped_at, $now) WHERE run_id = $r AND character_id = $c;",
+            ("$now", Now()), ("$r", runId), ("$c", characterId));
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>Ends a run once (later calls are ignored). Outcome: "completed", "abandoned" or "interrupted".</summary>
+    public void EndRun(long runId, string outcome)
+    {
+        using var cmd = Command("UPDATE runs SET ended_at = $now, outcome = $o WHERE id = $r AND ended_at IS NULL;",
+            ("$now", Now()), ("$o", outcome), ("$r", runId));
+        cmd.ExecuteNonQuery();
+    }
+
+    public (string? Outcome, int Participants, int Escaped) GetRunSummary(long runId)
+    {
+        using var cmd = Command(
+            """
+            SELECT r.outcome,
+                   (SELECT COUNT(*) FROM run_participants p WHERE p.run_id = r.id),
+                   (SELECT COUNT(*) FROM run_participants p WHERE p.run_id = r.id AND p.escaped_at IS NOT NULL)
+            FROM runs r WHERE r.id = $r;
+            """, ("$r", runId));
+        using var rd = cmd.ExecuteReader();
+        return rd.Read() ? (rd.IsDBNull(0) ? null : rd.GetString(0), rd.GetInt32(1), rd.GetInt32(2)) : (null, 0, 0);
+    }
+
     // ----------------------------------------------------------------- helpers
 
     private static CharacterRecord ReadCharacter(SqliteDataReader r)

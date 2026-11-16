@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using ExploreTogether.Core;
+using ExploreTogether.Core.Items;
 using ExploreTogether.Core.Persistence;
 using ExploreTogether.Dungeon;
 using ExploreTogether.Net;
@@ -16,6 +17,8 @@ public sealed class PeerSession(long peer)
     public long Peer { get; } = peer;
     public AccountRecord? Account { get; set; }
     public CharacterRecord? Character { get; set; }
+    /// <summary>The character's inventory while playing (loaded on character select).</summary>
+    public Inventory? Inventory { get; set; }
     /// <summary>Instance the client was told to load and hasn't confirmed yet.</summary>
     public int? PendingInstanceId { get; set; }
     /// <summary>True while a password hash is being computed for this peer.</summary>
@@ -123,6 +126,8 @@ public partial class ServerGame : Node
     {
         if (_db == null) return;
         SaveAll();
+        foreach (var d in _instances.Dungeons)
+            if (d.RunId is { } runId) _db.EndRun(runId, "interrupted");
         _db.Dispose();
         GD.Print("[server] saved and closed database");
     }
@@ -253,6 +258,8 @@ public partial class ServerGame : Node
         }
 
         s.Character = character;
+        s.Inventory = new Inventory();
+        s.Inventory.Load(_db.LoadInventory(character.Id));
         s.PlayTimeCountedUntil = DateTime.UtcNow;
         SendToInstance(s, _instances.Hub);
     }
@@ -262,7 +269,10 @@ public partial class ServerGame : Node
     /// <summary>Removes the player from where they are and tells their client to load the target.</summary>
     private async void SendToInstance(PeerSession s, ServerInstance target)
     {
+        var from = _instances.FindPlayer(s.Peer)?.Instance;
+        if (from?.Kind == InstanceKinds.Dungeon) OnLeavingDungeon(s, from, connected: true);
         _instances.RemovePeer(s.Peer);
+        if (from?.Kind == InstanceKinds.Dungeon) OnLeftDungeon(from);
         s.PendingInstanceId = target.Id;
 
         // Replication sends the resulting despawns on the next network frames. Wait for them to go
@@ -295,12 +305,29 @@ public partial class ServerGame : Node
         var saved = instance == _instances.Hub ? c.HubPosition : null;
         _instances.AddPlayer(instance, peer, c.Name, ColorFromHex(c.ColorHex),
             saved is { } p ? new Vector3(p.X, p.Y, p.Z) : null, saved?.Yaw ?? 0f);
+
+        SendInventory(s);
+        if (instance.Kind == InstanceKinds.Dungeon)
+        {
+            if (instance.RunId is { } runId) _db.AddRunParticipant(runId, c.Id);
+            BroadcastDungeonStatus(instance);
+        }
     }
 
     private void OnInteract(long peer, string interactionId)
     {
         if (!_sessions.TryGetValue(peer, out var s) || !IsNear(s, interactionId, out var instance)) return;
 
+        if (interactionId.StartsWith(Items.ItemPickup.InteractionPrefix))
+        {
+            PickUp(s, instance, interactionId);
+            return;
+        }
+        if (interactionId == DungeonExit.Id && instance.Kind == InstanceKinds.Dungeon)
+        {
+            UseExit(s, instance);
+            return;
+        }
         if (interactionId != DungeonEntranceId) return;
         if (instance == _instances.Hub)
         {
@@ -322,6 +349,8 @@ public partial class ServerGame : Node
 
         LeaveHubViaEntrance(s);
         var dungeon = _instances.CreateDungeon(width, height, length, s.Character!.Name);
+        var layout = dungeon.Layout!;
+        dungeon.RunId = _db.CreateRun(layout.Seed, layout.Width, layout.Height, layout.Length, s.Character.Id);
         SendToInstance(s, dungeon);
     }
 
@@ -349,7 +378,7 @@ public partial class ServerGame : Node
         instance = null!;
         if (s.Character == null || _instances.FindPlayer(s.Peer) is not { } found) return false;
         instance = found.Instance;
-        var target = InstanceFactory.FindInteractable(found.Instance.Nodes.Level, interactionId);
+        var target = InstanceFactory.FindInteractable(found.Instance.Nodes.Container, interactionId);
         if (target == null) return false;
         if (DevSkipProximity) return true;
 
@@ -364,8 +393,14 @@ public partial class ServerGame : Node
     private void OnPeerDisconnected(long peer)
     {
         GD.Print($"[server] peer {peer} disconnected");
-        if (_sessions.Remove(peer, out var s)) Save(s);
+        var from = _instances.FindPlayer(peer)?.Instance;
+        if (_sessions.Remove(peer, out var s))
+        {
+            if (from?.Kind == InstanceKinds.Dungeon) OnLeavingDungeon(s, from, connected: false);
+            Save(s);
+        }
         _instances.RemovePeer(peer, stillConnected: false);
+        if (from?.Kind == InstanceKinds.Dungeon) OnLeftDungeon(from);
     }
 
     private void SaveAll()
@@ -390,6 +425,7 @@ public partial class ServerGame : Node
         }
 
         _db.SaveCharacterProgress(s.Character.Id, playDelta, hubPos);
+        SaveInventory(s);
         s.Character = s.Character with
         {
             PlayTimeSeconds = s.Character.PlayTimeSeconds + playDelta,

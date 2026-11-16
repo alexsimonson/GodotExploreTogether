@@ -108,10 +108,20 @@ Each phase ends with something runnable.
 - Not yet: navigation baking (needed for enemies in phase 5), key/exit (phase 4).
 
 ### Phase 4 — Key and exit (first full loop)
-- Interaction system (port of `IInteraction`): look at an object, press E, and the client sends a request to the server.
-- Networked pickups and a minimal inventory (port of `Inventory`), saved to the database.
-- Key: any player picking it up opens the door for the instance. Exit: each player finishes individually by walking through, and the run is complete when everyone has. Results are recorded, and players return to the hub.
-- **Done when:** a full co-op run works from hub to dungeon to exit and back to the hub, with the result in the database.
+- ✅ Interaction system (done in phase 3).
+- ✅ Item bank ported (`core/Items/ItemCatalog`: the 16 original items, same ids). Inventory ported (`Inventory`: 28 slots, stackables stack).
+- ✅ Dungeon contents ported from `FillMazeWithItems`: the Dungeon Pass (999) plus 20 random items on nodes in [5, count − 5). Seeded, with small-maze guards.
+- ✅ Networked pickups: items are replicated per instance (spawner + visibility, as for players), so mid-run joiners see what's left. Look + E, validated by the server.
+- ✅ The Dungeon Pass is the shared key. Whoever holds it unlocks the exit (at the last node, like the original Objective), and the pass is used up. The exit then stays open for the whole instance. The pass is never saved; if its holder leaves, it drops where they stood.
+- ✅ Each player escapes on their own at the open exit and returns to the hub. The run ends when the dungeon empties: `completed` if anyone escaped, else `abandoned` (`interrupted` on server shutdown).
+- ✅ Database v2: `inventory_items`, `runs`, `run_participants` (joined/escaped times). Upgrade from v1 tested with `TempDatabase`.
+- ✅ Players collide with each other **horizontally**, in code (`PlayerCharacter`: `BlockByOtherPlayers` and `SeparateFromOtherPlayers`), not through the physics engine.
+  - Why: with client-driven movement, physics-based overlap resolution pushed stacked players up out of each other's copies on both clients, a loop that launched them into the sky.
+  - Now each client stops its own player at another's edge and slides it sideways out of any overlap, so it never moves vertically.
+  - Trade-off: you can't stand on a teammate's head; that would need server-side resolution.
+  - Arrivals are also placed at the nearest free spot. Test with `--dev-chase`.
+- ✅ Client: Tab inventory panel, dungeon status in the top-right corner (pass holder, exit state, who escaped, who's inside), notices.
+- ✅ **Done:** two groups at once, headless. In one, a player opened the exit and escaped, a mid-run joiner escaped too, and a third left early, recorded as "completed, 2/3 escaped". In the other, the pass was dropped when its holder left, and the run was recorded as "abandoned". Inventory survives a re-login without the pass. 76 unit tests.
 
 ### Phase 5 — Enemies and combat
 - Port `NPC`/`GenericNPC`/`VisionSystem` as server-run AI on each instance's navigation map.

@@ -11,9 +11,9 @@ public class PersistenceTests : IDisposable
     [Fact]
     public void NewDatabase_IsMigratedToLatest_AndMigrateIsIdempotent()
     {
-        Assert.Equal(1, _db.SchemaVersion);
+        Assert.Equal(Migrations.LatestVersion, _db.SchemaVersion);
         _db.Migrate();
-        Assert.Equal(1, _db.SchemaVersion);
+        Assert.Equal(Migrations.LatestVersion, _db.SchemaVersion);
     }
 
     [Fact]
@@ -90,7 +90,7 @@ public class PersistenceTests : IDisposable
             using (var db = GameDatabase.Open(path))
             {
                 Assert.NotNull(db.FindAccount("kermit"));
-                Assert.Equal(1, db.SchemaVersion);
+                Assert.Equal(Migrations.LatestVersion, db.SchemaVersion);
             }
         }
         finally

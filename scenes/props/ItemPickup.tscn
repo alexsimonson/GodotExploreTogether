@@ -1,0 +1,64 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/Items/ItemPickup.cs" id="1_item"]
+[ext_resource type="Material" path="res://assets/materials/hardwood.tres" id="2_wood"]
+
+[sub_resource type="SphereShape3D" id="SphereShape3D_pick"]
+radius = 0.45
+
+[sub_resource type="BoxMesh" id="BoxMesh_loot"]
+material = ExtResource("2_wood")
+size = Vector3(0.35, 0.3, 0.35)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_gold"]
+albedo_color = Color(1, 0.78, 0.25, 1)
+metallic = 1.0
+roughness = 0.3
+emission_enabled = true
+emission = Color(1, 0.6, 0.1, 1)
+emission_energy_multiplier = 0.6
+
+[sub_resource type="BoxMesh" id="BoxMesh_pass"]
+material = SubResource("StandardMaterial3D_gold")
+size = Vector3(0.45, 0.3, 0.04)
+
+[sub_resource type="SceneReplicationConfig" id="SceneReplicationConfig_item"]
+properties/0/path = NodePath(".:ItemId")
+properties/0/spawn = true
+properties/0/replication_mode = 0
+properties/1/path = NodePath(".:position")
+properties/1/spawn = true
+properties/1/replication_mode = 0
+
+[node name="ItemPickup" type="StaticBody3D"]
+collision_layer = 4
+collision_mask = 0
+script = ExtResource("1_item")
+
+[node name="Shape" type="CollisionShape3D" parent="."]
+shape = SubResource("SphereShape3D_pick")
+
+[node name="Visual" type="Node3D" parent="."]
+
+[node name="Loot" type="MeshInstance3D" parent="Visual"]
+mesh = SubResource("BoxMesh_loot")
+
+[node name="Pass" type="Node3D" parent="Visual"]
+
+[node name="Card" type="MeshInstance3D" parent="Visual/Pass"]
+mesh = SubResource("BoxMesh_pass")
+
+[node name="Glow" type="OmniLight3D" parent="."]
+light_color = Color(1, 0.75, 0.3, 1)
+light_energy = 1.2
+omni_range = 3.0
+
+[node name="Label" type="Label3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.55, 0)
+billboard = 1
+font_size = 32
+outline_size = 8
+
+[node name="Sync" type="MultiplayerSynchronizer" parent="."]
+public_visibility = false
+replication_config = SubResource("SceneReplicationConfig_item")

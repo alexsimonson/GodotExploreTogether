@@ -9,6 +9,9 @@ namespace ExploreTogether.Net;
 /// <summary>A character as shown on the character-select screen.</summary>
 public sealed record CharacterSummary(long Id, string Name, Color Color, double PlayTimeSeconds);
 
+/// <summary>Shared state of the dungeon run the client is in.</summary>
+public sealed record DungeonStatus(bool ExitOpen, string PassHolder, string[] Escaped, int PlayersInside);
+
 /// <summary>A running dungeon as listed in the dungeon menu.</summary>
 public sealed record DungeonSummary(int Id, string CreatedBy, int Width, int Height, int Length, string[] Players);
 
@@ -46,6 +49,8 @@ public partial class NetSession : Node
     public event Action<int, string, int[]>? EnterInstanceReceived;      // instance id, kind, maze layout (dungeons)
     public event Action<List<DungeonSummary>>? DungeonMenuReceived;
     public event Action<string>? NoticeReceived;                         // short message for the HUD
+    public event Action<int[]>? InventoryReceived;                       // (slot, item id, count) triples
+    public event Action<DungeonStatus>? DungeonStatusReceived;
 
     // =========================================================== client -> server
 
@@ -133,6 +138,12 @@ public partial class NetSession : Node
 
     public void SendNotice(long peer, string message) => RpcId(peer, MethodName.Notice, message);
 
+    /// <summary>The player's whole inventory as (slot, item id, count) triples.</summary>
+    public void SendInventory(long peer, int[] triples) => RpcId(peer, MethodName.Inventory, triples);
+
+    public void SendDungeonStatus(long peer, DungeonStatus status) =>
+        RpcId(peer, MethodName.DungeonStatusUpdate, status.ExitOpen, status.PassHolder, status.Escaped, status.PlayersInside);
+
     public void SendDungeonMenu(long peer, IEnumerable<DungeonSummary> dungeons)
     {
         var list = new GArray();
@@ -165,6 +176,13 @@ public partial class NetSession : Node
 
     [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void Notice(string message) => NoticeReceived?.Invoke(message);
+
+    [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void Inventory(int[] triples) => InventoryReceived?.Invoke(triples);
+
+    [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void DungeonStatusUpdate(bool exitOpen, string passHolder, string[] escaped, int playersInside) =>
+        DungeonStatusReceived?.Invoke(new DungeonStatus(exitOpen, passHolder, escaped, playersInside));
 
     [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void DungeonMenu(GArray list)

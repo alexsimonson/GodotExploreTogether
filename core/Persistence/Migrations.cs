@@ -58,6 +58,36 @@ public static class Migrations
 
             CREATE INDEX idx_characters_account ON characters(account_id);
             """),
+
+        new(2, "inventories and dungeon runs", Sql: """
+            CREATE TABLE inventory_items (
+                character_id  INTEGER NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+                slot          INTEGER NOT NULL,
+                item_id       INTEGER NOT NULL,
+                count         INTEGER NOT NULL,
+                PRIMARY KEY (character_id, slot)
+            );
+
+            CREATE TABLE runs (
+                id          INTEGER PRIMARY KEY,
+                seed        INTEGER NOT NULL,
+                width       INTEGER NOT NULL,
+                height      INTEGER NOT NULL,
+                length      INTEGER NOT NULL,
+                created_by  INTEGER REFERENCES characters(id) ON DELETE SET NULL,
+                started_at  TEXT NOT NULL,
+                ended_at    TEXT,
+                outcome     TEXT
+            );
+
+            CREATE TABLE run_participants (
+                run_id        INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+                character_id  INTEGER NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+                joined_at     TEXT NOT NULL,
+                escaped_at    TEXT,
+                PRIMARY KEY (run_id, character_id)
+            );
+            """),
     ];
 
     public static int LatestVersion => All.Count;

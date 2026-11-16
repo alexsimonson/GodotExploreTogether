@@ -20,6 +20,8 @@ namespace ExploreTogether.Client;
 /// Dev dungeon automation (needs the server's --dev-skip-proximity):
 ///   --dev-dungeon new[:WxHxLEN] | join:NAME   on reaching the hub, start a dungeon / join the one NAME started
 ///   --dev-check-walls               in a dungeon, verify the built walls match the maze layout
+///   --dev-solve                     in a dungeon, pick up every item, open the exit and escape
+///   --dev-escape-after SECONDS      in a dungeon, use the exit after this long
 ///   --dev-return-after SECONDS      in a dungeon, go back to the hub after this long
 /// </summary>
 public partial class ClientGame : Node
@@ -32,6 +34,8 @@ public partial class ClientGame : Node
     private Label _promptLabel = null!;
     private Label _noticeLabel = null!;
     private DungeonMenu _dungeonMenu = null!;
+    private InventoryPanel _inventory = null!;
+    private Label _statusLabel = null!;
     private Interactable? _focused;
     private double _noticeTimeLeft;
 
@@ -80,6 +84,11 @@ public partial class ClientGame : Node
         _session.EnterInstanceReceived += OnEnterInstance;
         _session.DungeonMenuReceived += OnDungeonMenu;
         _session.NoticeReceived += ShowNotice;
+        _session.InventoryReceived += OnInventory;
+        _session.DungeonStatusReceived += OnDungeonStatus;
+
+        _inventory = new InventoryPanel { Name = "Inventory", Visible = false };
+        AddChild(_inventory);
 
         _dungeonMenu = new DungeonMenu { Name = "DungeonMenu", Visible = false };
         AddChild(_dungeonMenu);
@@ -95,6 +104,13 @@ public partial class ClientGame : Node
 
         _promptLabel = HudLabel(hud, Control.LayoutPreset.CenterBottom, new Vector2(0, -90));
         _noticeLabel = HudLabel(hud, Control.LayoutPreset.CenterTop, new Vector2(0, 40));
+        _statusLabel = new Label { Visible = false, HorizontalAlignment = HorizontalAlignment.Right };
+        _statusLabel.AddThemeColorOverride("font_outline_color", Colors.Black);
+        _statusLabel.AddThemeConstantOverride("outline_size", 6);
+        hud.AddChild(_statusLabel);
+        _statusLabel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopRight);
+        _statusLabel.GrowHorizontal = Control.GrowDirection.Begin;
+        _statusLabel.Position += new Vector2(-10, 8);
 
         if (_devAuto)
         {
@@ -115,6 +131,11 @@ public partial class ClientGame : Node
         else if (@event.IsActionPressed(InputSetup.Interact) && _focused != null && !_dungeonMenu.Visible)
         {
             _session.SendInteract(_focused.InteractionId);
+        }
+        else if (@event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Tab }
+                 && _currentInstanceId != null && !_dungeonMenu.Visible)
+        {
+            _inventory.Toggle();
         }
     }
 
@@ -151,6 +172,31 @@ public partial class ClientGame : Node
         _noticeLabel.Text = message;
         _noticeLabel.Visible = true;
         _noticeTimeLeft = 4;
+    }
+
+    private void OnInventory(int[] triples)
+    {
+        _inventory.SetContents(triples);
+        var names = new List<string>();
+        for (int i = 0; i + 2 < triples.Length; i += 3)
+            names.Add(triples[i + 2] > 1 ? $"{Core.Items.ItemCatalog.NameOf(triples[i + 1])} x{triples[i + 2]}"
+                                         : Core.Items.ItemCatalog.NameOf(triples[i + 1]));
+        GD.Print($"[client] inventory ({names.Count} slots): {string.Join(", ", names)}");
+    }
+
+    private void OnDungeonStatus(DungeonStatus status)
+    {
+        if (_currentInstanceId is { } id
+            && InstanceFactory.FindInteractable(_main.Instances, DungeonExit.Id) is DungeonExit exit
+            && exit.IsOpen != status.ExitOpen)
+            exit.SetOpen(status.ExitOpen);
+
+        var pass = status.ExitOpen ? "used" : status.PassHolder == "" ? "not found" : $"held by {status.PassHolder}";
+        var escaped = status.Escaped.Length == 0 ? "nobody yet" : string.Join(", ", status.Escaped);
+        _statusLabel.Text = $"Dungeon Pass: {pass}\nExit: {(status.ExitOpen ? "OPEN" : "locked")}\n" +
+                            $"Escaped: {escaped}\nStill inside: {status.PlayersInside}";
+        _statusLabel.Visible = true;
+        GD.Print($"[client] dungeon status: pass {pass}, exit {(status.ExitOpen ? "open" : "locked")}, escaped [{escaped}], inside {status.PlayersInside}");
     }
 
     private void OnDungeonMenu(List<DungeonSummary> dungeons)
@@ -266,6 +312,8 @@ public partial class ClientGame : Node
     {
         ClearInstances();
         _dungeonMenu.Visible = false;
+        _inventory.Visible = false;
+        _statusLabel.Visible = false;
         InstanceFactory.Build(_main.Instances, instanceId, kind, layoutData, isServer: false);
         _currentInstanceId = instanceId;
         MaterialDebug.Apply(_main.Instances);
@@ -282,6 +330,14 @@ public partial class ClientGame : Node
 
     private void DevAfterEnter(string kind, int instanceId, int[] layoutData)
     {
+        if (kind == InstanceKinds.Dungeon && CmdArgs.Has("dev-solve"))
+            GetTree().CreateTimer(1.5).Timeout += () => DevSolve(instanceId);
+        if (kind == InstanceKinds.Dungeon && CmdArgs.Has("dev-escape-after"))
+            GetTree().CreateTimer(CmdArgs.GetFloat("dev-escape-after", 5)).Timeout += () =>
+            {
+                if (_currentInstanceId == instanceId) _session.SendInteract(DungeonExit.Id);
+            };
+
         // --dev-screenshot PATH: save what the camera sees a few seconds after entering a dungeon, then quit.
         if (kind == InstanceKinds.Dungeon && CmdArgs.Has("dev-screenshot"))
         {
@@ -311,6 +367,22 @@ public partial class ClientGame : Node
             {
                 if (_currentInstanceId == instanceId) _session.SendInteract("dungeon_entrance");
             };
+    }
+
+    /// <summary>--dev-solve: pick up every item in this instance, then open the exit and escape.</summary>
+    private async void DevSolve(int instanceId)
+    {
+        var container = _main.Instances.GetNodeOrNull(InstanceFactory.NodeName(instanceId));
+        if (container == null) return;
+        foreach (var item in container.GetNode("Items").GetChildren())
+            if (item is Items.ItemPickup pickup)
+                _session.SendInteract(pickup.InteractionId);
+        await ToSignal(GetTree().CreateTimer(1.0), SceneTreeTimer.SignalName.Timeout);
+        if (_currentInstanceId != instanceId) return;
+        _session.SendInteract(DungeonExit.Id); // unlock with the pass
+        await ToSignal(GetTree().CreateTimer(1.0), SceneTreeTimer.SignalName.Timeout);
+        if (_currentInstanceId != instanceId) return;
+        _session.SendInteract(DungeonExit.Id); // escape
     }
 
     /// <summary>Handles the dungeon menu automatically for --dev-dungeon. Returns true if handled.</summary>
@@ -354,6 +426,8 @@ public partial class ClientGame : Node
         UpdateDebugLabel();
         _characterMenu.Visible = false;
         _dungeonMenu.Visible = false;
+        _inventory.Visible = false;
+        _statusLabel.Visible = false;
         _loginMenu.Visible = true;
         _loginMenu.SetBusy(false, status);
     }

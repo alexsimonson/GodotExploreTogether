@@ -6,7 +6,7 @@ namespace ExploreTogether.Net;
 
 /// <summary>
 /// Builds the node structure of an instance identically on server and client, so that
-/// replication node paths match: Instances/Instance{id}/{Level, Players, PlayerSpawner}.
+/// replication node paths match: Instances/Instance{id}/{Level, Players, PlayerSpawner, Items, ItemSpawner}.
 ///
 /// On the server the container is a SubViewport with its own World3D, which gives each
 /// instance a separate physics space and navigation map. The client only ever has its own
@@ -16,6 +16,7 @@ public static class InstanceFactory
 {
     public const string PlayerScenePath = "res://scenes/Player.tscn";
     public const string HubScenePath = "res://scenes/levels/Hub.tscn";
+    public const string ItemScenePath = "res://scenes/props/ItemPickup.tscn";
 
     public static string NodeName(int instanceId) => $"Instance{instanceId}";
 
@@ -58,13 +59,19 @@ public static class InstanceFactory
         spawner.AddSpawnableScene(PlayerScenePath);
         container.AddChild(spawner);
 
-        return new InstanceNodes(container, level, players);
+        var items = new Node3D { Name = "Items" };
+        container.AddChild(items);
+        var itemSpawner = new MultiplayerSpawner { Name = "ItemSpawner", SpawnPath = new NodePath("../Items") };
+        itemSpawner.AddSpawnableScene(ItemScenePath);
+        container.AddChild(itemSpawner);
+
+        return new InstanceNodes(container, level, players, items);
     }
 
-    /// <summary>Finds an interactable by id anywhere in an instance's level.</summary>
-    public static Interactable? FindInteractable(Node level, string interactionId)
+    /// <summary>Finds an interactable by id anywhere in an instance (level props and items).</summary>
+    public static Interactable? FindInteractable(Node container, string interactionId)
     {
-        foreach (var child in level.FindChildren("*", nameof(StaticBody3D), recursive: true, owned: false))
+        foreach (var child in container.FindChildren("*", nameof(StaticBody3D), recursive: true, owned: false))
             if (child is Interactable i && i.InteractionId == interactionId)
                 return i;
         return null;
@@ -77,4 +84,4 @@ public static class InstanceKinds
     public const string Dungeon = "dungeon";
 }
 
-public readonly record struct InstanceNodes(Node Container, Node Level, Node3D Players);
+public readonly record struct InstanceNodes(Node Container, Node Level, Node3D Players, Node3D Items);

@@ -21,6 +21,7 @@ public static class DungeonBuilder
     /// <summary>Distance from a cell's center to the inner face of a wall on a closed side (walls are 1 m thick).</summary>
     public const float WallInnerOffset = 1.5f;
     private const string EntranceScenePath = "res://scenes/props/DungeonEntrance.tscn";
+    private const string ExitScenePath = "res://scenes/props/DungeonExit.tscn";
 
     private static readonly Dictionary<PieceKind, PackedScene> Pieces = new();
 
@@ -58,7 +59,41 @@ public static class DungeonBuilder
         entrance.Position = new Vector3(start.X * Cell, start.Y, start.Z * Cell - WallInnerOffset + 0.3f);
         level.AddChild(entrance);
 
+        level.AddChild(BuildExit(layout));
         return level;
+    }
+
+    /// <summary>
+    /// The exit at the last generated node, like the original Objective. That node is always a dead end
+    /// (it was created last, so it only links back to its parent), so the exit stands against the wall
+    /// opposite its opening, facing the corridor. In a 1x1 maze it goes on the north wall (the entrance has the south).
+    /// </summary>
+    private static Node3D BuildExit(MazeLayout layout)
+    {
+        var node = layout.Nodes[layout.ExitIndex];
+        var open = MazePieces.NeighborSides(node);
+        var back = open switch
+        {
+            Sides.North => Sides.South,
+            Sides.South => Sides.North,
+            Sides.East => Sides.West,
+            Sides.West => Sides.East,
+            _ => Sides.North,
+        };
+        var (vx, vz) = MazePieces.Vector(back);
+        var exit = GD.Load<PackedScene>(ExitScenePath).Instantiate<Node3D>();
+        exit.Name = "DungeonExit";
+        exit.Position = new Vector3(node.mazePosition.X * Cell, node.mazePosition.Y, node.mazePosition.Z * Cell)
+                        + new Vector3(vx, 0, vz) * (WallInnerOffset - 0.3f);
+        exit.Rotation = new Vector3(0, Mathf.Atan2(-vx, -vz), 0); // front (+Z) faces into the cell
+        return exit;
+    }
+
+    /// <summary>World position of an item placed in a node (floor surface, plus a little height).</summary>
+    public static Vector3 ItemPosition(MazeLayout layout, Core.Dungeon.ItemPlacement p)
+    {
+        var n = layout.Nodes[p.NodeIndex].mazePosition;
+        return new Vector3(n.X * Cell + p.OffsetX, n.Y + 0.8f, n.Z * Cell + p.OffsetZ);
     }
 
     /// <summary>
