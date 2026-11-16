@@ -22,7 +22,10 @@ public sealed class CityCrowd
     public enum Blocker { None, Npc, Player }
 
     private readonly List<CityNpcBrain> _npcs = new();
-    private readonly List<(float X, float Z)> _players = new();
+    private readonly List<(float X, float Z, float Y)> _players = new();
+
+    /// <summary>People more than this far apart in height (a floor apart) never get in each other's way.</summary>
+    public const float SameFloor = 1.6f;
 
     public IReadOnlyList<CityNpcBrain> Npcs => _npcs;
 
@@ -49,7 +52,7 @@ public sealed class CityCrowd
 
     /// <summary>Is a player within <paramref name="radius"/> of (x, z)?</summary>
     public bool PlayerNear(float x, float z, float radius) =>
-        _players.Any(p => Dist(p.X, p.Z, x, z) < radius);
+        _players.Any(p => p.Y < SameFloor && Dist(p.X, p.Z, x, z) < radius);
 
     /// <summary>Is anyone who lives or works on the parcel (other than <paramref name="self"/>) on it right now?</summary>
     public bool AnyoneBelongingInside(int parcel, CityNpcBrain self) =>
@@ -60,6 +63,13 @@ public sealed class CityCrowd
 
     /// <summary>Where the players are now (call before each step).</summary>
     public void SetPlayers(IEnumerable<(float X, float Z)> players)
+    {
+        _players.Clear();
+        _players.AddRange(players.Select(p => (p.X, p.Z, 0f)));
+    }
+
+    /// <summary>Where the players are now, with their heights (call before each step).</summary>
+    public void SetPlayers(IEnumerable<(float X, float Z, float Y)> players)
     {
         _players.Clear();
         _players.AddRange(players);
@@ -74,11 +84,12 @@ public sealed class CityCrowd
     /// <summary>What (if anything) stops <paramref name="self"/> moving from (fx, fz) to (x, z).</summary>
     public Blocker Check(CityNpcBrain self, float fx, float fz, float x, float z, bool ignoreNpcs = false)
     {
-        foreach (var (px, pz) in _players)
-            if (Closer(fx, fz, x, z, px, pz, NpcRadius + PlayerRadius)) return Blocker.Player;
+        foreach (var (px, pz, py) in _players)
+            if (MathF.Abs(py - self.Y) < SameFloor && Closer(fx, fz, x, z, px, pz, NpcRadius + PlayerRadius)) return Blocker.Player;
         if (ignoreNpcs) return Blocker.None;
         foreach (var other in _npcs)
-            if (other != self && !other.IsDown && Closer(fx, fz, x, z, other.X, other.Z, NpcRadius * 2)) return Blocker.Npc;
+            if (other != self && !other.IsDown && MathF.Abs(other.Y - self.Y) < SameFloor
+                && Closer(fx, fz, x, z, other.X, other.Z, NpcRadius * 2)) return Blocker.Npc;
         return Blocker.None;
     }
 
@@ -89,7 +100,7 @@ public sealed class CityCrowd
         var bestD = NpcRadius * 2;
         foreach (var other in _npcs)
         {
-            if (other == self || other.IsDown) continue;
+            if (other == self || other.IsDown || MathF.Abs(other.Y - self.Y) >= SameFloor) continue;
             var d = Dist(x, z, other.X, other.Z);
             if (d < bestD) (best, bestD) = (other, d);
         }

@@ -79,7 +79,7 @@ public partial class CitySimulation : Node
         {
             _accumulator -= TickSeconds;
             Clock.Advance(TickSeconds);
-            _crowd.SetPlayers(_players().Select(p => (p.X, p.Z)));
+            _crowd.SetPlayers(_players().Select(p => (p.X, p.Z, p.Y)));
             _crowd.Step((float)TickSeconds, Clock.Time);
             if ((_perceptionTimer += TickSeconds) >= PerceptionSeconds)
             {

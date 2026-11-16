@@ -72,7 +72,7 @@ public partial class ServerGame
         if (!city.Npcs.TryGetValue(interactionId[CityNpc.LootPrefix.Length..], out var npc) || npc.IsDown || npc.HeldBy != 0) return;
         var me = _instances.FindPlayer(s.Peer)!.Value.Player.NetPosition;
         var d = new Vector2(me.X - npc.Position.X, me.Z - npc.Position.Z).Length();
-        if (d > Breaching.GrabReach + 0.4f)
+        if (d > Breaching.GrabReach + 0.4f || Mathf.Abs(me.Y - npc.Position.Y) > 1.2f)
         {
             _session.SendNotice(s.Peer, "Too far to grab.");
             return;
@@ -139,11 +139,11 @@ public partial class ServerGame
         var hit = found.Player.GetWorld3D().DirectSpaceState.IntersectRay(PhysicsRayQueryParameters3D.Create(
             p + Vector3.Up, want + Vector3.Up, collisionMask: 1));
         if (hit.Count > 0) want = p + forward * Mathf.Max(0, p.DistanceTo((Vector3)hit["position"] - Vector3.Up) - 0.3f);
-        want.Y = 0;
+        want.Y = p.Y;
         npc.Position = npc.NetPosition = want;
         npc.NetYaw = yaw;
         npc.Rotation = new Vector3(0, yaw, 0);
-        npc.Brain.MoveHeld(want.X, want.Z, yaw);
+        npc.Brain.MoveHeld(want.X, want.Z, yaw, p.Y);
 
         var now = Now;
         var dt = (float)GetPhysicsProcessDeltaTime();
@@ -160,7 +160,7 @@ public partial class ServerGame
             s.HoldingNpc = null;
             (s.Strangling, s.StrangleProgress) = (false, 0);
             npc.HeldBy = 0;
-            npc.Brain.Attacked(s.Peer, p.X, p.Z); // they'll remember who it was
+            npc.Brain.Attacked(s.Peer, p.X, p.Z, p.Y); // they'll remember who it was
             npc.KnockOut(WakeSeconds);
             _session.SendGrabState(s.Peer, "", "");
             _session.SendProgress(s.Peer, "", 0);
@@ -182,7 +182,7 @@ public partial class ServerGame
             if (npc.Brain.Frozen) chance = 0; // frozen stiff
             if (_combatRandom.NextDouble() < chance) LetGoOfResident(s, escaped: true, notify: true);
             else if (!s.HoldingSurprised && !s.Strangling && _combatRandom.NextDouble() < 0.5)
-                EmitNoise(city, new Noise(want.X, want.Z, Stealth.ShoutRadius, "shout", Severity.Crime, s.Peer));
+                EmitNoise(city, new Noise(want.X, want.Z, Stealth.ShoutRadius, "shout", Severity.Crime, s.Peer, want.Y));
         }
     }
 
@@ -197,7 +197,7 @@ public partial class ServerGame
             return;
         }
         var d = new Vector2(player.NetPosition.X - npc.Position.X, player.NetPosition.Z - npc.Position.Z).Length();
-        if (d > Breaching.GrabReach + 0.3f)
+        if (d > Breaching.GrabReach + 0.3f || Mathf.Abs(player.NetPosition.Y - npc.Position.Y) > 1.2f)
         {
             npc.Brain.GrabResult(peer, false);
             return;
@@ -260,7 +260,7 @@ public partial class ServerGame
         if (away.Length() > 1.4f && Now - s.LastPulledAt > 0.3)
         {
             s.LastPulledAt = Now;
-            PlacePlayer(found.Player, npc.Position + away.Normalized() * 0.9f + new Vector3(0, p.Y, 0));
+            PlacePlayer(found.Player, npc.Position + away.Normalized() * 0.9f);
         }
     }
 

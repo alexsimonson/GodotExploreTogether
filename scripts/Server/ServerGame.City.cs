@@ -160,8 +160,8 @@ public partial class ServerGame
             var player = found.Player.NetPosition;
             var (x, z, yaw) = Core.City.BodyDrag.Follow(npc.Position.X, npc.Position.Z, player.X, player.Z);
             // Keep the body on the player's side of any wall: a ray from the player to where it would go.
-            var from = new Vector3(player.X, 0.3f, player.Z);
-            var to = new Vector3(x, 0.3f, z);
+            var from = new Vector3(player.X, player.Y + 0.3f, player.Z);
+            var to = new Vector3(x, player.Y + 0.3f, z);
             var hit = found.Player.GetWorld3D().DirectSpaceState.IntersectRay(
                 PhysicsRayQueryParameters3D.Create(from, to, collisionMask: 1));
             if (hit.Count > 0)
@@ -170,12 +170,12 @@ public partial class ServerGame
                 var dir = (to - from).Normalized();
                 (x, z) = (from.X + dir.X * Mathf.Max(0, stop), from.Z + dir.Z * Mathf.Max(0, stop));
             }
-            var position = new Vector3(x, 0, z);
+            var position = new Vector3(x, player.Y, z); // up and down stairs with the player
             if (position.IsEqualApprox(npc.Position) && Mathf.IsEqualApprox(yaw, npc.NetYaw)) continue;
             npc.Position = npc.NetPosition = position;
             npc.NetYaw = yaw;
             npc.Rotation = new Vector3(0, yaw, 0);
-            npc.Brain.MoveBody(x, z, yaw);
+            npc.Brain.MoveBody(x, z, yaw, player.Y);
         }
     }
 
@@ -221,7 +221,7 @@ public partial class ServerGame
         var at = _instances.FindPlayer(s.Peer)?.Player.NetPosition ?? npc.Position;
         if (npc.HeldBy != 0 && _sessions.TryGetValue(npc.HeldBy, out var holder)) LetGoOfResident(holder, escaped: false, notify: true);
         // They know who did it: they react (if they're still standing) and remember (if they come round).
-        if (knocksOut && !npc.IsDown) npc.Brain.Attacked(s.Peer, at.X, at.Z);
+        if (knocksOut && !npc.IsDown) npc.Brain.Attacked(s.Peer, at.X, at.Z, at.Y);
         if (knocksOut)
         {
             if (npc.KnockOut(WakeSeconds))
@@ -229,7 +229,7 @@ public partial class ServerGame
             return true;
         }
         var killed = npc.TakeDamage(damage);
-        if (!npc.IsDown) npc.Brain.Attacked(s.Peer, at.X, at.Z);
+        if (!npc.IsDown) npc.Brain.Attacked(s.Peer, at.X, at.Z, at.Y);
         GD.Print($"[server] '{s.Character!.Name}' hit {npc.NetName} ({npc.Role}) with {weaponName} for {damage} " +
                  $"({npc.NetHealth} left){(killed ? $", killed in city {city.Id}" : "")}");
         return true;

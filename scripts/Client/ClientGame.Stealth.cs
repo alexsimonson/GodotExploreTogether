@@ -49,8 +49,10 @@ public partial class ClientGame
             _alertLevel = level;
         };
 
-        _alertLabel = HudLabel(hud, Control.LayoutPreset.TopLeft, new Vector2(12, 34));
+        _alertLabel = HudLabel(hud, Control.LayoutPreset.TopLeft, Vector2.Zero);
         _alertLabel.HorizontalAlignment = HorizontalAlignment.Left;
+        _alertLabel.GrowHorizontal = Control.GrowDirection.End; // grow to the right of the corner, not off-screen
+        _alertLabel.Position = new Vector2(12, 34);
 
         _progress = new ProgressBar { Visible = false, ShowPercentage = false, CustomMinimumSize = new Vector2(260, 14), MaxValue = 1 };
         hud.AddChild(_progress);
@@ -198,8 +200,8 @@ public partial class ClientGame
         flash.GlobalPosition = from;
         GetTree().CreateTimer(0.08).Timeout += () =>
         {
-            tracer.QueueFree();
-            flash.QueueFree();
+            if (IsInstanceValid(tracer)) tracer.QueueFree(); // gone already if we left the instance
+            if (IsInstanceValid(flash)) flash.QueueFree();
         };
     }
 

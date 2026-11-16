@@ -33,7 +33,7 @@ public partial class ServerGame
         city.Lighting = new CityLighting(city.City!);
         foreach (var npc in city.Npcs.Values)
         {
-            npc.Brain.Obstacles = (ax, az, bx, bz) => ObstacleBetween(city, ax, az, bx, bz);
+            npc.Brain.Obstacles = (ax, az, bx, bz, y) => ObstacleBetween(city, ax, az, bx, bz, y);
             RefreshArms(npc);
         }
         city.Simulation!.Perception += dt => PerceiveCity(city, dt);
@@ -41,11 +41,11 @@ public partial class ServerGame
     }
 
     /// <summary>What lies between two ground points: a wall (or closed door) at head height, something low (a fence), or nothing.</summary>
-    private static CityNav.Obstacle ObstacleBetween(ServerInstance city, float ax, float az, float bx, float bz)
+    private static CityNav.Obstacle ObstacleBetween(ServerInstance city, float ax, float az, float bx, float bz, float floorY)
     {
         var space = city.Nodes.Players.GetWorld3D().DirectSpaceState;
         bool Blocked(float y) => space.IntersectRay(PhysicsRayQueryParameters3D.Create(
-            new Vector3(ax, y, az), new Vector3(bx, y, bz), collisionMask: 1)).Count > 0;
+            new Vector3(ax, floorY + y, az), new Vector3(bx, floorY + y, bz), collisionMask: 1)).Count > 0;
         if (Blocked(1.5f)) return CityNav.Obstacle.Wall;
         return Blocked(0.5f) ? CityNav.Obstacle.Low : CityNav.Obstacle.None;
     }
@@ -124,7 +124,7 @@ public partial class ServerGame
             if (!player.NetCrouching && now - s.LastFootstepAt > 0.6 && (s.SampledSpeed > 5.5f || inside && s.SampledSpeed > 1))
             {
                 s.LastFootstepAt = now;
-                city.Noises.Add(new Noise(pos.X, pos.Z, s.SampledSpeed > 5.5f ? Stealth.FootstepsRadius : 3.5f, "footsteps", Severity.Suspicious, peer));
+                city.Noises.Add(new Noise(pos.X, pos.Z, s.SampledSpeed > 5.5f ? Stealth.FootstepsRadius : 3.5f, "footsteps", Severity.Suspicious, peer, pos.Y));
             }
         }
         var bodies = city.Npcs.Values.Where(n => n.IsDown).ToList();
@@ -135,11 +135,12 @@ public partial class ServerGame
             var brain = npc.Brain;
             if (npc.IsDown || brain.Held) continue;
             _percepts.Clear();
-            var me = new Vector3(brain.X, 0, brain.Z);
+            var me = new Vector3(brain.X, brain.Y, brain.Z);
             var head = me + new Vector3(0, 1.6f, 0);
             var meInside = InsideBuilding(layout, brain.X, brain.Z);
             foreach (var n in city.Noises)
-                if (Stealth.Hears(n, brain.X, brain.Z, meInside != InsideBuilding(layout, n.X, n.Z)))
+                // Muffled through walls, and through floors.
+                if (Stealth.Hears(n, brain.X, brain.Z, meInside != InsideBuilding(layout, n.X, n.Z) || Mathf.Abs(n.Y - brain.Y) > 2f))
                     _percepts.Noises.Add(n);
 
             var alert = brain.Mood >= Mood.Suspicious;
@@ -160,17 +161,18 @@ public partial class ServerGame
                 if (!Sees(chest, range)) continue;
                 var d = new Vector2(chest.X - me.X, chest.Z - me.Z).Length();
                 _percepts.Players.Add(new PlayerSighting(peer, s.Character!.Name, player.NetPosition.X, player.NetPosition.Z, c,
-                    parcel, Stealth.Clarity(d, range)));
+                    parcel, Stealth.Clarity(d, range), player.NetPosition.Y));
             }
             foreach (var body in bodies)
             {
                 if (body == npc) continue;
                 var at = body.Position + new Vector3(0, 0.3f, 0);
                 if (Sees(at, Stealth.SightRange(LightAt(city, at.X, at.Z), false, false) * 0.8f))
-                    _percepts.Bodies.Add(new BodySighting(body.NetId, at.X, at.Z, body.NetDead));
+                    _percepts.Bodies.Add(new BodySighting(body.NetId, at.X, at.Z, body.NetDead, body.Position.Y));
             }
             foreach (var parcel in damaged)
             {
+                if (brain.Y > 1.5f) break; // front doors are seen from the ground
                 var (dx, dz) = layout.Parcels[parcel].Door;
                 var at = new Vector3(dx, 1.2f, dz);
                 var flat = new Vector2(dx - me.X, dz - me.Z).Length();
@@ -227,7 +229,7 @@ public partial class ServerGame
         switch (intent.Kind)
         {
             case NpcIntentKind.Noise:
-                EmitNoise(city, new Noise(intent.X, intent.Z, intent.Radius, intent.Text, intent.Severity));
+                EmitNoise(city, new Noise(intent.X, intent.Z, intent.Radius, intent.Text, intent.Severity, Y: npc.Position.Y));
                 break;
             case NpcIntentKind.Report:
                 ReportToPolice(city, npc, intent);
@@ -329,7 +331,7 @@ public partial class ServerGame
         }
         else if (hitPlayer) end = target;
         foreach (var other in city.Players.Keys) _session.SendShot(other, from, end);
-        EmitNoise(city, new Noise(from.X, from.Z, gun.Breaches ? Stealth.ShotgunRadius : Stealth.GunshotRadius, "gunshot", Severity.Violent));
+        EmitNoise(city, new Noise(from.X, from.Z, gun.Breaches ? Stealth.ShotgunRadius : Stealth.GunshotRadius, "gunshot", Severity.Violent, Y: npc.Position.Y));
         var damage = NpcDamage(gun, d);
         GD.Print($"[server] {npc.NetName} ({npc.Role}) fires {gun.Name} at '{s.Character!.Name}' from {d:0.0} m: " +
                  (hitPlayer ? $"hit for {damage}" : "miss") + $" ({chance:P0})");
@@ -341,10 +343,10 @@ public partial class ServerGame
     {
         if (!city.Players.TryGetValue(peer, out var player) || !_sessions.TryGetValue(peer, out var s) || s.Health.IsDead) return;
         var d = new Vector2(player.NetPosition.X - npc.Position.X, player.NetPosition.Z - npc.Position.Z).Length();
-        if (d > 2.3f) return;
+        if (d > 2.3f || Mathf.Abs(player.NetPosition.Y - npc.Position.Y) > 1.5f) return;
         var weapon = npc.Gear.EquippedWeapon;
         var damage = weapon is { Class: ItemClass.Gun } ? 8 : NpcDamage(weapon, d);
-        EmitNoise(city, new Noise(npc.Position.X, npc.Position.Z, Stealth.FightRadius, "fight", Severity.Violent));
+        EmitNoise(city, new Noise(npc.Position.X, npc.Position.Z, Stealth.FightRadius, "fight", Severity.Violent, Y: npc.Position.Y));
         GD.Print($"[server] {npc.NetName} ({npc.Role}) hits '{s.Character!.Name}' with {weapon?.Name ?? "fists"} for {damage}");
         HurtPlayerByResident(city, s, npc, damage);
     }

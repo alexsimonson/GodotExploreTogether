@@ -34,14 +34,14 @@ public static class Severity
 /// <summary>A player as one resident sees them right now (the server has already checked sight lines).</summary>
 /// <param name="Parcel">The parcel they're on, or -1 (street, alley).</param>
 /// <param name="Clarity">How well they're seen, 0..1 (distance against sight range).</param>
-public sealed record PlayerSighting(long Id, string Name, float X, float Z, Conduct Conduct, int Parcel, float Clarity);
+public sealed record PlayerSighting(long Id, string Name, float X, float Z, Conduct Conduct, int Parcel, float Clarity, float Y = 0);
 
 /// <summary>A sound in the city: heard by residents within <see cref="Radius"/> m (half that through walls).</summary>
 /// <param name="Player">Who made it, if anyone (0: unknown, or a resident).</param>
-public readonly record struct Noise(float X, float Z, float Radius, string Cause, int Severity, long Player = 0);
+public readonly record struct Noise(float X, float Z, float Radius, string Cause, int Severity, long Player = 0, float Y = 0);
 
 /// <summary>A body (dead or unconscious) a resident can see.</summary>
-public readonly record struct BodySighting(int NpcId, float X, float Z, bool Dead);
+public readonly record struct BodySighting(int NpcId, float X, float Z, bool Dead, float Y = 0);
 
 /// <summary>Everything one resident perceives in one perception tick.</summary>
 public sealed class Percepts
@@ -155,6 +155,21 @@ public static class Stealth
         if ((c & Conduct.Crouching) != 0 && (trespass || night))
             Add(authority || police ? 12 : nosy ? 6 : 2, Severity.Suspicious, "sneaking around");
         return (rate * MathF.Max(p.Clarity, 0.25f), severity, reason);
+    }
+
+    /// <summary>Beyond this distance (m) from a crime or a body, nobody is suspected just for being there.</summary>
+    public const float AssociationRange = 10f;
+
+    /// <summary>
+    /// Guilt by association: how much suspicion (once) a bystander draws for being <paramref name="distance"/> m from
+    /// someone else's crime, or from a body. 45 right beside it, falling off steeply (a quarter of that at 5 m), nothing
+    /// beyond <see cref="AssociationRange"/>. It never makes them more than suspicious: being near isn't a crime.
+    /// </summary>
+    public static float Association(float distance)
+    {
+        if (distance >= AssociationRange) return 0;
+        var near = 1 - distance / AssociationRange;
+        return 45 * near * near;
     }
 
     /// <summary>Shops are open (public) from 8:00 to 18:00 while unlocked; otherwise they're private like any building.</summary>

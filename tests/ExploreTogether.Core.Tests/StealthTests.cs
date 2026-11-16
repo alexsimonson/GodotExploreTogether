@@ -278,6 +278,15 @@ public class StealthRulesTests
     }
 
     [Fact]
+    public void GuiltByAssociation_FallsOffWithDistance()
+    {
+        Assert.Equal(45, Stealth.Association(0), 3);
+        Assert.True(Stealth.Association(5) < Stealth.Association(0) / 3);
+        Assert.Equal(0, Stealth.Association(Stealth.AssociationRange));
+        Assert.Equal(0, Stealth.Association(30));
+    }
+
+    [Fact]
     public void Noises_CarryHalfAsFarThroughWalls_AndWakeSleepers()
     {
         var n = new Noise(0, 0, Stealth.KickRadius, "door kicked", Severity.Crime);
@@ -472,7 +481,7 @@ public class ReactionTests
         var fx = cop.X - MathF.Sin(yaw) * 3;
         var fz = cop.Z - MathF.Cos(yaw) * 3;
         float Side(float x, float z) => (x - fx) * -MathF.Sin(yaw) + (z - fz) * -MathF.Cos(yaw);
-        cop.Obstacles = (ax, az, bx, bz) => Side(ax, az) * Side(bx, bz) < 0 ? CityNav.Obstacle.Low : CityNav.Obstacle.None;
+        cop.Obstacles = (ax, az, bx, bz, _) => Side(ax, az) * Side(bx, bz) < 0 ? CityNav.Obstacle.Low : CityNav.Obstacle.None;
         var (px, pz) = (cop.X - MathF.Sin(yaw) * 8, cop.Z - MathF.Cos(yaw) * 8);
         var hopped = false;
         for (var i = 0; i < 120 && !hopped; i++)
@@ -487,11 +496,41 @@ public class ReactionTests
         Assert.True(Side(cop.X, cop.Z) > 0, "and lands on the far side");
 
         // A wall: never crossed, by anyone.
-        cop.Obstacles = (ax, az, bx, bz) => Side(ax, az) * Side(bx, bz) < 0 ? CityNav.Obstacle.Wall : CityNav.Obstacle.None;
+        cop.Obstacles = (ax, az, bx, bz, _) => Side(ax, az) * Side(bx, bz) < 0 ? CityNav.Obstacle.Wall : CityNav.Obstacle.None;
         var side = MathF.Sign(Side(cop.X, cop.Z));
         (px, pz) = (fx + MathF.Sin(yaw) * 6, fz + MathF.Cos(yaw) * 6);
         w.Run(4, b => b == cop ? SeeingPlayer(b, px, pz, Conduct.Violent, -1) : null);
         Assert.Equal(side, MathF.Sign(Side(cop.X, cop.Z)));
+    }
+
+    [Fact]
+    public void OnePlayersViolence_DoesntGetAnotherArrested()
+    {
+        var w = Start(hour: 10);
+        w.Run(1);
+        var cop = w.Brains.First(b => b.Person.Role == NpcRole.Police && b.Activity == "patrolling");
+        float fx = -MathF.Sin(cop.Yaw), fz = -MathF.Cos(cop.Yaw);
+        Percepts Scene(float friendDistance)
+        {
+            var p = new Percepts();
+            p.Players.Add(new PlayerSighting(42, "Shooter", cop.X + fx * 6, cop.Z + fz * 6, Conduct.Violent, -1, 1));
+            p.Players.Add(new PlayerSighting(43, "Friend", cop.X + fx * 6 + friendDistance, cop.Z + fz * 6, Conduct.None, -1, 1));
+            return p;
+        }
+        for (var i = 0; i < 40; i++) cop.Perceive(Scene(1.5f), 0.2f, 10); // the friend stands right beside them, for 8 s
+        Assert.Equal(42, cop.Target);
+        Assert.True(cop.SuspicionOf(43).Level < Stealth.Alarmed, "standing beside a shooter isn't enough to be arrested");
+        Assert.True(cop.SuspicionOf(43).Level >= Stealth.Curious, "but it does draw attention");
+
+        var w2 = Start(hour: 10);
+        w2.Run(1);
+        var cop2 = w2.Brains.First(b => b.Person.Role == NpcRole.Police && b.Activity == "patrolling");
+        (fx, fz) = (-MathF.Sin(cop2.Yaw), -MathF.Cos(cop2.Yaw));
+        var far = new Percepts();
+        far.Players.Add(new PlayerSighting(42, "Shooter", cop2.X + fx * 6, cop2.Z + fz * 6, Conduct.Violent, -1, 1));
+        far.Players.Add(new PlayerSighting(43, "Friend", cop2.X + fx * 6 + 12, cop2.Z + fz * 6, Conduct.None, -1, 1));
+        for (var i = 0; i < 40; i++) cop2.Perceive(far, 0.2f, 10);
+        Assert.True(cop2.SuspicionOf(43).Level < 1, "12 m away: no association at all");
     }
 
     [Fact]
@@ -551,5 +590,102 @@ public class ReactionTests
         var way = CityPaths.WayIn(a, a.Spots[0]);
         var inner = CityNav.Route(city, paths, way[1], a.Spots[0], (0, 0));
         Assert.Contains(inner, p => p.Door == a.Id && p.Entering);
+    }
+}
+
+public class BuildingInteriorTests
+{
+    private static IEnumerable<Parcel> Buildings() =>
+        Enumerable.Range(0, 4).SelectMany(seed => CityLayout.Generate(6, 6, seed).Parcels).Where(p => p.Interior != null);
+
+    [Fact]
+    public void MultiStoreyBuildings_HaveStairsToEveryFloor_AndSpotsOnEach()
+    {
+        var withStairs = 0;
+        foreach (var p in Buildings())
+        {
+            var interior = p.Interior!;
+            var (w, d) = (p.Variant.Width, p.Variant.Depth);
+            if (interior.Floors > 1) withStairs++;
+            Assert.Equal(interior.Floors - 1, interior.Stairs.Count);
+            for (var f = 0; f < interior.Floors; f++)
+                Assert.Contains(interior.Spots, s => s.Floor == f);
+            foreach (var s in interior.Spots)
+            {
+                Assert.True(p.Footprint.Contains(s.X, s.Z), $"{p.Building} {p.Id}: spot outside the building");
+                Assert.DoesNotContain(interior.Stairs, st => (st.FromFloor == s.Floor || st.FromFloor == s.Floor - 1)
+                                                          && st.Rect.Contains(s.X, s.Z));
+            }
+            foreach (var st in interior.Stairs)
+            {
+                Assert.True(p.Footprint.Contains(st.Rect.CenterX, st.Rect.CenterZ));
+                Assert.True(MathF.Max(st.Rect.Width, st.Rect.Depth) >= BuildingInterior.StairRun - 0.01f);
+            }
+        }
+        Assert.True(withStairs > 20, $"only {withStairs} buildings with stairs");
+    }
+
+    private static bool Crosses((float X, float Z) a, (float X, float Z) b, Partition wall)
+    {
+        // Does the segment a-b cross the wall line anywhere but in a doorway?
+        var alongX = MathF.Abs(wall.A.Z - wall.B.Z) < 0.01f;
+        float line = alongX ? wall.A.Z : wall.A.X;
+        float pa = alongX ? a.Z : a.X, pb = alongX ? b.Z : b.X;
+        if ((pa - line) * (pb - line) > 0 || MathF.Abs(pa - pb) < 1e-5f) return false;
+        var t = (line - pa) / (pb - pa);
+        var at = alongX ? a.X + (b.X - a.X) * t : a.Z + (b.Z - a.Z) * t;
+        var (lo, hi) = alongX ? (MathF.Min(wall.A.X, wall.B.X), MathF.Max(wall.A.X, wall.B.X)) : (MathF.Min(wall.A.Z, wall.B.Z), MathF.Max(wall.A.Z, wall.B.Z));
+        if (at < lo || at > hi) return false;
+        return !wall.Gaps.Any(g => MathF.Abs((alongX ? g.X : g.Z) - at) < BuildingInterior.GapWidth / 2);
+    }
+
+    [Fact]
+    public void FromTheFrontDoor_EverySpotIsReached_ThroughDoorwaysAndUpTheStairs()
+    {
+        foreach (var p in Buildings())
+        {
+            var interior = p.Interior!;
+            foreach (var spot in interior.Spots)
+            {
+                var route = new List<Place> { p.JustInside };
+                route.AddRange(p.RouteInside(p.JustInside, spot));
+                Assert.Equal(spot, route[^1]);
+                for (var i = 1; i < route.Count; i++)
+                {
+                    var (a, b) = (route[i - 1], route[i]);
+                    if (a.Floor != b.Floor)
+                    {
+                        // Floors change only along a flight of stairs, one floor at a time.
+                        Assert.Equal(1, Math.Abs(a.Floor - b.Floor));
+                        Assert.Contains(interior.Stairs, st => (st.Bottom, st.Top) == ((a.X, a.Z), (b.X, b.Z)) || (st.Bottom, st.Top) == ((b.X, b.Z), (a.X, a.Z)));
+                        continue;
+                    }
+                    foreach (var wall in interior.Partitions.Where(w => w.Floor == a.Floor))
+                        Assert.False(Crosses((a.X, a.Z), (b.X, b.Z), wall), $"{p.Building} {p.Id}: a leg on floor {a.Floor} goes through a wall");
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public void AtNight_PeopleSleepUpstairs_WhereTheHouseHasAnUpstairs()
+    {
+        var city = CityLayout.Generate(5, 5, 4);
+        var pop = CityPopulation.Generate(city, 4);
+        var paths = new CityPaths(city);
+        var clock = new CityClock(23, 1 / 120f);
+        var brains = pop.People.Select(p => new CityNpcBrain(p, city, paths, 4, clock.Time)).ToList();
+        var crowd = new CityCrowd();
+        foreach (var b in brains) crowd.Add(b);
+        crowd.SetUpDoors(city, new CityDoors(city), clock.Time);
+        for (var t = 0; t < 2400; t++)
+        {
+            clock.Advance(0.05);
+            crowd.Step(0.05f, clock.Time);
+        }
+        var sleepers = brains.Where(b => b.Activity == "sleeping" && city.Parcels[b.Person.Home].Interior?.Floors > 1).ToList();
+        Assert.NotEmpty(sleepers);
+        Assert.All(sleepers, b => Assert.True(b.Floor > 0, $"{b.Person.Name} sleeps on floor {b.Floor}"));
+        Assert.All(sleepers, b => Assert.Equal(b.Floor * BuildingInterior.FloorHeight, b.Y, 2));
     }
 }

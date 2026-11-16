@@ -34,6 +34,8 @@ Traits, rolled per person by role: **Brave** (confronts, detains, fights), **Tim
 - **Bodies** seen: civilians scream and call it in, and flee if timid. The brave and nosy try to revive the unconscious; police examine the body. Anyone seen near a body becomes suspected.
 - **Damaged doors** seen by owners or the nosy: "someone's broken in!", a report, then a look inside.
 - **Memory**: anyone who alarmed a resident is recognized on sight from then on. A police report spreads the description to every officer and to bystanders nearby.
+- **Each player is judged on their own conduct.** Being near someone else's crime (or a body) only draws a little suspicion, once per incident: 45 right beside it, about a quarter of that at 5 m, nothing beyond 10 m (`Stealth.Association`). It can make a bystander *suspicious* (watched, maybe questioned), never alarmed: nobody is arrested or attacked for another player's act. Reports carry only the culprit's description.
+- **Floors**: sight lines start at the resident's eyes on their own floor, so floors and ceilings block sight; noises from another floor carry half as far, as through walls.
 
 ## Reactions (`CityNpcBrain.Reactions.cs`)
 
@@ -65,6 +67,13 @@ From [DOOR-BREACHING-PLAN.md](DOOR-BREACHING-PLAN.md), with the shotgun change a
 - **Shotguns**: the Double-Barrel Shotgun (1704, 2 rounds, 0.3 s between shots) and the Pump Shotgun (1705, 6 rounds, 0.9 s pump), both using 12 Gauge Slugs (1706). Range 40 m. The deadbolt has its own small hitbox above the handle, and a slug through it from within 6 m destroys the lock. Other guns do nothing to it.
 - **Lockpick**: item 1703, stackable. Police sometimes carry them.
 
+## Floors and rooms (`BuildingInterior`, `CityBuilder`)
+
+- Greybox buildings with more than one storey have real upper floors, if they're at least 5.4 m wide and 7.8 m deep (all the standard designs with upper floors are). Each storey has a straight flight of stairs along a side wall: 1.2 m wide, rising 3.2 m over 5 m toward the back. Flights alternate sides, with a stairwell opening in the floor above. Players walk the stairs as a smooth ramp; they're drawn as steps.
+- Each floor is split into rooms by partition walls with 1.1 m doorways: front and back rooms (when the building is deep enough), and side-by-side rooms about every 6 m in wide buildings. Warehouse ground floors stay one open hall. Interior lights are on every floor.
+- Residents have a floor and height. They walk through rooms and doorways and up and down stairs (`BuildingInterior.Route`). They spend the day on every floor, and sleep upstairs where the house has an upstairs. Chasing, fleeing, searching, coming round, dragged bodies and people held in a grip all follow floors. Searching upstairs means going room to room on that floor. People a floor apart never get in each other's way.
+- Custom building scenes keep their own geometry and stay single-floor for residents (their spots are on the ground floor).
+
 ## Lighting and alleys (`CityLighting`, `CityLayout`)
 
 - Daylight curve shared by client and server, moonlight 0.06 at night. Ambient at night is much darker than before.
@@ -79,12 +88,12 @@ From [DOOR-BREACHING-PLAN.md](DOOR-BREACHING-PLAN.md), with the shotgun change a
 ## Dev and tests
 
 - Server `--dev-oblivious`: residents ignore players (used by older scenarios that test something else).
-- Clients: `--dev-breach`, `--dev-trespass`, `--dev-grab` (`--dev-strangle` to strangle once held), `--dev-struggle`, `--dev-shoot-air` (with `--dev-shoot-delay S`).
-- Smoke scenarios `breach` and `stealth`. Unit tests in `tests/.../StealthTests.cs`.
+- Clients: `--dev-upstairs` (climb the nearest building with stairs; `--dev-shots DIR` saves screenshots), `--dev-breach`, `--dev-trespass`, `--dev-grab` (`--dev-strangle` to strangle once held), `--dev-struggle`, `--dev-shoot-air` (with `--dev-shoot-delay S`).
+- Smoke scenarios `breach`, `floors` and `stealth`. Unit tests in `tests/.../StealthTests.cs`.
 
 ## Known limits and next ideas
 
-- Residents move on the ground plane. Upper floors and rooms are the next step.
+- Custom building scenes don't describe stairs or rooms yet, so residents use only their ground floors.
 - Nobody repairs broken doors or locks yet (the locksmith could, and owners could notice the next morning).
 - Being arrested costs nothing beyond being taken out of the city. Confiscating the weapon is an option.
 - Hearing doesn't identify the shooter. Only being seen does.

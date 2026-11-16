@@ -113,6 +113,9 @@ If a design never fits, or fits only on parcels its type isn't used on, the log 
 
 ## Good to know
 
+- **Greybox buildings have interiors** (rooms, stairs, upper floors; see `core/City/BuildingInterior.cs`). Custom scenes don't get them: they keep their own geometry, and residents use only their ground floor and the scene's `Spots`.
+- **Lots beside an alley are 1.3 m narrower** on that side (commercial zone only; see `CityLayout.Alleys`). A custom design that only just fits a 12 m lot may not be placed on those lots.
+
 - **Server and client must have the same building scenes.** A city remembers a checksum of the designs it was made with. A client with different scenes refuses to build the city instead of building a different one. Ship building changes to both.
 - **Changing a design changes which city a seed makes.** Renaming the file, or changing its size, door, weight or spots, shifts the random choices. Fine for a prototype; just don't expect old seeds to look the same.
 - **Upper floors** aren't used by anyone yet (there are no stairs in the greybox ones). You can model them; people will stay on the ground floor for now.

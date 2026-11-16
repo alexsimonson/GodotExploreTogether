@@ -198,7 +198,8 @@ public class CityNpcTests
                 for (var j = i + 1; j < bs.Count; j++)
                 {
                     var key = (i, j);
-                    if (Dist(bs[i].X, bs[i].Z, bs[j].X, bs[j].Z) < CityCrowd.NpcRadius * 2 - 0.1f)
+                    if (Dist(bs[i].X, bs[i].Z, bs[j].X, bs[j].Z) < CityCrowd.NpcRadius * 2 - 0.1f
+                        && MathF.Abs(bs[i].Y - bs[j].Y) < CityCrowd.SameFloor) // a floor apart isn't in each other's way
                     {
                         if (!overlapFor.ContainsKey(key)) overlaps++;
                         var t = overlapFor[key] = overlapFor.GetValueOrDefault(key) + Step;

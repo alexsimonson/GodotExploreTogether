@@ -59,6 +59,7 @@ public sealed partial class CityNpcBrain
         public int Severity;
         public string Reason = "";
         public float X, Z;
+        public int Floor;
         public int Parcel = -1;
         public Conduct Conduct;
         public double LastSeen = -1000;
@@ -74,6 +75,7 @@ public sealed partial class CityNpcBrain
     private float _pace = 1;
     private long _target;
     private (float X, float Z) _point;
+    private int _pointFloor, _plannedFloor;
     private double _actStarted, _actUntil, _nextReplan, _nextAttack, _grabPendingUntil;
     private (float X, float Z) _plannedTo = (float.NaN, float.NaN);
     private bool _warned, _arrestWarned, _reportOnArrival, _detainOnly;
@@ -112,7 +114,7 @@ public sealed partial class CityNpcBrain
     public bool HasGun { get; set; }
     public bool HasMeleeWeapon { get; set; }
     /// <summary>What's between two points (the server's sight lines); null: nothing ever (tests).</summary>
-    public Func<float, float, float, float, CityNav.Obstacle>? Obstacles { get; set; }
+    public CityNav.ObstacleTest? Obstacles { get; set; }
     /// <summary>For logs: what they're reacting to.</summary>
     public string ReactionNote { get; private set; } = "";
 
@@ -145,7 +147,7 @@ public sealed partial class CityNpcBrain
     private bool StartHop(float ux, float uz)
     {
         var to = (X + ux * HopLength, Z + uz * HopLength);
-        if (Obstacles?.Invoke(to.Item1, to.Item2, to.Item1 + ux * 0.4f, to.Item2 + uz * 0.4f) == CityNav.Obstacle.Wall) return false;
+        if (Obstacles?.Invoke(to.Item1, to.Item2, to.Item1 + ux * 0.4f, to.Item2 + uz * 0.4f, _level) == CityNav.Obstacle.Wall) return false;
         _hop = new Hop((X, Z), to);
         Yaw = MathF.Atan2(-ux, -uz);
         Moving = true;
@@ -157,9 +159,9 @@ public sealed partial class CityNpcBrain
         hop.T = MathF.Min(1, hop.T + seconds / HopSeconds);
         X = hop.From.X + (hop.To.X - hop.From.X) * hop.T;
         Z = hop.From.Z + (hop.To.Z - hop.From.Z) * hop.T;
-        Y = HopHeight * 4 * hop.T * (1 - hop.T);
+        _hopY = HopHeight * 4 * hop.T * (1 - hop.T);
         if (hop.T < 1) return;
-        Y = 0;
+        _hopY = 0;
         _hop = null;
         _nextReplan = 0; // look again from the other side
         _plannedTo = (float.NaN, float.NaN);
@@ -194,7 +196,7 @@ public sealed partial class CityNpcBrain
         foreach (var seen in p.Players)
         {
             if (!_suspects.TryGetValue(seen.Id, out var sus)) _suspects[seen.Id] = sus = new Suspect();
-            (sus.X, sus.Z, sus.Parcel, sus.Conduct, sus.LastSeen, sus.Visible) = (seen.X, seen.Z, seen.Parcel, seen.Conduct, now, true);
+            (sus.X, sus.Z, sus.Floor, sus.Parcel, sus.Conduct, sus.LastSeen, sus.Visible) = (seen.X, seen.Z, Place.FloorAt(seen.Y), seen.Parcel, seen.Conduct, now, true);
             var (rate, severity, reason) = Stealth.Judge(Person, seen, _city, hour);
             if (sus.Grudge && sus.Level < Stealth.Alarmed)
             {
@@ -211,6 +213,16 @@ public sealed partial class CityNpcBrain
         foreach (var s in _suspects.Values)
             if (!s.Visible && !s.Grudge) s.Level = MathF.Max(0, s.Level - Stealth.Fade * 0.5f * seconds);
 
+        // Someone seen doing something terrible: anyone close by them draws a little suspicion too (once per incident),
+        // falling off fast with distance. Each player is otherwise judged on their own conduct.
+        foreach (var culprit in p.Players.Where(s => (s.Conduct & (Conduct.Violent | Conduct.Dragging | Conduct.Holding)) != 0))
+        {
+            if (!_associated.Add((culprit.Id, (int)(_clockSeconds / 10)))) continue;
+            foreach (var other in p.Players)
+                if (other.Id != culprit.Id && _suspects.TryGetValue(other.Id, out var s))
+                    Associate(s, Dist(other.X, other.Z, culprit.X, culprit.Z), $"with {culprit.Name}");
+        }
+
         foreach (var body in p.Bodies)
             if (_knownBodies.Add(body.NpcId)) SeeBody(body);
         foreach (var door in p.DamagedDoors)
@@ -218,6 +230,17 @@ public sealed partial class CityNpcBrain
 
         Decide();
         UpdateMood();
+    }
+
+    private readonly HashSet<(long, int)> _associated = new();
+
+    /// <summary>Guilt by association (see <see cref="Stealth.Association"/>): capped below alarm, at "suspicious".</summary>
+    private static void Associate(Suspect s, float distance, string reason)
+    {
+        var bump = Stealth.Association(distance);
+        if (bump <= 0 || s.Level >= Stealth.Alarmed - 1) return;
+        s.Level = MathF.Min(MathF.Max(s.Level, Stealth.Alarmed - 25), s.Level + bump); // never tipped into alarm by this
+        if (s.Severity < Severity.Suspicious) (s.Severity, s.Reason) = (Severity.Suspicious, reason);
     }
 
     private void Decide()
@@ -302,16 +325,16 @@ public sealed partial class CityNpcBrain
         var mine = _city.ParcelAt(n.X, n.Z) is { } p && Person.HasAuthorityOver(p.Id) && p.Id >= 0;
         if (n.Severity >= Severity.Violent)
         {
-            if (OnDuty) StartRespond(n.X, n.Z, n.Player, n.Severity);
+            if (OnDuty) StartRespond(n.X, n.Z, n.Player, n.Severity, Place.FloorAt(n.Y));
             else if (Timid || !Brave && !mine) StartFleeFrom(n.X, n.Z, report: Person.Has(NpcTraits.Nosy) || mine);
-            else StartInvestigate(n.X, n.Z, "investigating", 1.6f);
+            else StartInvestigate(n.X, n.Z, "investigating", 1.6f, Place.FloorAt(n.Y));
             return;
         }
         if (n.Cause == "footsteps" && !mine) return;
         if (mine || OnDuty || Person.Has(NpcTraits.Nosy) || n.Cause is "scream" or "shout" && Brave)
         {
             if (mine) Say(Pick("Who's there?", "Hello? Someone there?", "I heard that!"));
-            StartInvestigate(n.X, n.Z, "investigating", mine || OnDuty ? 1.5f : 1f);
+            StartInvestigate(n.X, n.Z, "investigating", mine || OnDuty ? 1.5f : 1f, Place.FloorAt(n.Y));
             if (mine && n.Severity >= Severity.Crime) Emit(new NpcIntent(NpcIntentKind.Report, n.Player, n.X, n.Z, Severity: Severity.Crime, Text: "break-in"));
         }
         else if (_act == Act.None) FaceToward(n.X, n.Z);
@@ -320,18 +343,14 @@ public sealed partial class CityNpcBrain
     private void SeeBody(BodySighting b)
     {
         if (_act is Act.Attack or Act.Holding or Act.Arrest or Act.Flee) return;
-        // Anyone near it looks bad.
+        // Anyone near it looks a little suspicious (much less so further away; never more than suspicious).
         foreach (var s in _suspects.Values)
-            if (s.Visible && Dist(s.X, s.Z, b.X, b.Z) < 8)
-            {
-                s.Level = MathF.Min(Stealth.Alarmed, s.Level + 40);
-                if (s.Severity < Severity.Crime) (s.Severity, s.Reason) = (Severity.Crime, "near a body");
-            }
+            if (s.Visible) Associate(s, Dist(s.X, s.Z, b.X, b.Z), "near a body");
         if (!b.Dead && (Brave || OnDuty || Person.Has(NpcTraits.Nosy)) && !Timid)
         {
             Say(Pick("Hey! Are you all right?", "Oh no, wake up!"));
             Begin(Act.Revive, 0, "helping", 1.8f, 30);
-            (_point, _reviveNpc) = ((b.X, b.Z), b.NpcId);
+            (_point, _pointFloor, _reviveNpc) = ((b.X, b.Z), Place.FloorAt(b.Y), b.NpcId);
             Emit(new NpcIntent(NpcIntentKind.Report, 0, b.X, b.Z, Severity: Severity.Crime, Text: "someone knocked out"));
             return;
         }
@@ -341,7 +360,7 @@ public sealed partial class CityNpcBrain
             Emit(NpcIntent.MakeNoise(X, Z, Stealth.ScreamRadius, "scream", Severity.Crime));
         }
         Emit(new NpcIntent(NpcIntentKind.Report, 0, b.X, b.Z, Severity: b.Dead ? Severity.Violent : Severity.Crime, Text: b.Dead ? "a body" : "someone knocked out"));
-        if (OnDuty) StartInvestigate(b.X, b.Z, "examining the body", 1.6f);
+        if (OnDuty) StartInvestigate(b.X, b.Z, "examining the body", 1.6f, Place.FloorAt(b.Y));
         else if (Timid || b.Dead) StartFleeFrom(b.X, b.Z, report: false);
         else Begin(Act.Watch, 0, "staring", 1f, 4);
     }
@@ -353,7 +372,7 @@ public sealed partial class CityNpcBrain
         var p = _city.Parcels[parcel];
         Say(Pick("Someone's broken in!", "What happened to the door?!", "Has someone been in here?"));
         Emit(new NpcIntent(NpcIntentKind.Report, 0, p.Door.X, p.Door.Z, Severity: Severity.Crime, Text: "a break-in"));
-        if (!Timid) StartInvestigate(p.Spots[0].X, p.Spots[0].Z, "checking the house", 1.3f);
+        if (!Timid) { var spot = RandomSpot(p); StartInvestigate(spot.X, spot.Z, "checking the house", 1.3f, spot.Floor); }
     }
 
     // ================================================================ calls from the server
@@ -381,12 +400,12 @@ public sealed partial class CityNpcBrain
     }
 
     /// <summary>A player hurt or tried to hurt them: they know who did it.</summary>
-    public void Attacked(long player, float px, float pz)
+    public void Attacked(long player, float px, float pz, float py = 0)
     {
         _attackedBy = player;
         if (IsDown || Held) return;
         if (!_suspects.TryGetValue(player, out var sus)) _suspects[player] = sus = new Suspect();
-        (sus.X, sus.Z, sus.LastSeen, sus.Level, sus.Severity, sus.Reason) = (px, pz, _clockSeconds, Stealth.Alarmed, Severity.Violent, "attacked me");
+        (sus.X, sus.Z, sus.Floor, sus.LastSeen, sus.Level, sus.Severity, sus.Reason) = (px, pz, Place.FloorAt(py), _clockSeconds, Stealth.Alarmed, Severity.Violent, "attacked me");
         if (_act == Act.Holding) Emit(new NpcIntent(NpcIntentKind.Release, _target));
         _act = Act.None;
         Escalate(player, sus);
@@ -415,9 +434,9 @@ public sealed partial class CityNpcBrain
     }
 
     /// <summary>A held resident moves where they're pulled.</summary>
-    public void MoveHeld(float x, float z, float yaw)
+    public void MoveHeld(float x, float z, float yaw, float y = 0)
     {
-        if (Held) (X, Z, Yaw) = (x, z, yaw);
+        if (Held) (X, Z, Yaw, _level) = (x, z, yaw, y);
     }
 
     /// <summary>Let go of (or wriggled free): they react to whoever held them.</summary>
@@ -531,7 +550,7 @@ public sealed partial class CityNpcBrain
 
     private void Begin(Act act, long target, string activity, float pace, double maxSeconds)
     {
-        if (_hop != null) { (X, Z, Y, _hop) = (_hop.To.X, _hop.To.Z, 0, null); }
+        if (_hop != null) { (X, Z, _hopY, _hop) = (_hop.To.X, _hop.To.Z, 0, null); }
         if (_act == Act.Holding && act != Act.Holding) Emit(new NpcIntent(NpcIntentKind.Release, _target));
         _act = act;
         _target = target;
@@ -580,13 +599,17 @@ public sealed partial class CityNpcBrain
         Say(Pick("Help! Police!", "Somebody help!", "Aaah!"));
         Emit(NpcIntent.MakeNoise(X, Z, Stealth.ScreamRadius, "scream", Severity.Crime));
         _point = (x, z);
+        _pointFloor = 0;
         _reportOnArrival = report;
         _reportSeverity = severity;
         if (sus != null) sus.Reported = true;
         // Home, unless that's where the trouble is (or they're nowhere near it); otherwise away along the streets.
         var home = Person.Home >= 0 ? _city.Parcels[Person.Home] : null;
         if (home != null && Dist(home.Door.X, home.Door.Z, x, z) > 20 && Dist(home.Door.X, home.Door.Z, X, Z) < 90)
-            _plannedTo = home.Spots[_random.Next(home.Spots.Count)];
+        {
+            var spot = RandomSpot(home);
+            (_plannedTo, _plannedFloor) = ((spot.X, spot.Z), spot.Floor);
+        }
         else
         {
             var far = _paths.StreetCells.Where(c =>
@@ -595,28 +618,28 @@ public sealed partial class CityNpcBrain
                 return Dist(cx, cz, x, z) > 30 && Dist(cx, cz, X, Z) < 60;
             }).ToList();
             var cell = far.Count > 0 ? far[_random.Next(far.Count)] : RandomStreetCell();
-            _plannedTo = CityLayout.CellCenter(cell);
+            (_plannedTo, _plannedFloor) = (CityLayout.CellCenter(cell), 0);
         }
-        SetRoute(_plannedTo);
+        SetRoute(_plannedTo, _plannedFloor);
     }
 
-    private void StartInvestigate(float x, float z, string activity, float pace)
+    private void StartInvestigate(float x, float z, string activity, float pace, int floor = 0)
     {
         Begin(Act.Investigate, 0, activity, pace, 40);
-        _point = (x, z);
+        (_point, _pointFloor) = ((x, z), floor);
     }
 
-    private void StartRespond(float x, float z, long player, int severity)
+    private void StartRespond(float x, float z, long player, int severity, int floor = 0)
     {
         Begin(Act.Respond, player, "responding", severity >= Severity.Crime ? 2.6f : 1.8f, 120);
-        _point = (x, z);
+        (_point, _pointFloor) = ((x, z), floor);
     }
 
     /// <summary>Calm again: back to the day's routine, finding the way back to the street (or their building) first.</summary>
     private void EndReaction(bool returnToRoutine = true)
     {
         if (_act == Act.None) return;
-        if (_hop != null) { (X, Z, Y, _hop) = (_hop.To.X, _hop.To.Z, 0, null); }
+        if (_hop != null) { (X, Z, _hopY, _hop) = (_hop.To.X, _hop.To.Z, 0, null); }
         _act = Act.None;
         _target = 0;
         _pace = 1;
@@ -662,7 +685,7 @@ public sealed partial class CityNpcBrain
         _suspects.TryGetValue(_target, out var sus);
         if (now > _actUntil && _act is not (Act.Holding or Act.Attack))
         {
-            if (_act == Act.Arrest && sus != null) StartSearch(sus.X, sus.Z);
+            if (_act == Act.Arrest && sus != null) StartSearch(sus.X, sus.Z, sus.Floor);
             else EndReaction();
             return;
         }
@@ -678,7 +701,7 @@ public sealed partial class CityNpcBrain
             case Act.Confront:
                 if (sus == null || now - sus.LastSeen > 4) { StartSearchOrEnd(sus); break; }
                 var d = Dist(sus.X, sus.Z, X, Z);
-                if (d > 2.5f) GoTo(sus.X, sus.Z);
+                if (d > 2.5f) GoTo(sus.X, sus.Z, sus.Floor);
                 else { StandStill(); FaceToward(sus.X, sus.Z); }
                 if (!_warned && d < 7)
                 {
@@ -705,7 +728,7 @@ public sealed partial class CityNpcBrain
 
             case Act.Arrest:
                 if (sus == null) { EndReaction(); break; }
-                if (now - sus.LastSeen > 10) { StartSearch(sus.X, sus.Z); break; }
+                if (now - sus.LastSeen > 10) { StartSearch(sus.X, sus.Z, sus.Floor); break; }
                 var da = Dist(sus.X, sus.Z, X, Z);
                 if (!_arrestWarned && da < 9)
                 {
@@ -722,7 +745,7 @@ public sealed partial class CityNpcBrain
                         Emit(new NpcIntent(NpcIntentKind.Grab, _target));
                     }
                 }
-                else GoTo(sus.X, sus.Z);
+                else GoTo(sus.X, sus.Z, sus.Floor);
                 break;
 
             case Act.Holding:
@@ -747,12 +770,12 @@ public sealed partial class CityNpcBrain
 
             case Act.Attack:
                 if (sus == null) { EndReaction(); break; }
-                if (now - sus.LastSeen > 12) { StartSearch(sus.X, sus.Z); break; }
+                if (now - sus.LastSeen > 12) { StartSearch(sus.X, sus.Z, sus.Floor); break; }
                 var dt = Dist(sus.X, sus.Z, X, Z);
                 WeaponOut = true;
                 if (HasGun)
                 {
-                    if (!sus.Visible || dt > 18) GoTo(sus.X, sus.Z);
+                    if (!sus.Visible || dt > 18) GoTo(sus.X, sus.Z, sus.Floor);
                     else if (dt < 3) { StandStill(); FaceToward(sus.X, sus.Z); }
                     else { StandStill(); FaceToward(sus.X, sus.Z); }
                     if (sus.Visible && dt <= 30 && now >= _nextAttack)
@@ -763,7 +786,7 @@ public sealed partial class CityNpcBrain
                 }
                 else
                 {
-                    if (dt > 1.5f) GoTo(sus.X, sus.Z);
+                    if (dt > 1.5f) GoTo(sus.X, sus.Z, sus.Floor);
                     else { StandStill(); FaceToward(sus.X, sus.Z); }
                     if (sus.Visible && dt <= 1.9f && now >= _nextAttack)
                     {
@@ -797,10 +820,10 @@ public sealed partial class CityNpcBrain
 
             case Act.Investigate:
             case Act.Respond:
-                if (_route.Count == 0 && Dist(_point.X, _point.Z, X, Z) > 2f && double.IsNaN(_plannedTo.X)) SetRoute(_point);
+                if (_route.Count == 0 && Dist(_point.X, _point.Z, X, Z) > 2f && double.IsNaN(_plannedTo.X)) SetRoute(_point, _pointFloor);
                 else if (_route.Count == 0)
                 {
-                    if (_act == Act.Respond) StartSearch(_point.X, _point.Z);
+                    if (_act == Act.Respond) StartSearch(_point.X, _point.Z, _pointFloor);
                     else
                     {
                         // Look around for a few seconds.
@@ -817,17 +840,25 @@ public sealed partial class CityNpcBrain
                 {
                     if (now > _actUntil - 0.1) { EndReaction(); break; }
                     // Walk to another spot near where they last saw them.
+                    // Upstairs: another room on that floor. Elsewhere: somewhere near, not behind a wall.
+                    if (_pointFloor > 0 && _city.ParcelAt(_point.X, _point.Z) is { } searched
+                        && searched.Places.Where(pl => pl.Floor == _pointFloor).ToList() is { Count: > 0 } rooms)
+                    {
+                        var room = rooms[_random.Next(rooms.Count)];
+                        SetRoute((room.X, room.Z), room.Floor);
+                        break;
+                    }
                     var a = _random.NextDouble() * Math.PI * 2;
                     var r = 3 + _random.NextDouble() * 7;
                     var spot = ((float)(_point.X + Math.Cos(a) * r), (float)(_point.Z + Math.Sin(a) * r));
-                    if (Obstacles?.Invoke(X, Z, spot.Item1, spot.Item2) is CityNav.Obstacle.Wall) spot = _point;
-                    SetRoute(spot);
+                    if (Obstacles?.Invoke(X, Z, spot.Item1, spot.Item2, _level) is CityNav.Obstacle.Wall) spot = _point;
+                    SetRoute(spot, _pointFloor);
                 }
                 break;
 
             case Act.Revive:
                 var dr = Dist(_point.X, _point.Z, X, Z);
-                if (dr > 1.3f) GoTo(_point.X, _point.Z);
+                if (dr > 1.3f) GoTo(_point.X, _point.Z, _pointFloor);
                 else
                 {
                     StandStill();
@@ -847,17 +878,17 @@ public sealed partial class CityNpcBrain
 
     private void StartSearchOrEnd(Suspect? sus)
     {
-        if (sus != null && (OnDuty || Person.HasAuthorityOver(sus.Parcel))) StartSearch(sus.X, sus.Z);
+        if (sus != null && (OnDuty || Person.HasAuthorityOver(sus.Parcel))) StartSearch(sus.X, sus.Z, sus.Floor);
         else EndReaction();
     }
 
-    private void StartSearch(float x, float z)
+    private void StartSearch(float x, float z, int floor = 0)
     {
         var target = _target;
         Begin(Act.Search, target, "searching", OnDuty ? 1.4f : 1.1f, 20);
-        _point = (x, z);
+        (_point, _pointFloor) = ((x, z), floor);
         Say(Pick("Where did they go?", "I know you're here somewhere...", "Come out!"));
-        SetRoute(_point);
+        SetRoute(_point, _pointFloor);
     }
 
     private string WarningFor(Suspect sus)
@@ -889,20 +920,20 @@ public sealed partial class CityNpcBrain
     }
 
     /// <summary>Head for a moving point: replan every second or so, or when it has moved a few meters.</summary>
-    private void GoTo(float x, float z)
+    private void GoTo(float x, float z, int floor = 0)
     {
-        var moved = float.IsNaN(_plannedTo.X) || Dist(_plannedTo.X, _plannedTo.Z, x, z) > 2.5f;
+        var moved = float.IsNaN(_plannedTo.X) || Dist(_plannedTo.X, _plannedTo.Z, x, z) > 2.5f || floor != _plannedFloor;
         if (_route.Count > 0 && !moved && _clockSeconds < _nextReplan) return;
-        SetRoute((x, z));
+        SetRoute((x, z), floor);
     }
 
-    private void SetRoute((float X, float Z) to)
+    private void SetRoute((float X, float Z) to, int floor = 0)
     {
-        _plannedTo = to;
+        (_plannedTo, _plannedFloor) = (to, floor);
         _nextReplan = _clockSeconds + 1.0;
         _route.Clear();
         _doorReady = false;
-        foreach (var p in CityNav.Route(_city, _paths, (X, Z), to, _lane, Obstacles, CanHop && _act is Act.Arrest or Act.Attack or Act.Flee))
+        foreach (var p in CityNav.Route(_city, _paths, Here, new Place(to.X, to.Z, floor), _lane, Obstacles, CanHop && _act is Act.Arrest or Act.Attack or Act.Flee))
             _route.Enqueue(p);
         var target = _city.ParcelAt(to.X, to.Z);
         _routeEndsIn = target != null && target.Footprint.Contains(to.X, to.Z) ? target.Id : -1;

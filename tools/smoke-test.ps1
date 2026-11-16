@@ -25,6 +25,7 @@
               starts a dungeon, which must get its trees (and still bake navigation around them).
     breach  - in an empty city, a player walks (validated movement) to three locked doors: kicks one in, picks
               one, and shoots one's deadbolt out with a pump shotgun; the noise is heard; the shot-out lock won't lock.
+    floors  - a player kicks into a building with stairs and climbs through its rooms to the top floor.
     stealth - with residents: a player trespasses in an occupied building, another grabs a passer-by, a third fires
               into the air. Residents speak up, the police are called and respond, and someone grabs or fights a player.
   Every scenario also checks: no engine/script errors, remote players never fly off vertically,
@@ -84,11 +85,13 @@ $Scenarios = [ordered]@{
     }
     crowd = @{
         Port   = 7946
-        Server = @('--dev-skip-proximity', '--city-seed', '4', '--city-start-hour', '9', '--dev-quit-after', '50')
+        Server = @('--dev-skip-proximity', '--dev-starter-kit', '--city-seed', '4', '--city-start-hour', '9', '--dev-quit-after', '50')
         Clients = [ordered]@{
-            Kermit = @('--dev-city', '--dev-chase-npc', '--dev-quit-after', '40')
+            Kermit    = @('--dev-city', '--dev-chase-npc', '--dev-quit-after', '40')
+            Tangerine = @('--dev-city', '--dev-weapon', 'Ice Wand', '--dev-aim', '--dev-fight', '--dev-quit-after', '30')
         }
         Checks = {
+            Expect server ' is frozen for 5 s' "Tangerine's ice wand freezes residents, like dungeon enemies"
             Expect Kermit 'closest resident so far: 0\.[67]\d m' 'Kermit runs at a resident and is stopped at arm''s length'
             ExpectNot Kermit 'closest resident so far: 0\.[0-5]\d m' 'Kermit never walks into a resident'
         }
@@ -101,10 +104,8 @@ $Scenarios = [ordered]@{
             Kermit    = @('--dev-city', '--dev-doors', '--dev-check-city', '--dev-return-after', '18', '--dev-trade-keys',
                           '--dev-quit-after', '25')
             Blueberry = @('--dev-city', '--dev-weapon', 'Pistol', '--dev-fight', '--dev-quit-after', '40')
-            Tangerine = @('--dev-city', '--dev-weapon', 'Ice Wand', '--dev-aim', '--dev-fight', '--dev-quit-after', '30')
         }
         Checks = {
-            Expect server ' is frozen for 5 s' 'the ice wand freezes residents, like dungeon enemies'
             Expect Kermit 'city check: (\d+)/\1 doors, fences and walls match' 'every closed door blocks its doorway; walls and fences hold'
             Expect server "'Kermit' searches the body of" 'Kermit searches a body'
             Expect server "'Kermit' took Key from the body of" 'and takes the key it carried'
@@ -259,6 +260,19 @@ $Scenarios = [ordered]@{
             Expect server 'noise in city 2: gunshot' 'the shot is heard'
             Expect Kermit "notice: The lock's been shot out." "the door can't be locked again"
             ExpectNot server 'rejected a move by peer' 'walking there is never rejected by movement validation'
+        }
+    }
+    floors = @{
+        Port   = 7952
+        # A player walks into the nearest building with stairs (kicking the door in) and climbs to its top floor.
+        Server = @('--dev-skip-proximity', '--city-seed', '4', '--city-start-hour', '12', '--city-people', '0', '--dev-quit-after', '90')
+        Clients = [ordered]@{
+            Kermit = @('--dev-city', '--dev-upstairs', '--dev-quit-after', '80')
+        }
+        Checks = {
+            Expect Kermit 'dev-upstairs: \w+ \d+, [2-9] floors, \d+ rooms' 'the building has upper floors and rooms'
+            Expect Kermit 'dev-upstairs: reached floor [1-9] \(height (3\.(19|20)|6\.(39|40)|9\.(59|60))\)' 'Kermit walks up the stairs to the top floor, standing on it'
+            ExpectNot server 'rejected a move by peer' 'climbing the stairs is never rejected by movement validation'
         }
     }
     stealth = @{

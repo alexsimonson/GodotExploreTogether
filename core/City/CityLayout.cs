@@ -55,8 +55,25 @@ public sealed class Parcel
     public (float X, float Z) Door { get; internal set; }
     /// <summary>The middle of the building's front edge: the origin of the building's local coordinates.</summary>
     public (float X, float Z) Origin { get; internal set; }
-    /// <summary>Spots inside the building where people stand (world x, z).</summary>
+    /// <summary>Spots on the building's ground floor where people stand (world x, z).</summary>
     public IReadOnlyList<(float X, float Z)> Spots { get; internal set; } = [];
+    /// <summary>Spots on every floor people can reach (the ground floor's are <see cref="Spots"/>).</summary>
+    public IReadOnlyList<Place> Places { get; internal set; } = [];
+    /// <summary>Rooms, stairs and routes inside (greybox designs); null for custom building scenes (one floor, open).</summary>
+    public BuildingInterior? Interior { get; internal set; }
+
+    /// <summary>The way between two places inside the building (doorways, stairs); straight there without an interior.</summary>
+    public List<Place> RouteInside(Place from, Place to) => Interior?.Route(from, to) ?? [to with { Floor = 0 }];
+
+    /// <summary>The point just inside the front door (ground floor).</summary>
+    public Place JustInside
+    {
+        get
+        {
+            var way = CityPaths.WayIn(this, Door);
+            return new Place(way[2].X, way[2].Z);
+        }
+    }
     /// <summary>Sides with an alley along them: the parcel's fence there stands back from the cell edge.</summary>
     public Sides AlleySides { get; internal set; }
 
@@ -640,11 +657,21 @@ public sealed class CityLayout
         }
         p.Footprint = rect;
 
-        // Spots inside: the design's own, or a back row and two side spots, clear of the walls and the doorway.
-        IReadOnlyList<(float X, float Z)> local = !v.IsGreybox && v.Spots.Count > 0
+        // Greybox buildings get an interior (rooms, stairs, spots on every floor; see BuildingInterior).
+        // Custom designs keep their own spots (or a back row and two side spots), all on the ground floor.
+        if (v.IsGreybox)
+        {
+            p.Interior = BuildingInterior.Generate(p, w, d, v.Floors, openGround: v.Type == BuildingType.Warehouse);
+            p.Places = p.Interior.Spots;
+            p.Spots = p.Places.Where(s => s.Floor == 0).Select(s => (s.X, s.Z)).ToList();
+            return;
+        }
+        IReadOnlyList<(float X, float Z)> local = v.Spots.Count > 0
             ? v.Spots
             : [(-(w / 2 - 1.3f), -(d - 1.3f)), (0, -(d - 1.3f)), (w / 2 - 1.3f, -(d - 1.3f)),
                (-(w / 2 - 1.3f), -d / 2), (w / 2 - 1.3f, -d / 2)];
+        p.Interior = null;
         p.Spots = local.Select(l => p.ToWorld(l.X, l.Z)).ToList();
+        p.Places = p.Spots.Select(s => new Place(s.X, s.Z)).ToList();
     }
 }

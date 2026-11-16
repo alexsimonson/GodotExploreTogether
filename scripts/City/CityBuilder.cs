@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using ExploreTogether.Core.City;
 using ExploreTogether.Dungeon;
 using Godot;
@@ -207,15 +208,16 @@ public static class CityBuilder
         var lights = new Node3D { Name = $"Lights{p.Id}", Visible = false };
         level.AddChild(lights);
         var fp = p.Footprint;
-        lights.AddChild(new OmniLight3D
-        {
-            Name = "Lamp",
-            Position = new Vector3(fp.CenterX, 2.3f, fp.CenterZ),
-            OmniRange = Mathf.Max(fp.Width, fp.Depth) / 2 + 3,
-            LightEnergy = 1.4f,
-            LightColor = new Color(1f, 0.82f, 0.55f),
-            ShadowEnabled = false,
-        });
+        for (var floor = 0; floor < (p.Interior?.Floors ?? 1); floor++)
+            lights.AddChild(new OmniLight3D
+            {
+                Name = $"Lamp{floor}",
+                Position = new Vector3(fp.CenterX, floor * FloorHeight + 2.3f, fp.CenterZ),
+                OmniRange = Mathf.Max(fp.Width, fp.Depth) / 2 + 3,
+                LightEnergy = 1.4f,
+                LightColor = new Color(1f, 0.82f, 0.55f),
+                ShadowEnabled = false,
+            });
 
         // A custom building scene: placed with its origin at the middle of the front edge, its front to the street.
         if (CityCatalog.SceneFor(p.Variant) is { } scene)
@@ -244,9 +246,22 @@ public static class CityBuilder
         Segment(b, false, f.MaxX - t / 2, f.MinZ + t, f.MaxZ - t, 0, height, t, wall, GapOn(Sides.East), DoorWidth, DoorHeight);
         Segment(b, false, f.MinX + t / 2, f.MinZ + t, f.MaxZ - t, 0, height, t, wall, GapOn(Sides.West), DoorWidth, DoorHeight);
 
-        // Ceiling over the ground floor (upper floors are closed for now), and the roof with a small overhang.
-        if (floors > 1)
-            b.Add(new Vector3(f.MinX + t, FloorHeight - 0.2f, f.MinZ + t), new Vector3(f.MaxX - t, FloorHeight, f.MaxZ - t), wall.Darkened(0.3f));
+        // Floors above the ground: a slab per floor, open over the stairs that come up through it; then the
+        // stairs, and the rooms' partition walls (see BuildingInterior). Without stairs the upper floors stay closed.
+        var inner = new GroundRect(f.MinX + t, f.MinZ + t, f.MaxX - t, f.MaxZ - t);
+        for (var floor = 1; floor < floors; floor++)
+        {
+            var hole = p.Interior?.Stairs.FirstOrDefault(s => s.FromFloor == floor - 1)?.Rect;
+            var y = floor * FloorHeight;
+            foreach (var piece in hole is { } h ? Without(inner, h) : [inner])
+                b.Add(new Vector3(piece.MinX, y - BuildingInterior.SlabThickness, piece.MinZ), new Vector3(piece.MaxX, y, piece.MaxZ),
+                      FloorColor(floor, wall));
+        }
+        if (p.Interior is { } interior)
+        {
+            foreach (var stair in interior.Stairs) AddStairs(b, level, p, stair, wall);
+            foreach (var part in interior.Partitions) AddPartition(b, part, wall, floors);
+        }
         const float o = 0.3f;
         b.Add(new Vector3(f.MinX - o, height, f.MinZ - o), new Vector3(f.MaxX + o, height + 0.35f, f.MaxZ + o), roof);
         if (p.Building == BuildingType.Guardhouse) // battlements, so guardhouses stand out
@@ -259,6 +274,81 @@ public static class CityBuilder
         var glow = new Boxes(lights);
         AddWindows(b, p, floors, glow);
         glow.Finish(GlowMaterial, "Glow");
+    }
+
+    private static Color FloorColor(int floor, Color wall) => new Color(0.40f, 0.30f, 0.22f).Lerp(wall.Darkened(0.3f), floor == 0 ? 0 : 0.15f);
+
+    /// <summary>A rectangle less a hole inside it (touching one side or not): up to four rectangles around it.</summary>
+    private static List<GroundRect> Without(GroundRect r, GroundRect hole)
+    {
+        var h = new GroundRect(Mathf.Max(r.MinX, hole.MinX), Mathf.Max(r.MinZ, hole.MinZ), Mathf.Min(r.MaxX, hole.MaxX), Mathf.Min(r.MaxZ, hole.MaxZ));
+        var pieces = new List<GroundRect>
+        {
+            new(r.MinX, r.MinZ, h.MinX, r.MaxZ),
+            new(h.MaxX, r.MinZ, r.MaxX, r.MaxZ),
+            new(h.MinX, r.MinZ, h.MaxX, h.MinZ),
+            new(h.MinX, h.MaxZ, h.MaxX, r.MaxZ),
+        };
+        return pieces.Where(q => q.Width > 0.01f && q.Depth > 0.01f).ToList();
+    }
+
+    /// <summary>
+    /// A flight of stairs: drawn as solid steps (visual), walked on as a smooth ramp (one tilted collision box, so
+    /// players glide up without needing to step), from the bottom on the lower floor to the top on the upper.
+    /// </summary>
+    private static void AddStairs(Boxes b, Node3D level, Parcel p, Stair s, Color wall)
+    {
+        var y0 = s.FromFloor * FloorHeight;
+        var bottom = new Vector3(s.Bottom.X, 0, s.Bottom.Z);
+        var top = new Vector3(s.Top.X, 0, s.Top.Z);
+        var dir = (top - bottom).Normalized();
+        var start = bottom + dir * 0.15f; // the strip's front edge (the bottom point stands just in front of it)
+        var end = top - dir * 0.15f;      // its back edge (the top point stands just past it, on the landing)
+        var run = start.DistanceTo(end);
+        const int steps = 16;
+        var stepColor = new Color(0.45f, 0.33f, 0.22f);
+        var r = s.Rect;
+        for (var i = 0; i < steps; i++)
+        {
+            // Step i covers its slice of the run, from the floor up to its tread.
+            var a = start + dir * (run * i / steps);
+            var c = start + dir * (run * (i + 1) / steps);
+            var min = new Vector3(Mathf.Min(a.X, c.X), y0, Mathf.Min(a.Z, c.Z));
+            var max = new Vector3(Mathf.Max(a.X, c.X), y0 + FloorHeight * (i + 1) / steps, Mathf.Max(a.Z, c.Z));
+            if (Mathf.Abs(dir.X) > 0.5f) (min.Z, max.Z) = (r.MinZ, r.MaxZ); else (min.X, max.X) = (r.MinX, r.MaxX);
+            b.Add(min, max, stepColor, solid: false);
+        }
+        var body = new StaticBody3D { Name = $"Stairs{p.Id}_{s.FromFloor}" };
+        var low = start + new Vector3(0, y0, 0);
+        var high = end + new Vector3(0, y0 + FloorHeight, 0);
+        var length = low.DistanceTo(high);
+        var shape = new CollisionShape3D { Name = "Ramp", Shape = new BoxShape3D { Size = new Vector3(BuildingInterior.StairWidth, 0.1f, length) } };
+        body.AddChild(shape);
+        level.AddChild(body);
+        var basis = Basis.LookingAt(high - low, Vector3.Up);
+        body.Transform = new Transform3D(basis, (low + high) / 2 - basis.Y * 0.05f);
+    }
+
+    /// <summary>An interior wall with its doorways (2.2 m high, the wall above them closed up to the next floor).</summary>
+    private static void AddPartition(Boxes b, Partition part, Color wall, int floors)
+    {
+        const float thickness = 0.12f, doorHeight = 2.2f;
+        var y0 = part.Floor * FloorHeight;
+        var y1 = (part.Floor + 1) * FloorHeight - (part.Floor + 1 < floors ? BuildingInterior.SlabThickness : 0);
+        var alongX = Mathf.Abs(part.A.Z - part.B.Z) < 0.01f;
+        var line = alongX ? part.A.Z : part.A.X;
+        var (a0, a1) = alongX ? (Mathf.Min(part.A.X, part.B.X), Mathf.Max(part.A.X, part.B.X)) : (Mathf.Min(part.A.Z, part.B.Z), Mathf.Max(part.A.Z, part.B.Z));
+        var gaps = part.Gaps.Select(g => alongX ? g.X : g.Z).OrderBy(g => g).ToList();
+        var color = wall.Lightened(0.15f);
+        var from = a0;
+        foreach (var g in gaps)
+        {
+            var (g0, g1) = (g - BuildingInterior.GapWidth / 2, g + BuildingInterior.GapWidth / 2);
+            Segment(b, alongX, line, from, g0, y0, y1, thickness, color, null, 0, 0);
+            Segment(b, alongX, line, g0, g1, y0 + doorHeight, y1, thickness, color, null, 0, 0); // over the doorway
+            from = g1;
+        }
+        Segment(b, alongX, line, from, a1, y0, y1, thickness, color, null, 0, 0);
     }
 
     private static readonly StandardMaterial3D GlowMaterial = new()

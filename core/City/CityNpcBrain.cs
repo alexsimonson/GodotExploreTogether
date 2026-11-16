@@ -39,8 +39,13 @@ public sealed partial class CityNpcBrain
     public Person Person { get; }
     public float X { get; private set; }
     public float Z { get; private set; }
-    /// <summary>Height off the ground: only above 0 mid-way over a fence.</summary>
-    public float Y { get; private set; }
+    /// <summary>Height: the floor they're on (or part-way up the stairs), plus a jump over a fence.</summary>
+    public float Y => _level + _hopY;
+    /// <summary>The floor they're on (0: the ground, streets and ground floors).</summary>
+    public int Floor => Place.FloorAt(_level);
+    /// <summary>Where they are, with the floor.</summary>
+    public Place Here => new(X, Z, Floor);
+    private float _level, _hopY;
     public float Yaw { get; private set; }
     public bool Moving { get; private set; }
     /// <summary>The parcel they're in (once arrived), or -1 on the street or while walking out.</summary>
@@ -73,10 +78,12 @@ public sealed partial class CityNpcBrain
     private Goal _goal;
     private bool _hasGoal;
     /// <summary>A point to walk to; <see cref="Door"/> >= 0 means the leg to it passes through that parcel's door.</summary>
-    private readonly record struct Waypoint(float X, float Z, int Door = -1, bool Entering = false)
+    /// <summary><see cref="Y"/> is the height of the floor at the point (above 0 upstairs; legs between floors are stairs).</summary>
+    private readonly record struct Waypoint(float X, float Z, int Door = -1, bool Entering = false, float Y = 0)
     {
         public static implicit operator Waypoint((float X, float Z) p) => new(p.X, p.Z);
-        public static implicit operator Waypoint(NavPoint p) => new(p.X, p.Z, p.Door, p.Entering);
+        public static implicit operator Waypoint(NavPoint p) => new(p.X, p.Z, p.Door, p.Entering, p.Y);
+        public static implicit operator Waypoint(Place p) => new(p.X, p.Z, Y: p.Y);
         public void Deconstruct(out float x, out float z) => (x, z) = (X, Z);
     }
 
@@ -189,7 +196,8 @@ public sealed partial class CityNpcBrain
         if (goal.Kind == GoalKind.Stay && goal.Parcel >= 0)
         {
             var parcel = _city.Parcels[goal.Parcel];
-            (X, Z) = RandomSpot(parcel);
+            var spot = RandomSpot(parcel, upstairs: goal.Label == "sleeping");
+            (X, Z, _level) = (spot.X, spot.Z, spot.Y);
             Inside = parcel.Id;
             Activity = goal.Label;
         }
@@ -215,7 +223,7 @@ public sealed partial class CityNpcBrain
                 // Bedtime at home: lock up (from inside, no key needed).
                 if (_goal.Label == "sleeping" && Inside == parcel.Id && _doors != null && !_doors.IsOpen(parcel.Id))
                     _doors.Lock(parcel.Id);
-                RouteTo(parcel, RandomSpot(parcel), _goal.Label, 0.5 + _random.NextDouble());
+                RouteTo(parcel, RandomSpot(parcel, upstairs: _goal.Label == "sleeping"), _goal.Label, 0.5 + _random.NextDouble());
                 break;
             default:
                 NextStep(time);
@@ -250,21 +258,24 @@ public sealed partial class CityNpcBrain
     // ---- routes ----
 
     /// <param name="dwellHours">How long to stay once there (game hours, counted from arrival).</param>
-    private void RouteTo(Parcel target, (float X, float Z) spot, string label, double dwellHours)
+    private void RouteTo(Parcel target, Place spot, string label, double dwellHours)
     {
         _dwellHours = dwellHours;
         _route.Clear();
         if (Inside == target.Id)
         {
-            _route.Enqueue(spot); // already inside: just cross the room
+            // Already inside: through the rooms (and up or down the stairs).
+            foreach (var p in target.RouteInside(Here, spot)) _route.Enqueue(p);
         }
         else
         {
             var start = LeaveBuilding();
             foreach (var p in _paths.StreetWalk(start, CityPaths.StreetOf(target), _lane)) _route.Enqueue(p);
-            var way = CityPaths.WayIn(target, spot);
-            for (var i = 0; i < way.Count; i++)
-                _route.Enqueue(i == 2 ? new Waypoint(way[i].X, way[i].Z, target.Id, Entering: true) : way[i]); // yard -> just inside
+            var way = CityPaths.WayIn(target, (spot.X, spot.Z));
+            _route.Enqueue(way[0]);
+            _route.Enqueue(way[1]);
+            _route.Enqueue(new Waypoint(way[2].X, way[2].Z, target.Id, Entering: true)); // yard -> just inside
+            foreach (var p in target.RouteInside(target.JustInside, spot)) _route.Enqueue(p);
         }
         _routeEndsIn = target.Id;
         _routeLabel = label;
@@ -288,9 +299,10 @@ public sealed partial class CityNpcBrain
         if (Inside >= 0)
         {
             var parcel = _city.Parcels[Inside];
-            var way = CityPaths.WayOut(parcel, (X, Z));
-            for (var i = 1; i < way.Count; i++)
-                _route.Enqueue(i == 2 ? new Waypoint(way[i].X, way[i].Z, parcel.Id) : way[i]); // just inside -> yard
+            foreach (var p in parcel.RouteInside(Here, parcel.JustInside)) _route.Enqueue(p); // down to the front door
+            var way = CityPaths.WayIn(parcel, parcel.Door);
+            _route.Enqueue(new Waypoint(way[1].X, way[1].Z, parcel.Id)); // just inside -> yard
+            _route.Enqueue(way[0]);
             Inside = -1;
             return CityPaths.StreetOf(parcel);
         }
@@ -337,6 +349,7 @@ public sealed partial class CityNpcBrain
             var dist = MathF.Sqrt(dx * dx + dz * dz);
             if (dist <= 1e-4f)
             {
+                _level = next.Y;
                 ReachWaypoint(time);
                 continue;
             }
@@ -348,7 +361,9 @@ public sealed partial class CityNpcBrain
             if (_act != Act.None && Obstacles != null)
             {
                 var ahead = 0.45f; // the body's front, a little past the step
-                var o = Obstacles(X, Z, nx + dx / dist * ahead, nz + dz / dist * ahead);
+                var o = MathF.Abs(next.Y - _level) > 0.01f
+                    ? CityNav.Obstacle.None // on the stairs: the flight itself is the way
+                    : Obstacles(X, Z, nx + dx / dist * ahead, nz + dz / dist * ahead, _level);
                 if (o == CityNav.Obstacle.Wall || o == CityNav.Obstacle.Low && !CanHop)
                 {
                     Moving = false;
@@ -360,9 +375,11 @@ public sealed partial class CityNpcBrain
                 if (o == CityNav.Obstacle.Low && StartHop(dx / dist, dz / dist)) break;
             }
             var blocker = crowd?.Check(this, X, Z, nx, nz) ?? CityCrowd.Blocker.None;
+            if (MathF.Abs(next.Y - _level) > 0.01f && blocker == CityCrowd.Blocker.Npc) blocker = CityCrowd.Blocker.None; // stairs: squeeze by
             if (blocker == CityCrowd.Blocker.None)
             {
                 (X, Z) = (nx, nz);
+                _level += (next.Y - _level) * move / dist; // up or down the stairs along the way
                 step -= move;
                 Moving = true;
                 _blockedFor = 0;
@@ -386,6 +403,7 @@ public sealed partial class CityNpcBrain
             {
                 // Squeeze past the other resident (only ever along the planned line, so never anywhere new).
                 (X, Z) = (nx, nz);
+                _level += (next.Y - _level) * move / dist;
                 Moving = true;
                 if (move >= dist) ReachWaypoint(time);
             }
@@ -435,6 +453,7 @@ public sealed partial class CityNpcBrain
     private void ReachWaypoint(double time)
     {
         var reached = _route.Dequeue();
+        _level = reached.Y;
         if (reached.Door >= 0 && _doors != null) CloseBehind(reached, time);
         _doorReady = false;
         if (_route.Count == 0) Arrive(time);
@@ -507,10 +526,10 @@ public sealed partial class CityNpcBrain
     }
 
     /// <summary>A body being dragged: it goes where it's pulled (kept here so who-sees-what can use it later).</summary>
-    public void MoveBody(float x, float z, float yaw)
+    public void MoveBody(float x, float z, float yaw, float y = 0)
     {
         if (!IsDown) return;
-        (X, Z, Yaw) = (x, z, yaw);
+        (X, Z, Yaw, _level) = (x, z, yaw, y);
     }
 
     /// <summary>Knocked out: drops where they stand until woken.</summary>
@@ -541,8 +560,15 @@ public sealed partial class CityNpcBrain
         if (_city.ParcelAt(X, Z) is { } parcel)
         {
             var (points, throughDoor) = CityPaths.WayToStreet(parcel, (X, Z));
-            for (var i = 0; i < points.Count; i++)
-                _route.Enqueue(throughDoor && i == 1 ? new Waypoint(points[i].X, points[i].Z, parcel.Id) : points[i]);
+            if (throughDoor)
+            {
+                // Inside (maybe upstairs): down through the rooms to the front door first.
+                foreach (var p in parcel.RouteInside(Here, parcel.JustInside)) _route.Enqueue(p);
+                _route.Enqueue(new Waypoint(points[1].X, points[1].Z, parcel.Id));
+                _route.Enqueue(points[2]);
+            }
+            else
+                foreach (var p in points) _route.Enqueue(p);
         }
         _routeEndsIn = -1;
         _routeLabel = "dazed";
@@ -572,7 +598,12 @@ public sealed partial class CityNpcBrain
 
     // ---- places ----
 
-    private (float X, float Z) RandomSpot(Parcel p) => p.Spots[_random.Next(p.Spots.Count)];
+    /// <summary>A spot in the building, on any floor; <paramref name="upstairs"/>: above the ground floor if it has one (bedrooms).</summary>
+    private Place RandomSpot(Parcel p, bool upstairs = false)
+    {
+        var spots = upstairs && p.Places.Any(s => s.Floor > 0) ? p.Places.Where(s => s.Floor > 0).ToList() : p.Places;
+        return spots[_random.Next(spots.Count)];
+    }
 
     /// <summary>The street cell they're on, or the one in front of the building they're in.</summary>
     private Cell HereStreetCell() => Inside >= 0 ? CityPaths.StreetOf(_city.Parcels[Inside]) : CurrentStreetCell();

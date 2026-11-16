@@ -18,6 +18,8 @@ namespace ExploreTogether.Client;
 ///   --dev-trespass   walk into a building where someone is (an office or warehouse at work time) and stay put
 ///   --dev-grab       walk up behind a walking resident and grab them; hold on (--dev-strangle: and strangle them)
 ///   --dev-struggle   when a resident holds us, mash F to break free
+///   --dev-upstairs   walk to the nearest building with stairs (kicking the door in if it's locked), climb to its top
+///                    floor, logging the height reached; with --dev-shots DIR, save screenshots on the way
 /// </summary>
 public partial class ClientGame
 {
@@ -29,6 +31,7 @@ public partial class ClientGame
         if (CmdArgs.Has("dev-breach")) GetTree().CreateTimer(2.5).Timeout += () => { if (_currentInstanceId == instanceId) _ = DevBreach(instanceId); };
         if (CmdArgs.Has("dev-trespass")) GetTree().CreateTimer(2.5).Timeout += () => { if (_currentInstanceId == instanceId) _ = DevTrespass(instanceId); };
         if (CmdArgs.Has("dev-grab")) GetTree().CreateTimer(2.5).Timeout += () => { if (_currentInstanceId == instanceId) _ = DevGrab(instanceId); };
+        if (CmdArgs.Has("dev-upstairs")) GetTree().CreateTimer(2.5).Timeout += () => { if (_currentInstanceId == instanceId) _ = DevUpstairs(instanceId); };
     }
 
     private void DevStealthProcess(double delta)
@@ -175,7 +178,8 @@ public partial class ClientGame
         if (_doorStates[target.Id] is { Open: false }) _session.SendInteract(CityDoor.IdFor(target.Id));
         await Wait(1.0);
         var inside = CityPaths.WayIn(target, target.Spots[0]);
-        if (!await DevWalk([inside[2], target.Spots[0]], instanceId)) return;
+        var rooms = target.RouteInside(target.JustInside, target.Places[0]).Select(pl => (pl.X, pl.Z));
+        if (!await DevWalk(new[] { inside[2] }.Concat(rooms), instanceId)) return;
         GD.Print($"[client] dev-trespass: inside {target.Building} {target.Id}");
     }
 
@@ -234,5 +238,57 @@ public partial class ClientGame
             }
             await Wait(0.1);
         }
+    }
+
+    // ---- --dev-upstairs ----
+
+    private async Task DevShot(string name)
+    {
+        if (CmdArgs.Get("dev-shots") is not { Length: > 0 } dir) return;
+        await Wait(0.6);
+        var path = System.IO.Path.Combine(dir, name + ".png");
+        GD.Print($"[client] dev-upstairs: screenshot {path}: {GetViewport().GetTexture().GetImage().SavePng(path)}");
+    }
+
+    private void Face(PlayerCharacter me, float x, float z, float pitch = 0)
+    {
+        me.LookAt(new Vector3(x, me.GlobalPosition.Y, z));
+        me.GetNode<Node3D>("Head").Rotation = new Vector3(pitch, 0, 0);
+    }
+
+    private async Task DevUpstairs(int instanceId)
+    {
+        if (PlayerCharacter.Local is not { } me) return;
+        var (city, paths) = DevCity();
+        var here = CityNav.NearestStreet(city, paths, (me.GlobalPosition.X, me.GlobalPosition.Z));
+        var target = city.Parcels.Where(p => p.Interior?.Floors > 1)
+            .OrderBy(p => paths.StreetRoute(here, CityPaths.StreetOf(p)).Count).FirstOrDefault();
+        if (target == null) { GD.Print("[client] dev-upstairs: no building with stairs"); return; }
+        var interior = target.Interior!;
+        GD.Print($"[client] dev-upstairs: {target.Building} {target.Id}, {interior.Floors} floors, {interior.Rooms.Count} rooms");
+        if (!await DevWalk(DevWayToDoor(city, paths, me.GlobalPosition, target), instanceId)) return;
+        for (var i = 0; i < 10 && _doorStates.TryGetValue(target.Id, out var d) && !d.Open; i++)
+        {
+            if (d.Locked) _session.SendCityAction("kick", CityDoor.IdFor(target.Id));
+            else _session.SendInteract(CityDoor.IdFor(target.Id));
+            await Wait(1.0);
+        }
+        var inside = target.JustInside;
+        if (!await DevWalk([(inside.X, inside.Z)], instanceId)) return;
+        var first = interior.Stairs[0];
+        Face(me, first.Top.X, first.Top.Z, 0.15f);
+        await DevShot("1-ground-floor-stairs");
+        var top = interior.Spots.Where(s => s.Floor == interior.Floors - 1).First();
+        foreach (var point in target.RouteInside(inside, top))
+        {
+            if (!await DevWalk([(point.X, point.Z)], instanceId)) return;
+            GD.Print($"[client] dev-upstairs: at ({point.X:0.0}, {point.Z:0.0}) floor {point.Floor}, height {me.GlobalPosition.Y:0.00}");
+        }
+        GD.Print($"[client] dev-upstairs: reached floor {Place.FloorAt(me.GlobalPosition.Y)} (height {me.GlobalPosition.Y:0.00})");
+        Face(me, target.Footprint.CenterX, target.Footprint.CenterZ, -0.1f);
+        await DevShot("2-top-floor");
+        var hole = interior.Stairs[^1];
+        Face(me, hole.Rect.CenterX, hole.Rect.CenterZ, -0.6f);
+        await DevShot("3-stairwell");
     }
 }

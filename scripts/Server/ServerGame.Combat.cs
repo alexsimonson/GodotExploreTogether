@@ -91,7 +91,7 @@ public partial class ServerGame
                     s.LastViolentAt = Now; // gunfire: anyone who sees it is alarmed, and everyone around hears it
                     EmitNoise(found.Instance, new Core.City.Noise(origin.X, origin.Z,
                         weapon!.Breaches ? Core.City.Stealth.ShotgunRadius : Core.City.Stealth.GunshotRadius,
-                        "gunshot", Core.City.Severity.Violent, s.Peer));
+                        "gunshot", Core.City.Severity.Violent, s.Peer, origin.Y - 1.6f));
                 }
                 break;
 
