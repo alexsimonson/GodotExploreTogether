@@ -12,13 +12,14 @@ namespace ExploreTogether.Server;
 /// timeout as dungeons.
 ///
 /// Server args: --city-size N (tiles per side, default 5), --city-seed S (fixed seed, default random),
-/// --city-loops P (extra streets in percent, default 15).
+/// --city-loops P (extra streets in percent, default 15), --city-favor NAME (dev: place that building design wherever it fits).
 /// </summary>
 public partial class ServerGame
 {
     private static readonly int CitySize = CmdArgs.GetInt("city-size", 5);
     private static readonly int CityLoops = CmdArgs.GetInt("city-loops", 15);
     private static readonly int? CitySeed = CmdArgs.Has("city-seed") ? CmdArgs.GetInt("city-seed", 0) : null;
+    private static readonly string? CityFavor = CmdArgs.Has("city-favor") ? CmdArgs.Get("city-favor") : null;
 
     private void UseCityGate(PeerSession s, ServerInstance instance)
     {
@@ -27,7 +28,7 @@ public partial class ServerGame
             // A city counts as in use while someone is in it or still loading into it.
             var city = _instances.Cities.FirstOrDefault(c =>
                            c.Players.Count > 0 || _sessions.Values.Any(o => o.PendingInstanceId == c.Id))
-                       ?? _instances.CreateCity(CitySize, CitySize, CitySeed, CityLoops, s.Character!.Name);
+                       ?? _instances.CreateCity(CitySize, CitySize, CitySeed, CityLoops, s.Character!.Name, CityFavor);
             Save(s, CityReturnPoint); // a later login starts in front of the gate, not inside it
             GD.Print($"[server] '{s.Character!.Name}' goes to city {city.Id}");
             SendToInstance(s, city);

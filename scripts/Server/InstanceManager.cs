@@ -130,14 +130,22 @@ public sealed class InstanceManager
     }
 
     /// <summary>A new greybox city (seed random unless given). Closed like a dungeon once it has been empty a while.</summary>
-    public ServerInstance CreateCity(int width, int height, int? seed, int loopPercent, string createdBy)
+    /// <param name="favor">Dev: a building design to place wherever it fits (--city-favor NAME).</param>
+    public ServerInstance CreateCity(int width, int height, int? seed, int loopPercent, string createdBy, string? favor = null)
     {
         width = Math.Clamp(width, 1, MaxCitySide);
         height = Math.Clamp(height, 1, MaxCitySide);
+        if (favor != null && CityCatalog.Catalog.IndexOf(favor) < 0)
+        {
+            GD.PushWarning($"[server] --city-favor: no building design named '{favor}' (the scene file name in {CityCatalog.Folder})");
+            favor = null;
+        }
         var started = DateTime.UtcNow;
-        var city = CityLayout.Generate(width, height, seed ?? Random.Shared.Next(), loopPercent);
+        var city = CityLayout.Generate(width, height, seed ?? Random.Shared.Next(), loopPercent, CityCatalog.Catalog, favor);
         var instance = Create(InstanceKinds.City, null, createdBy, city);
         var counts = city.Parcels.GroupBy(p => p.Building).Select(g => $"{g.Count()} {g.Key}");
+        var custom = city.Parcels.Where(p => !p.Variant.IsGreybox).GroupBy(p => p.Variant.Name).Select(g => $"{g.Count()} {g.Key}").ToList();
+        if (custom.Count > 0) counts = counts.Append($"custom: {string.Join(", ", custom)}");
         GD.Print($"[server] city {instance.Id}: {width}x{height}, seed {city.Seed}, loops {city.LoopPercent}%, " +
                  $"{city.Parcels.Count} parcels ({string.Join(", ", counts)}), built in " +
                  $"{(DateTime.UtcNow - started).TotalMilliseconds:0} ms (by '{createdBy}')");

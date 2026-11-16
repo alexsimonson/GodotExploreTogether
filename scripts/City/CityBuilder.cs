@@ -84,7 +84,7 @@ public static class CityBuilder
         {
             AddYard(b, parcel);
             AddFences(b, city, parcel);
-            AddBuilding(b, parcel);
+            AddBuilding(b, level, parcel);
             level.AddChild(Sign(parcel));
         }
 
@@ -180,10 +180,21 @@ public static class CityBuilder
         }
     }
 
-    private static void AddBuilding(Boxes b, Parcel p)
+    private static void AddBuilding(Boxes b, Node3D level, Parcel p)
     {
+        // A custom building scene: placed with its origin at the middle of the front edge, its front to the street.
+        if (CityCatalog.SceneFor(p.Variant) is { } scene)
+        {
+            var building = scene.Instantiate<Node3D>();
+            building.Name = $"Building{p.Id}_{p.Variant.Name}";
+            building.Position = new Vector3(p.Origin.X, 0, p.Origin.Z);
+            building.Rotation = new Vector3(0, p.Yaw, 0);
+            level.AddChild(building);
+            return;
+        }
+
         var f = p.Footprint;
-        var (_, _, floors) = CityLayout.Size(p.Building);
+        var floors = p.Variant.Floors;
         var height = floors * FloorHeight;
         var (wall, roof) = Colors(p.Building);
         const float t = WallThickness;

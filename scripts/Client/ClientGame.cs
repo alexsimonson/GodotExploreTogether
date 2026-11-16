@@ -439,7 +439,7 @@ public partial class ClientGame : Node
             GetTree().CreateTimer(0.5).Timeout += () =>
             {
                 if (PlayerCharacter.Local is not { } p) return;
-                var (count, failures) = City.CityChecks.Verify(Core.City.CityLayout.Import(layoutData), p.GetWorld3D());
+                var (count, failures) = City.CityChecks.Verify(Core.City.CityLayout.Import(layoutData, City.CityCatalog.Catalog), p.GetWorld3D());
                 GD.Print($"[client] city check: {count - failures.Count}/{count} doors, fences and walls match the layout");
                 foreach (var f in failures) GD.Print($"[client]   {f}");
             };
@@ -489,7 +489,7 @@ public partial class ClientGame : Node
     {
         var container = _main.Instances.GetNodeOrNull<Node>(InstanceFactory.NodeName(instanceId));
         if (container == null) return;
-        var b = Core.City.CityLayout.Import(layoutData).Bounds;
+        var b = Core.City.CityLayout.Import(layoutData, City.CityCatalog.Catalog).Bounds;
         var center = new Vector3(b.CenterX, 0, b.CenterZ);
         var size = Mathf.Max(b.Width, b.Depth);
         var camera = new Camera3D { Name = "DevOverview", Far = 4000 };

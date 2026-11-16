@@ -1,0 +1,246 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/City/CityBuilding.cs" id="1_building"]
+[ext_resource type="Texture2D" path="res://assets/textures/dungeon/brick/completethewall.jpg" id="2_brick"]
+[ext_resource type="Texture2D" path="res://assets/textures/dungeon/roof_wood.png" id="3_roof"]
+[ext_resource type="Texture2D" path="res://assets/textures/dungeon/hardwood/hardwood.png" id="4_wood"]
+
+[sub_resource type="StandardMaterial3D" id="Mat_brick"]
+albedo_texture = ExtResource("2_brick")
+roughness = 1.0
+uv1_scale = Vector3(0.35, 0.35, 0.35)
+uv1_triplanar = true
+
+[sub_resource type="StandardMaterial3D" id="Mat_roof"]
+albedo_texture = ExtResource("3_roof")
+roughness = 1.0
+uv1_scale = Vector3(0.5, 0.5, 0.5)
+uv1_triplanar = true
+
+[sub_resource type="StandardMaterial3D" id="Mat_floor"]
+albedo_texture = ExtResource("4_wood")
+roughness = 1.0
+uv1_scale = Vector3(0.5, 0.5, 0.5)
+uv1_triplanar = true
+
+[sub_resource type="StandardMaterial3D" id="Mat_trim"]
+albedo_color = Color(0.36, 0.24, 0.15, 1)
+roughness = 0.9
+
+[sub_resource type="StandardMaterial3D" id="Mat_glass"]
+albedo_color = Color(0.15, 0.2, 0.28, 1)
+roughness = 0.2
+metallic = 0.3
+
+[sub_resource type="BoxMesh" id="Mesh_WallFrontLeft"]
+material = SubResource("Mat_brick")
+size = Vector3(1.7, 3, 0.3)
+
+[sub_resource type="BoxShape3D" id="Shape_WallFrontLeft"]
+size = Vector3(1.7, 3, 0.3)
+
+[sub_resource type="BoxMesh" id="Mesh_WallFrontRight"]
+material = SubResource("Mat_brick")
+size = Vector3(4.7, 3, 0.3)
+
+[sub_resource type="BoxShape3D" id="Shape_WallFrontRight"]
+size = Vector3(4.7, 3, 0.3)
+
+[sub_resource type="BoxMesh" id="Mesh_Lintel"]
+material = SubResource("Mat_brick")
+size = Vector3(1.6, 0.6, 0.3)
+
+[sub_resource type="BoxShape3D" id="Shape_Lintel"]
+size = Vector3(1.6, 0.6, 0.3)
+
+[sub_resource type="BoxMesh" id="Mesh_WallBack"]
+material = SubResource("Mat_brick")
+size = Vector3(8, 3, 0.3)
+
+[sub_resource type="BoxShape3D" id="Shape_WallBack"]
+size = Vector3(8, 3, 0.3)
+
+[sub_resource type="BoxMesh" id="Mesh_WallLeft"]
+material = SubResource("Mat_brick")
+size = Vector3(0.3, 3, 6.4)
+
+[sub_resource type="BoxShape3D" id="Shape_WallLeft"]
+size = Vector3(0.3, 3, 6.4)
+
+[sub_resource type="BoxMesh" id="Mesh_WallRight"]
+material = SubResource("Mat_brick")
+size = Vector3(0.3, 3, 6.4)
+
+[sub_resource type="BoxShape3D" id="Shape_WallRight"]
+size = Vector3(0.3, 3, 6.4)
+
+[sub_resource type="BoxMesh" id="Mesh_Ceiling"]
+material = SubResource("Mat_trim")
+size = Vector3(8, 0.15, 7)
+
+[sub_resource type="BoxShape3D" id="Shape_Ceiling"]
+size = Vector3(8, 0.15, 7)
+
+[sub_resource type="BoxMesh" id="Mesh_Floor"]
+material = SubResource("Mat_floor")
+size = Vector3(7.4, 0.05, 6.4)
+
+[sub_resource type="BoxMesh" id="Mesh_Chimney"]
+material = SubResource("Mat_brick")
+size = Vector3(0.7, 2, 0.7)
+
+[sub_resource type="BoxMesh" id="Mesh_PorchRoof"]
+material = SubResource("Mat_trim")
+size = Vector3(2.6, 0.12, 1.3)
+
+[sub_resource type="BoxMesh" id="Mesh_PorchPostLeft"]
+material = SubResource("Mat_trim")
+size = Vector3(0.15, 2.6, 0.15)
+
+[sub_resource type="BoxShape3D" id="Shape_PorchPostLeft"]
+size = Vector3(0.15, 2.6, 0.15)
+
+[sub_resource type="BoxMesh" id="Mesh_PorchPostRight"]
+material = SubResource("Mat_trim")
+size = Vector3(0.15, 2.6, 0.15)
+
+[sub_resource type="BoxShape3D" id="Shape_PorchPostRight"]
+size = Vector3(0.15, 2.6, 0.15)
+
+[sub_resource type="BoxMesh" id="Mesh_WindowFront"]
+material = SubResource("Mat_glass")
+size = Vector3(1.4, 1.1, 0.06)
+
+[sub_resource type="BoxMesh" id="Mesh_WindowLeft"]
+material = SubResource("Mat_glass")
+size = Vector3(0.06, 1.1, 1.4)
+
+[sub_resource type="BoxMesh" id="Mesh_WindowRight"]
+material = SubResource("Mat_glass")
+size = Vector3(0.06, 1.1, 1.4)
+
+[sub_resource type="PrismMesh" id="Mesh_Roof"]
+material = SubResource("Mat_roof")
+size = Vector3(7.8, 1.9, 8.6)
+
+[node name="ExampleCottage" type="Node3D"]
+script = ExtResource("1_building")
+Type = 0
+Width = 8
+Depth = 7
+Floors = 1
+DoorOffset = -1.5
+Weight = 10
+
+[node name="WallFrontLeft" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3.15, 1.5, -0.15)
+mesh = SubResource("Mesh_WallFrontLeft")
+
+[node name="WallFrontRight" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.65, 1.5, -0.15)
+mesh = SubResource("Mesh_WallFrontRight")
+
+[node name="Lintel" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.5, 2.7, -0.15)
+mesh = SubResource("Mesh_Lintel")
+
+[node name="WallBack" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, -6.85)
+mesh = SubResource("Mesh_WallBack")
+
+[node name="WallLeft" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3.85, 1.5, -3.5)
+mesh = SubResource("Mesh_WallLeft")
+
+[node name="WallRight" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.85, 1.5, -3.5)
+mesh = SubResource("Mesh_WallRight")
+
+[node name="Ceiling" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.075, -3.5)
+mesh = SubResource("Mesh_Ceiling")
+
+[node name="Floor" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.025, -3.5)
+mesh = SubResource("Mesh_Floor")
+
+[node name="Chimney" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.5, 4.3, -5.4)
+mesh = SubResource("Mesh_Chimney")
+
+[node name="PorchRoof" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.5, 2.65, 0.6)
+mesh = SubResource("Mesh_PorchRoof")
+
+[node name="PorchPostLeft" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.65, 1.3, 1.1)
+mesh = SubResource("Mesh_PorchPostLeft")
+
+[node name="PorchPostRight" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.35, 1.3, 1.1)
+mesh = SubResource("Mesh_PorchPostRight")
+
+[node name="WindowFront" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.7, 1.6, 0.03)
+mesh = SubResource("Mesh_WindowFront")
+
+[node name="WindowLeft" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.03, 1.6, -3.5)
+mesh = SubResource("Mesh_WindowLeft")
+
+[node name="WindowRight" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4.03, 1.6, -3.5)
+mesh = SubResource("Mesh_WindowRight")
+
+[node name="Roof" type="MeshInstance3D" parent="."]
+transform = Transform3D(0, 0, 1, 0, 1, 0, -1, 0, 0, 0, 4.1, -3.5)
+mesh = SubResource("Mesh_Roof")
+
+[node name="Collision" type="StaticBody3D" parent="."]
+
+[node name="WallFrontLeft" type="CollisionShape3D" parent="Collision"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3.15, 1.5, -0.15)
+shape = SubResource("Shape_WallFrontLeft")
+
+[node name="WallFrontRight" type="CollisionShape3D" parent="Collision"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.65, 1.5, -0.15)
+shape = SubResource("Shape_WallFrontRight")
+
+[node name="Lintel" type="CollisionShape3D" parent="Collision"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.5, 2.7, -0.15)
+shape = SubResource("Shape_Lintel")
+
+[node name="WallBack" type="CollisionShape3D" parent="Collision"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, -6.85)
+shape = SubResource("Shape_WallBack")
+
+[node name="WallLeft" type="CollisionShape3D" parent="Collision"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3.85, 1.5, -3.5)
+shape = SubResource("Shape_WallLeft")
+
+[node name="WallRight" type="CollisionShape3D" parent="Collision"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.85, 1.5, -3.5)
+shape = SubResource("Shape_WallRight")
+
+[node name="Ceiling" type="CollisionShape3D" parent="Collision"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.075, -3.5)
+shape = SubResource("Shape_Ceiling")
+
+[node name="PorchPostLeft" type="CollisionShape3D" parent="Collision"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.65, 1.3, 1.1)
+shape = SubResource("Shape_PorchPostLeft")
+
+[node name="PorchPostRight" type="CollisionShape3D" parent="Collision"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.35, 1.3, 1.1)
+shape = SubResource("Shape_PorchPostRight")
+
+[node name="Spots" type="Node3D" parent="."]
+
+[node name="Bed" type="Marker3D" parent="Spots"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.4, 0, -5.6)
+
+[node name="Table" type="Marker3D" parent="Spots"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.2, 0, -4)
+
+[node name="Hearth" type="Marker3D" parent="Spots"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.4, 0, -2)

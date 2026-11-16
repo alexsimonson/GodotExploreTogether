@@ -1,9 +1,17 @@
 @echo off
 rem Starts a local dedicated server (console window) and N client windows (default 2).
-rem Usage: tools\dev-run.cmd [clientCount]
+rem Usage: tools\dev-run.cmd [clientCount] [server args...]
+rem   e.g. tools\dev-run.cmd 1 --city-favor MyHouse --city-seed 3
 setlocal
 set "COUNT=%~1"
 if "%COUNT%"=="" set "COUNT=2"
+set "SERVER_ARGS="
+:collect_args
+shift
+if "%~1"=="" goto args_done
+set "SERVER_ARGS=%SERVER_ARGS% %1"
+goto collect_args
+:args_done
 
 set "GODOT_DIR=E:\Godot Install\Godot_v4.7.2-stable_mono_win64"
 set "GODOT=%GODOT_DIR%\Godot_v4.7.2-stable_mono_win64.exe"
@@ -23,7 +31,7 @@ call "%~dp0dev-stop.cmd"
 rem Build C# first so every process loads the latest code.
 dotnet build "%PROJECT%\ExploreTogether.csproj" -nologo -v q || exit /b 1
 
-start "ExploreTogether Server" "%GODOT_CONSOLE%" --headless --path "%PROJECT%" -- --server
+start "ExploreTogether Server" "%GODOT_CONSOLE%" --headless --path "%PROJECT%" -- --server%SERVER_ARGS%
 
 for /L %%i in (1,1,%COUNT%) do (
   call :client %%i

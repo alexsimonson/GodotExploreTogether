@@ -52,7 +52,7 @@ public static class InstanceFactory
         {
             InstanceKinds.Hub => GD.Load<PackedScene>(HubScenePath).Instantiate(),
             InstanceKinds.Dungeon => DungeonBuilder.Build(MazeLayout.Import(layoutData)),
-            InstanceKinds.City => CityBuilder.Build(CityLayout.Import(layoutData)),
+            InstanceKinds.City => CityBuilder.Build(CityLayout.Import(layoutData, CityCatalog.Catalog)),
             _ => throw new System.ArgumentException($"Unknown instance kind '{kind}'"),
         };
         level.Name = "Level";

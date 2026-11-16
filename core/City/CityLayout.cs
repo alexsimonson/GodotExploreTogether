@@ -47,10 +47,33 @@ public sealed class Parcel
     /// <summary>The direction from the parcel to its street.</summary>
     public required Sides Front { get; init; }
     public BuildingType Building { get; internal set; }
+    /// <summary>The building design placed here (a greybox one, or a custom building scene).</summary>
+    public BuildingVariant Variant { get; internal set; } = null!;
     public required GroundRect Bounds { get; init; }
     public GroundRect Footprint { get; internal set; }
     /// <summary>The middle of the doorway, on the building's street face.</summary>
     public (float X, float Z) Door { get; internal set; }
+    /// <summary>The middle of the building's front edge: the origin of the building's local coordinates.</summary>
+    public (float X, float Z) Origin { get; internal set; }
+    /// <summary>Spots inside the building where people stand (world x, z).</summary>
+    public IReadOnlyList<(float X, float Z)> Spots { get; internal set; } = [];
+
+    /// <summary>The building's rotation about +Y in radians: its local +Z (front) turned toward the street.</summary>
+    public float Yaw => Front switch
+    {
+        Sides.North => 0,
+        Sides.East => MathF.PI / 2,
+        Sides.South => MathF.PI,
+        _ => -MathF.PI / 2,
+    };
+
+    /// <summary>A point in the building's local coordinates (see <see cref="BuildingVariant"/>) in world space.</summary>
+    public (float X, float Z) ToWorld(float localX, float localZ)
+    {
+        var (ox, oz) = MazePieces.Vector(Front); // local +Z
+        var (ax, az) = (oz, -ox);                // local +X
+        return (Origin.X + ax * localX + ox * localZ, Origin.Z + az * localX + oz * localZ);
+    }
 
     /// <summary>Open to anyone (later: only while open).</summary>
     public bool IsPublic => Building == BuildingType.Shop;
@@ -71,12 +94,15 @@ public sealed class CityLayout
     public const int TileSize = CellSize * TileCells;
     public const float StreetRoadWidth = 8;
     public const float FrontSetback = 1.5f;
-    private const int FormatVersion = 1;
+    private const int FormatVersion = 2;
 
     public int Width { get; }
     public int Height { get; }
     public int Seed { get; }
     public int LoopPercent { get; }
+    public BuildingCatalog Catalog { get; }
+    /// <summary>Dev: a variant placed wherever it fits (index into the catalog), or -1.</summary>
+    public int FavoredVariant { get; }
     public MazeLayout Maze { get; }
     public int CellsX => Width * TileCells;
     public int CellsZ => Height * TileCells;
@@ -89,13 +115,15 @@ public sealed class CityLayout
     private readonly List<Parcel> parcels = new();
     private readonly Random random;
 
-    private CityLayout(int width, int height, int seed, int loopPercent)
+    private CityLayout(int width, int height, int seed, int loopPercent, BuildingCatalog catalog, int favoredVariant)
     {
         if (width < 1 || height < 1) throw new ArgumentException("City must be at least 1×1.");
         Width = width;
         Height = height;
         Seed = seed;
         LoopPercent = Math.Clamp(loopPercent, 0, 100);
+        Catalog = catalog;
+        FavoredVariant = favoredVariant >= 0 && favoredVariant < catalog.Variants.Count ? favoredVariant : -1;
         // Length = every tile: the backtracker then visits the whole grid (at most length + 1 nodes).
         Maze = MazeLayout.Generate(width, height, width * height, seed);
         random = new Random(unchecked(seed * 486187739 + 1013904223));
@@ -112,16 +140,29 @@ public sealed class CityLayout
         PlaceGuardhouses();
     }
 
-    public static CityLayout Generate(int width, int height, int seed, int loopPercent = 15) =>
-        new(width, height, seed, loopPercent);
-
-    /// <summary>Everything a client needs to rebuild the same city.</summary>
-    public int[] Export() => [FormatVersion, Width, Height, Seed, LoopPercent];
-
-    public static CityLayout Import(int[] data)
+    /// <param name="catalog">The building designs to use (default: greybox only).</param>
+    /// <param name="favoredVariant">Dev: a variant name to place wherever it fits, to try out a new building.</param>
+    public static CityLayout Generate(int width, int height, int seed, int loopPercent = 15,
+        BuildingCatalog? catalog = null, string? favoredVariant = null)
     {
-        if (data.Length != 5 || data[0] != FormatVersion) throw new ArgumentException("Unsupported city data.");
-        return Generate(data[1], data[2], data[3], data[4]);
+        catalog ??= BuildingCatalog.Greybox;
+        var favored = favoredVariant == null ? -1 : catalog.IndexOf(favoredVariant);
+        if (favoredVariant != null && favored < 0)
+            throw new ArgumentException($"No building variant named '{favoredVariant}'.");
+        return new CityLayout(width, height, seed, loopPercent, catalog, favored);
+    }
+
+    /// <summary>Everything a client needs to rebuild the same city (with the same building catalog).</summary>
+    public int[] Export() => [FormatVersion, Width, Height, Seed, LoopPercent, Catalog.Checksum, FavoredVariant];
+
+    /// <exception cref="ArgumentException">The data is malformed, or was made with a different building catalog.</exception>
+    public static CityLayout Import(int[] data, BuildingCatalog? catalog = null)
+    {
+        catalog ??= BuildingCatalog.Greybox;
+        if (data.Length != 7 || data[0] != FormatVersion) throw new ArgumentException("Unsupported city data.");
+        if (data[5] != catalog.Checksum)
+            throw new ArgumentException("The city was made with different building designs (server and client building scenes differ).");
+        return new CityLayout(data[1], data[2], data[3], data[4], catalog, data[6]);
     }
 
     // ---- Queries ----
@@ -312,8 +353,15 @@ public sealed class CityLayout
 
     private void AssignBuildings()
     {
+        var favored = FavoredVariant >= 0 ? Catalog.Variants[FavoredVariant] : null;
         foreach (var p in parcels)
         {
+            // Dev (--city-favor): try out one design by placing it wherever it fits.
+            if (favored != null && Place(p, favored) is { } forced)
+            {
+                Apply(p, favored, forced);
+                continue;
+            }
             var size = p.Cells.Count;
             var type = (p.Zone, size) switch
             {
@@ -364,7 +412,34 @@ public sealed class CityLayout
         return options[^1].Type;
     }
 
-    /// <summary>Building size: width along the street, depth back from it (meters), and floors.</summary>
+    /// <summary>The parcel sizes (in 12 m lots) each building type is chosen for.</summary>
+    public static IReadOnlyList<int> LotSizesFor(BuildingType type) => type switch
+    {
+        BuildingType.Cottage or BuildingType.House => [1, 2],
+        BuildingType.RowHouse => [1],
+        BuildingType.Shop => [1, 2],
+        BuildingType.Manor => [2, 3],
+        BuildingType.Office => [3],
+        BuildingType.Warehouse => [2, 3],
+        BuildingType.Guardhouse => [1, 2],
+        _ => [1],
+    };
+
+    /// <summary>
+    /// The parcel sizes (in lots) a design fits on, found by placing it in a few test cities. Empty means it never
+    /// fits (too big, or its door can't line up with a gate).
+    /// </summary>
+    public static IReadOnlyList<int> FitsOnLots(BuildingVariant variant)
+    {
+        var catalog = BuildingCatalog.WithCustom(variant.IsGreybox ? [] : [variant]);
+        var sizes = new SortedSet<int>();
+        for (var seed = 0; seed < 4; seed++)
+            foreach (var p in Generate(6, 6, seed, 15, catalog, variant.Name).Parcels)
+                if (p.Variant.Name == variant.Name) sizes.Add(p.Cells.Count);
+        return sizes.ToList();
+    }
+
+    /// <summary>Greybox building size: width along the street, depth back from it (meters), and floors.</summary>
     public static (float Width, float Depth, int Floors) Size(BuildingType type) => type switch
     {
         BuildingType.Cottage => (7, 6, 1),
@@ -378,52 +453,110 @@ public sealed class CityLayout
         _ => (8, 8, 1),
     };
 
-    /// <summary>
-    /// Places the building in its parcel: set back from the street edge, centered on the front cell
-    /// (or the whole frontage for a wide building), clamped to stay 1 m inside the parcel's fences.
-    /// </summary>
+    /// <summary>Picks a design of the type that fits the parcel (weighted), and places it.</summary>
     private void SetBuilding(Parcel p, BuildingType type)
     {
-        p.Building = type;
-        var (w, d, _) = Size(type);
+        var options = new List<(BuildingVariant Variant, Placement Placement)>();
+        foreach (var v in Catalog.Variants)
+            if (v.Type == type && v.Weight > 0 && Place(p, v) is { } placement)
+                options.Add((v, placement));
+        if (options.Count == 0)
+        {
+            // Only if the catalog has no greybox design for the type with weight > 0: shrink a stand-in.
+            var (w, d, floors) = Size(type);
+            var fallback = new BuildingVariant(BuildingCatalog.GreyboxPrefix + type, type, w, d, floors);
+            Apply(p, fallback, Place(p, fallback)!.Value);
+            return;
+        }
+        var roll = random.Next(options.Sum(o => o.Variant.Weight));
+        foreach (var (variant, placement) in options)
+        {
+            if (roll < variant.Weight)
+            {
+                Apply(p, variant, placement);
+                return;
+            }
+            roll -= variant.Weight;
+        }
+    }
+
+    /// <summary>Where a design goes in a parcel: its size, the middle of its front edge (along the street) and its door.</summary>
+    private readonly record struct Placement(float Width, float Depth, float Mid, float DoorAlong);
+
+    /// <summary>Sign of local +X on the street axis (X for north/south fronts, Z for east/west); see <see cref="Parcel.ToWorld"/>.</summary>
+    private static int AlongSign(Sides front) => front is Sides.North or Sides.West ? 1 : -1;
+
+    /// <summary>
+    /// Fits a design into a parcel, or returns null. The building is set back from the street edge and stays 1 m
+    /// inside the fences; its door must be in front of the parcel's front cell (where the fence has its gate).
+    /// Greybox designs shrink to fit and put their door wherever that is; custom ones keep their size and door.
+    /// </summary>
+    private Placement? Place(Parcel p, BuildingVariant v)
+    {
         var b = p.Bounds;
-        var along = p.Front is Sides.North or Sides.South; // the street edge runs along X
-        var frontLength = along ? b.Width : b.Depth;
-        var backLength = along ? b.Depth : b.Width;
-        w = Math.Min(w, frontLength - 2);
-        d = Math.Min(d, backLength - FrontSetback - 1);
+        var alongX = p.Front is Sides.North or Sides.South; // the street edge runs along X
+        var frontLength = alongX ? b.Width : b.Depth;
+        var backLength = alongX ? b.Depth : b.Width;
+        var maxW = frontLength - 2;
+        var maxD = backLength - FrontSetback - 1;
+        var (w, d) = (v.Width, v.Depth);
+        if (v.IsGreybox) (w, d) = (Math.Min(w, maxW), Math.Min(d, maxD));
+        else if (w > maxW || d > maxD) return null;
 
         var (fx, fz) = CellCenter(p.FrontCell);
-        var wide = w > CellSize - 2;
-        var mid = wide ? (along ? b.CenterX : b.CenterZ) : (along ? fx : fz);
-        var lo = (along ? b.MinX : b.MinZ) + 1 + w / 2;
-        var hi = (along ? b.MaxX : b.MaxZ) - 1 - w / 2;
-        mid = Math.Clamp(mid, lo, hi);
-        // The door is in front of the front cell (where the fence has its gate), even on a wide building.
-        var doorAt = Math.Clamp(along ? fx : fz, mid - w / 2 + 1.5f, mid + w / 2 - 1.5f);
+        var cellMid = alongX ? fx : fz;
+        var s = AlongSign(p.Front);
+        var lo = (alongX ? b.MinX : b.MinZ) + 1 + w / 2;
+        var hi = (alongX ? b.MaxX : b.MaxZ) - 1 - w / 2;
+        if (v.IsGreybox)
+        {
+            var mid = Math.Clamp(w > CellSize - 2 ? (alongX ? b.CenterX : b.CenterZ) : cellMid, lo, hi);
+            return new Placement(w, d, mid, Math.Clamp(cellMid, mid - w / 2 + 1.5f, mid + w / 2 - 1.5f));
+        }
+        // Custom: aim the door at the front cell's middle, then keep the building inside the fences.
+        var m = Math.Clamp(cellMid - s * v.DoorOffset, lo, hi);
+        var door = m + s * v.DoorOffset;
+        if (Math.Abs(door - cellMid) > CellSize / 2f - 1.2f) return null; // the door would miss the gate
+        return new Placement(w, d, m, door);
+    }
 
+    private static void Apply(Parcel p, BuildingVariant v, Placement pl)
+    {
+        p.Building = v.Type;
+        p.Variant = v;
+        var b = p.Bounds;
+        var (w, d, mid) = (pl.Width, pl.Depth, pl.Mid);
         GroundRect rect;
-        (float, float) door;
         switch (p.Front)
         {
             case Sides.North:
                 rect = new GroundRect(mid - w / 2, b.MaxZ - FrontSetback - d, mid + w / 2, b.MaxZ - FrontSetback);
-                door = (doorAt, rect.MaxZ);
+                p.Origin = (mid, rect.MaxZ);
+                p.Door = (pl.DoorAlong, rect.MaxZ);
                 break;
             case Sides.South:
                 rect = new GroundRect(mid - w / 2, b.MinZ + FrontSetback, mid + w / 2, b.MinZ + FrontSetback + d);
-                door = (doorAt, rect.MinZ);
+                p.Origin = (mid, rect.MinZ);
+                p.Door = (pl.DoorAlong, rect.MinZ);
                 break;
             case Sides.East:
                 rect = new GroundRect(b.MaxX - FrontSetback - d, mid - w / 2, b.MaxX - FrontSetback, mid + w / 2);
-                door = (rect.MaxX, doorAt);
+                p.Origin = (rect.MaxX, mid);
+                p.Door = (rect.MaxX, pl.DoorAlong);
                 break;
             default:
                 rect = new GroundRect(b.MinX + FrontSetback, mid - w / 2, b.MinX + FrontSetback + d, mid + w / 2);
-                door = (rect.MinX, doorAt);
+                p.Origin = (rect.MinX, mid);
+                p.Door = (rect.MinX, pl.DoorAlong);
                 break;
         }
         p.Footprint = rect;
-        p.Door = door;
+
+        // Spots inside: the design's own, or a back row and two side spots, clear of the walls and the doorway.
+        IReadOnlyList<(float X, float Z)> local = !v.IsGreybox && v.Spots.Count > 0
+            ? v.Spots
+            : [(-(w / 2 - 1.3f), -(d - 1.3f)), (0, -(d - 1.3f)), (w / 2 - 1.3f, -(d - 1.3f)),
+               (-(w / 2 - 1.3f), -d / 2), (w / 2 - 1.3f, -d / 2)];
+        p.Spots = local.Select(l => p.ToWorld(l.X, l.Z)).ToList();
     }
 }
