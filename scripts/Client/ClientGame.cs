@@ -551,6 +551,26 @@ public partial class ClientGame : Node
             camera.Position = center + new Vector3(0, 300, 0);
             camera.Rotation = new Vector3(-Mathf.Pi / 2, Mathf.Pi, 0); // looking straight down, north (+Z) at the top
         }
+        else if (mode.StartsWith("lamp"))
+        {
+            // At eye height on the street, 9 m from the n-th nearest street lamp to the start ("lamp", "lamp2", ...).
+            var city = Core.City.CityLayout.Import(layoutData, City.CityCatalog.Catalog);
+            var digits = new string(mode.Where(char.IsDigit).ToArray());
+            var n = digits.Length > 0 ? int.Parse(digits) - 1 : 0;
+            var (lx, lz) = new Core.City.CityLighting(city).Lamps.OrderBy(l => l.X * l.X + l.Z * l.Z).ElementAt(n);
+            var (cx, cz) = Core.City.CityLayout.CellCenter(Core.City.CityLayout.CellAt(lx, lz));
+            var away = new Vector3(cx - lx, 0, cz - lz).Normalized();
+            if (mode.EndsWith("top"))
+            {
+                camera.Position = new Vector3(lx, 16, lz) + away * 2;
+                camera.LookAt(new Vector3(lx, 0, lz), Vector3.Forward);
+            }
+            else
+            {
+                camera.Position = new Vector3(lx, 1.7f, lz) + away * 9 + new Vector3(away.Z, 0, -away.X) * 3;
+                camera.LookAt(new Vector3(lx, 1.2f, lz), Vector3.Up);
+            }
+        }
         else if (mode == "near")
         {
             // Low over the start junction, looking along the streets: close enough to see people.

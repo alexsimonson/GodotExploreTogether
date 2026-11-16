@@ -79,12 +79,18 @@ From [DOOR-BREACHING-PLAN.md](DOOR-BREACHING-PLAN.md), with the shotgun change a
 - Residents have a floor and height. They walk through rooms and doorways and up and down stairs (`BuildingInterior.Route`). They spend the day on every floor, and sleep upstairs where the house has an upstairs. Chasing, fleeing, searching, coming round, dragged bodies and people held in a grip all follow floors. Searching upstairs means going room to room on that floor. People a floor apart never get in each other's way.
 - Custom building scenes keep their own geometry and stay single-floor for residents (their spots are on the ground floor).
 
-## Lighting and alleys (`CityLighting`, `CityLayout`)
+## Lighting and alleys (`CityLighting`, `CityLayout`, `CityBuilder`, `CityDaylight`)
 
-- Daylight curve shared by client and server, moonlight 0.06 at night. Ambient at night is much darker than before.
-- Street lamps stand on about 55% of street cells at a sidewalk corner, with an 11 m radius, on from dusk.
-- House lights: a building is lit after dark while someone inside is awake. This is sent with the door flags, and the client turns on a warm interior light and glowing windows.
+- **Daylight** follows the clock (sunrise about 6:00, sunset about 18:00). The client's sun and the server's light model share one curve, `CityLighting.Daylight`.
+- **Night:**
+  - A faint, cool moon (energy 0.07) with soft shadows gives buildings shape.
+  - Deep-blue ambient light (0.05), a navy sky, and a bluish night fog that swallows distant streets.
+  - Glow makes lamp heads, porch lights and lit windows bloom. Ambient occlusion keeps corners readable in the dark.
+- **Street lamps** stand on about 55% of street cells, at a sidewalk corner. Each head hangs on an arm 1.1 m out over the street, so the light clears its own post. They come on at dusk and make warm pools about 9 m across (`LampRadius`). Shadows are cast by the near lamps only; they fade out with distance.
+- **Porch lights** hang over the front doors of every police station, 45% of homes, half the shops and a third of offices and warehouses. Each lights about 5.5 m around the door, on from dusk.
+- **House lights**: a building is lit after dark while someone inside is awake. This is sent with the door flags, and the client lights its rooms (a lamp per floor) and makes its windows glow. Police stations are lit all night.
 - **Alleys**: 2.6 m passages between neighboring single-lot parcels in the commercial zone (about half the candidate edges), when at least one end opens onto a street. Each lot gives up 1.3 m. They're public ground, unlit, and shaded even by day. Residents never walk them. Layout format version 3.
+- The server's light model (`CityLighting.LightAt`) includes lamps, porch lights, lit windows and alleys. Sight ranges use it, so the dark places on screen are dark for residents too.
 
 ## Movement validation (security review, findings 4 and 5)
 

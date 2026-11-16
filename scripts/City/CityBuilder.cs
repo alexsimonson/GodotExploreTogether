@@ -214,7 +214,8 @@ public static class CityBuilder
                 Name = $"Lamp{floor}",
                 Position = new Vector3(fp.CenterX, floor * FloorHeight + 2.3f, fp.CenterZ),
                 OmniRange = Mathf.Max(fp.Width, fp.Depth) / 2 + 3,
-                LightEnergy = 1.4f,
+                OmniAttenuation = 1.2f,
+                LightEnergy = 1.8f,
                 LightColor = new Color(1f, 0.82f, 0.55f),
                 ShadowEnabled = false,
             });
@@ -378,24 +379,62 @@ public static class CityBuilder
         var lamps = new Node3D { Name = "Lamps", Visible = false };
         level.AddChild(lamps);
         const float h = CityLighting.LampHeight;
-        foreach (var (x, z) in new CityLighting(city).Lamps)
+        var lighting = new CityLighting(city);
+        // Porch lights: a small warm lamp over the door (see CityLighting.Porches).
+        foreach (var (x, z, parcel) in lighting.Porches)
         {
-            b.Add(new Vector3(x - 0.08f, 0, z - 0.08f), new Vector3(x + 0.08f, h + 0.1f, z + 0.08f), LampPost);
-            b.Add(new Vector3(x - 0.2f, h + 0.1f, z - 0.2f), new Vector3(x + 0.2f, h + 0.25f, z + 0.2f), LampPost, solid: false);
+            var p = city.Parcels[parcel];
+            var (ox, oz) = Core.Dungeon.MazePieces.Vector(p.Front);
+            var wallX = p.Door.X + ox * 0.08f;
+            var wallZ = p.Door.Z + oz * 0.08f;
+            lamps.AddChild(new MeshInstance3D
+            {
+                Mesh = new BoxMesh { Size = new Vector3(0.22f, 0.22f, 0.22f), Material = LampHeadMaterial },
+                Position = new Vector3(wallX, CityLighting.PorchHeight, wallZ),
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+            });
+            lamps.AddChild(new OmniLight3D
+            {
+                Position = new Vector3(x, CityLighting.PorchHeight - 0.1f, z),
+                OmniRange = CityLighting.PorchRadius + 0.5f,
+                OmniAttenuation = 1.3f,
+                LightEnergy = 1.1f,
+                LightColor = new Color(1f, 0.78f, 0.5f),
+                ShadowEnabled = false,
+                DistanceFadeEnabled = true,
+                DistanceFadeBegin = 70,
+                DistanceFadeLength = 15,
+            });
+        }
+        for (var i = 0; i < lighting.Lamps.Count; i++)
+        {
+            var (x, z) = lighting.Lamps[i];
+            var (px, pz) = lighting.LampPosts[i];
+            // The post, and an arm out over the street to the head (the light hangs below it, clear of the post).
+            b.Add(new Vector3(px - 0.08f, 0, pz - 0.08f), new Vector3(px + 0.08f, h + 0.3f, pz + 0.08f), LampPost);
+            b.Add(new Vector3(Mathf.Min(px, x) - 0.04f, h + 0.22f, Mathf.Min(pz, z) - 0.04f),
+                  new Vector3(Mathf.Max(px, x) + 0.04f, h + 0.3f, Mathf.Max(pz, z) + 0.04f), LampPost, solid: false);
+            b.Add(new Vector3(x - 0.22f, h + 0.1f, z - 0.22f), new Vector3(x + 0.22f, h + 0.25f, z + 0.22f), LampPost, solid: false);
             lamps.AddChild(new MeshInstance3D
             {
                 Mesh = new BoxMesh { Size = new Vector3(0.3f, 0.08f, 0.3f), Material = LampHeadMaterial },
                 Position = new Vector3(x, h + 0.06f, z),
                 CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
             });
+            // Bright, warm pools under the lamps; shadows from the near ones only (they fade out with distance).
             lamps.AddChild(new OmniLight3D
             {
                 Position = new Vector3(x, h - 0.2f, z),
                 OmniRange = CityLighting.LampRadius + 1,
-                OmniAttenuation = 1.2f,
-                LightEnergy = 2.2f,
-                LightColor = new Color(1f, 0.86f, 0.62f),
-                ShadowEnabled = false,
+                OmniAttenuation = 1.4f,
+                LightEnergy = 2.8f,
+                LightColor = new Color(1f, 0.84f, 0.58f),
+                ShadowEnabled = true,
+                ShadowBlur = 1.5f,
+                DistanceFadeEnabled = true,
+                DistanceFadeBegin = 90,
+                DistanceFadeLength = 20,
+                DistanceFadeShadow = 35,
             });
         }
     }
@@ -432,9 +471,13 @@ public static class CityBuilder
                     var max = alongX ? new Vector3(mid + 0.5f, y0 + 1.2f, hi) : new Vector3(hi, y0 + 1.2f, mid + 0.5f);
                     b.Add(min, max, Window, solid: false);
                     // The same pane lit from inside, just in front of the dark one (shown when the house is lit).
-                    var grow = alongX ? new Vector3(0.02f, 0.02f, 0) : new Vector3(0, 0.02f, 0.02f);
-                    var shift = alongX ? new Vector3(0, 0, outward * 0.012f) : new Vector3(outward * 0.012f, 0, 0);
-                    glow.Add(min + shift - grow, max + shift + grow, Godot.Colors.White, solid: false);
+                    // A thin lit plate just in front of the dark pane's outer face (so it covers it completely).
+                    var outer = face + outward * d;
+                    var (g0, g1) = (outer + outward * 0.004f, outer + outward * 0.012f);
+                    if (g0 > g1) (g0, g1) = (g1, g0);
+                    var gmin = alongX ? new Vector3(min.X, min.Y, g0) : new Vector3(g0, min.Y, min.Z);
+                    var gmax = alongX ? new Vector3(max.X, max.Y, g1) : new Vector3(g1, max.Y, max.Z);
+                    glow.Add(gmin, gmax, Godot.Colors.White, solid: false);
                 }
         }
     }
@@ -482,16 +525,35 @@ public static class CityBuilder
         };
     }
 
+    /// <summary>
+    /// The city's environment. <see cref="CityDaylight"/> drives the colours and strengths by the hour; the effects are
+    /// on all day: glow (lamps, lit windows and the gate bloom softly), ambient occlusion (corners and contacts read
+    /// in the dark), and a thin depth fog, thicker and bluer at night.
+    /// </summary>
     private static Godot.Environment CreateEnvironment() => new()
     {
         BackgroundMode = Godot.Environment.BGMode.Sky,
         Sky = new Sky { SkyMaterial = new ProceduralSkyMaterial() },
-        // Greybox: a strong, slightly blue ambient so streets in building shadow stay readable.
         AmbientLightSource = Godot.Environment.AmbientSource.Color,
         AmbientLightColor = new Color(0.70f, 0.75f, 0.85f),
         AmbientLightEnergy = 0.5f,
         ReflectedLightSource = Godot.Environment.ReflectionSource.Sky,
         TonemapMode = Godot.Environment.ToneMapper.Filmic,
+        TonemapExposure = 1.0f,
+        GlowEnabled = true,
+        GlowIntensity = 0.7f,
+        GlowStrength = 1.0f,
+        GlowBloom = 0.05f,
+        GlowHdrThreshold = 0.9f,
+        GlowBlendMode = Godot.Environment.GlowBlendModeEnum.Softlight,
+        SsaoEnabled = true,
+        SsaoRadius = 1.2f,
+        SsaoIntensity = 1.6f,
+        FogEnabled = true,
+        FogLightColor = new Color(0.75f, 0.8f, 0.9f),
+        FogLightEnergy = 1f,
+        FogDensity = 0.002f,
+        FogSkyAffect = 0.3f,
     };
 
     /// <summary>
@@ -523,8 +585,9 @@ public static class CityBuilder
             Face(Corner(5), Corner(1), Corner(3), Corner(7), Vector3.Right);
             Face(Corner(1), Corner(0), Corner(2), Corner(3), Vector3.Forward);
             Face(Corner(4), Corner(5), Corner(7), Corner(6), Vector3.Back);
-            Face(Corner(2), Corner(6), Corner(7), Corner(3), Vector3.Up);
-            Face(Corner(0), Corner(1), Corner(5), Corner(4), Vector3.Down);
+            // (Top and bottom are wound like the sides as seen from outside: front-facing, so their normals hold.)
+            Face(Corner(2), Corner(3), Corner(7), Corner(6), Vector3.Up);
+            Face(Corner(0), Corner(4), Corner(5), Corner(1), Vector3.Down);
             if (!solid) return;
             _body.AddChild(new CollisionShape3D
             {

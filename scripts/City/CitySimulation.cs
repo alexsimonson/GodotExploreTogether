@@ -59,9 +59,14 @@ public partial class CitySimulation : Node
         var dark = CityLighting.Daylight(Clock.HourOfDay) < 0.5f;
         var lit = new bool[_city.Parcels.Count];
         if (dark)
+        {
             foreach (var (brain, _) in _npcs)
                 if (!brain.IsDown && brain.Activity != "sleeping" && _city.ParcelAt(brain.X, brain.Z) is { } p && p.Footprint.Contains(brain.X, brain.Z))
                     lit[p.Id] = true;
+            // Police stations are staffed all night: always lit.
+            foreach (var p in _city.Parcels)
+                if (p.Building == BuildingType.Guardhouse) lit[p.Id] = true;
+        }
         for (var i = 0; i < lit.Length; i++) _doors.SetLit(i, lit[i]);
     }
 
