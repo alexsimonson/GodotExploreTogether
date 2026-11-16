@@ -152,8 +152,9 @@ public partial class PlayerCharacter : CharacterBody3D
             RotateY(0.8f * delta);
         }
         var chaseTarget = DevChaseEnemy
-            ? SolidNeighbours().OfType<Enemies.EnemyCharacter>().OrderBy(e => e.GlobalPosition.DistanceTo(GlobalPosition)).FirstOrDefault() as Node3D
-            : DevChase ? SolidNeighbours().OfType<PlayerCharacter>().FirstOrDefault() : null;
+            ? SolidNeighbours().Select(n => n.Body).OfType<Enemies.EnemyCharacter>().OrderBy(e => e.GlobalPosition.DistanceTo(GlobalPosition)).FirstOrDefault() as Node3D
+            : DevChaseNpc ? DevNpcTarget()
+            : DevChase ? SolidNeighbours().Select(n => n.Body).OfType<PlayerCharacter>().FirstOrDefault() : null;
         if (chaseTarget is { } target)
         {
             // Walk straight at another player (tests player-vs-player collision).
@@ -199,34 +200,62 @@ public partial class PlayerCharacter : CharacterBody3D
 
     private const float BodyRadius = 0.4f;   // matches the capsule in Player.tscn
     private const float BodyHeight = 1.8f;
-    private const float PersonalSpace = BodyRadius * 2f;
 
     private static readonly bool DevChase = CmdArgs.Has("dev-chase");
     private static readonly bool DevChaseEnemy = CmdArgs.Has("dev-chase-enemy");
+    /// <summary>--dev-chase-npc: run at the nearest walking city resident, logging the closest we get to any resident.</summary>
+    private static readonly bool DevChaseNpc = CmdArgs.Has("dev-chase-npc");
+    private float _devClosestNpc = float.MaxValue;
+    private double _devNpcLogTimer;
 
-    /// <summary>Other players, and living enemies, in this instance: the bodies we keep out of horizontally.</summary>
-    private IEnumerable<CharacterBody3D> SolidNeighbours()
+    private Node3D? DevNpcTarget()
     {
-        foreach (var p in GetParent().GetChildren().OfType<PlayerCharacter>())
-            if (p != this) yield return p;
-        if (GetParent().GetParent()?.GetNodeOrNull("Enemies") is { } enemies)
-            foreach (var e in enemies.GetChildren().OfType<Enemies.EnemyCharacter>())
-                if (!e.IsDead) yield return e;
+        var npcs = SolidNeighbours().Select(n => n.Body).OfType<City.CityNpc>().ToList();
+        foreach (var n in npcs)
+            _devClosestNpc = Mathf.Min(_devClosestNpc, new Vector2(Position.X - n.Position.X, Position.Z - n.Position.Z).Length());
+        if ((_devNpcLogTimer += GetPhysicsProcessDeltaTime()) >= 2 && npcs.Count > 0)
+        {
+            _devNpcLogTimer = 0;
+            GD.Print($"[client] closest resident so far: {_devClosestNpc:0.00} m");
+        }
+        // Only someone we can run straight at (no wall or fence in between); otherwise wait for someone to come by.
+        var space = GetWorld3D().DirectSpaceState;
+        bool Clear(Node3D n) => space.IntersectRay(PhysicsRayQueryParameters3D.Create(
+            Position + Vector3.Up * 0.5f, n.Position + Vector3.Up * 0.5f, collisionMask: 1, exclude: [GetRid()])).Count == 0;
+        return npcs.Where(n => n.NetMoving && n.Position.DistanceTo(Position) < 30 && Clear(n))
+            .OrderBy(n => n.Position.DistanceTo(Position)).FirstOrDefault();
     }
 
-    /// <summary>Horizontal offset from another player and whether we overlap them vertically.</summary>
-    private (Vector2 Offset, bool SameLevel) Relative(CharacterBody3D other) =>
+    /// <summary>
+    /// Other players, living enemies and city residents in this instance: the bodies we keep out of horizontally,
+    /// with how close we may come to each (our radius plus theirs).
+    /// </summary>
+    private IEnumerable<(Node3D Body, float Space)> SolidNeighbours()
+    {
+        foreach (var p in GetParent().GetChildren().OfType<PlayerCharacter>())
+            if (p != this) yield return (p, BodyRadius * 2f);
+        var instance = GetParent().GetParent();
+        if (instance?.GetNodeOrNull("Enemies") is { } enemies)
+            foreach (var e in enemies.GetChildren().OfType<Enemies.EnemyCharacter>())
+                if (!e.IsDead) yield return (e, BodyRadius + Enemies.EnemyCharacter.Radius);
+        if (instance?.GetNodeOrNull("Npcs") is { } npcs)
+            foreach (var n in npcs.GetChildren().OfType<City.CityNpc>())
+                yield return (n, BodyRadius + Core.City.CityCrowd.NpcRadius);
+    }
+
+    /// <summary>Horizontal offset from another body and whether we overlap it vertically.</summary>
+    private (Vector2 Offset, bool SameLevel) Relative(Node3D other) =>
         (new Vector2(Position.X - other.Position.X, Position.Z - other.Position.Z),
          Mathf.Abs(Position.Y - other.Position.Y) < BodyHeight);
 
     /// <summary>Removes the part of our horizontal velocity that would take us into another player.</summary>
     private Vector3 BlockByOtherPlayers(Vector3 velocity)
     {
-        foreach (var other in SolidNeighbours())
+        foreach (var (other, space) in SolidNeighbours())
         {
             var (offset, sameLevel) = Relative(other);
             var dist = offset.Length();
-            if (!sameLevel || dist >= PersonalSpace + 0.05f || dist < 0.0001f) continue;
+            if (!sameLevel || dist >= space + 0.05f || dist < 0.0001f) continue;
             var away = offset / dist;
             var horizontal = new Vector2(velocity.X, velocity.Z);
             var into = horizontal.Dot(away);
@@ -243,16 +272,16 @@ public partial class PlayerCharacter : CharacterBody3D
     /// <summary>If we overlap another player, slide ourselves sideways out (respecting walls).</summary>
     private void SeparateFromOtherPlayers()
     {
-        foreach (var other in SolidNeighbours())
+        foreach (var (other, space) in SolidNeighbours())
         {
             var (offset, sameLevel) = Relative(other);
             var dist = offset.Length();
-            if (!sameLevel || dist >= PersonalSpace) continue;
+            if (!sameLevel || dist >= space) continue;
             // Exactly on top: split along X; between players the peer ids decide, so both clients agree.
             var otherId = other is PlayerCharacter op ? op.OwnerPeerId : 0;
             var away = dist > 0.0001f ? offset / dist : new Vector2(OwnerPeerId > otherId ? 1 : -1, 0);
-            // Another player moves itself the other half; an enemy doesn't yield, so take the whole gap.
-            var push = (other is PlayerCharacter ? (PersonalSpace - dist) * 0.5f : PersonalSpace - dist) + 0.01f;
+            // Another player moves itself the other half; enemies and residents don't yield, so take the whole gap.
+            var push = (other is PlayerCharacter ? (space - dist) * 0.5f : space - dist) + 0.01f;
             MoveAndCollide(new Vector3(away.X * push, 0, away.Y * push));
         }
     }

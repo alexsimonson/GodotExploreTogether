@@ -170,7 +170,7 @@ public sealed class InstanceManager
         var population = CityPopulation.Generate(city, city.Seed, people);
         var clock = new CityClock(startHour, 24f / Math.Max(0.1f, dayMinutes * 60f));
         var simulation = new CitySimulation { Name = "CitySimulation" };
-        simulation.Init($"city {instance.Id}", clock, population);
+        simulation.Init($"city {instance.Id}", clock, population, () => instance.Players.Values.Select(p => p.NetPosition));
         instance.Nodes.Container.AddChild(simulation);
         instance.Simulation = simulation;
 

@@ -73,7 +73,8 @@ public sealed class CityNpcBrain
     }
 
     /// <summary>Advances by <paramref name="seconds"/> of real time, at game time <paramref name="time"/>.</summary>
-    public void Update(float seconds, double time)
+    /// <param name="crowd">The others to keep out of (see <see cref="CityCrowd"/>); null walks through everyone.</param>
+    public void Update(float seconds, double time, CityCrowd? crowd = null)
     {
         var goal = DesiredGoal((float)(time % 24));
         if (!_hasGoal || goal != _goal)
@@ -86,7 +87,7 @@ public sealed class CityNpcBrain
         {
             NextStep(time);
         }
-        Walk(seconds, time);
+        Walk(seconds, time, crowd);
     }
 
     // ---- schedule ----
@@ -225,36 +226,118 @@ public sealed class CityNpcBrain
         return CurrentStreetCell();
     }
 
-    private void Walk(float seconds, double time)
+    private float _blockedFor; // seconds the current walk has been held up
+
+    /// <summary>Sidestep directions tried on the street, in degrees from straight ahead (right first).</summary>
+    private static readonly float[] Sidesteps = [40, -40, 75, -75, 110, -110];
+
+    private void Walk(float seconds, double time, CityCrowd? crowd)
     {
         var step = Speed * seconds;
         Moving = false;
-        while (step > 0 && _route.Count > 0)
+        if (_route.Count == 0)
+        {
+            _blockedFor = 0;
+            if (crowd != null) MakeRoom(seconds, crowd);
+            return;
+        }
+        while (step > 1e-5f && _route.Count > 0)
         {
             var (tx, tz) = _route.Peek();
             float dx = tx - X, dz = tz - Z;
             var dist = MathF.Sqrt(dx * dx + dz * dz);
-            if (dist > 1e-4f) Yaw = MathF.Atan2(-dx, -dz);
-            if (dist <= step)
+            if (dist <= 1e-4f)
             {
-                (X, Z) = (tx, tz);
-                step -= dist;
-                _route.Dequeue();
-                if (_route.Count == 0)
-                {
-                    Inside = _routeEndsIn;
-                    Activity = _routeLabel;
-                    _dwellUntil = time + _dwellHours;
-                }
+                ReachWaypoint(time);
+                continue;
             }
-            else
+            Yaw = MathF.Atan2(-dx, -dz);
+            var move = MathF.Min(step, dist);
+            float nx = X + dx / dist * move, nz = Z + dz / dist * move;
+            var blocker = crowd?.Check(this, X, Z, nx, nz) ?? CityCrowd.Blocker.None;
+            if (blocker == CityCrowd.Blocker.None)
             {
-                X += dx / dist * step;
-                Z += dz / dist * step;
-                step = 0;
+                (X, Z) = (nx, nz);
+                step -= move;
                 Moving = true;
+                _blockedFor = 0;
+                if (move >= dist) ReachWaypoint(time);
+                continue;
             }
+
+            // Held up.
+            _blockedFor += seconds;
+            if (_route.Count == 1 && dist < 1.0f)
+            {
+                // Someone's at the spot: stop here, beside them.
+                _route.Clear();
+                Arrive(time);
+                break;
+            }
+            if (CityPaths.IsOpenStreet(_city, X, Z) && TrySidestep(crowd!, dx / dist, dz / dist, move))
+                break;
+            if (blocker == CityCrowd.Blocker.Npc && _blockedFor > CityCrowd.GhostAfterSeconds
+                && crowd!.Check(this, X, Z, nx, nz, ignoreNpcs: true) == CityCrowd.Blocker.None)
+            {
+                // Squeeze past the other resident (only ever along the planned line, so never anywhere new).
+                (X, Z) = (nx, nz);
+                Moving = true;
+                if (move >= dist) ReachWaypoint(time);
+            }
+            break;
         }
+    }
+
+    /// <summary>On the street: step around whoever is in the way, onto open street only.</summary>
+    private bool TrySidestep(CityCrowd crowd, float ux, float uz, float move)
+    {
+        foreach (var degrees in Sidesteps)
+        {
+            // Positive angles turn right: with +Y up and yaw 0 facing -Z, right of (ux, uz) is (-uz, ux).
+            var a = degrees * MathF.PI / 180f;
+            float rx = ux * MathF.Cos(a) - uz * MathF.Sin(a), rz = ux * MathF.Sin(a) + uz * MathF.Cos(a);
+            float nx = X + rx * move, nz = Z + rz * move;
+            if (!CityPaths.IsOpenStreet(_city, nx, nz) || crowd.Check(this, X, Z, nx, nz) != CityCrowd.Blocker.None) continue;
+            (X, Z) = (nx, nz);
+            Yaw = MathF.Atan2(-rx, -rz);
+            Moving = true;
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>Standing still on top of another resident (e.g. both arrived at one spot): edge apart.</summary>
+    private void MakeRoom(float seconds, CityCrowd crowd)
+    {
+        if (crowd.Overlapping(this, X, Z) is not { } other) return;
+        float dx = X - other.X, dz = Z - other.Z;
+        var d = MathF.Sqrt(dx * dx + dz * dz);
+        if (d < 1e-3f) (dx, dz, d) = (Person.Id > other.Person.Id ? 1 : -1, 0, 1); // exactly on top: split along X
+        var push = MathF.Min(0.6f * seconds, CityCrowd.NpcRadius * 2 - d);
+        float nx = X + dx / d * push, nz = Z + dz / d * push;
+        // Only where they can certainly stand: open street, or well inside their own building.
+        var ok = Inside >= 0 ? InsideRoom(_city.Parcels[Inside], nx, nz) : CityPaths.IsOpenStreet(_city, nx, nz);
+        if (ok && crowd.Check(this, X, Z, nx, nz) == CityCrowd.Blocker.None) (X, Z) = (nx, nz);
+    }
+
+    private static bool InsideRoom(Parcel p, float x, float z)
+    {
+        const float m = 0.6f; // clear of the walls
+        var f = p.Footprint;
+        return x > f.MinX + m && x < f.MaxX - m && z > f.MinZ + m && z < f.MaxZ - m;
+    }
+
+    private void ReachWaypoint(double time)
+    {
+        _route.Dequeue();
+        if (_route.Count == 0) Arrive(time);
+    }
+
+    private void Arrive(double time)
+    {
+        Inside = _routeEndsIn;
+        Activity = _routeLabel;
+        _dwellUntil = time + _dwellHours;
     }
 
     // ---- places ----

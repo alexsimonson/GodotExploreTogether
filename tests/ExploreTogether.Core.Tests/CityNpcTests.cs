@@ -74,7 +74,7 @@ public class CityNpcTests
     private const float SecondsPerHour = 120; // the default: a 48-minute day
     private const float Step = 0.25f;
 
-    private sealed record Sim(CityLayout City, CityPopulation Population, List<CityNpcBrain> Brains, CityClock Clock);
+    private sealed record Sim(CityLayout City, CityPopulation Population, List<CityNpcBrain> Brains, CityClock Clock, CityCrowd Crowd);
 
     private static Sim Start(int size, int seed, float startHour)
     {
@@ -83,7 +83,9 @@ public class CityNpcTests
         var paths = new CityPaths(city);
         var clock = new CityClock(startHour, 1 / SecondsPerHour);
         var brains = pop.People.Select(p => new CityNpcBrain(p, city, paths, seed, clock.Time)).ToList();
-        return new Sim(city, pop, brains, clock);
+        var crowd = new CityCrowd();
+        foreach (var b in brains) crowd.Add(b);
+        return new Sim(city, pop, brains, clock, crowd);
     }
 
     /// <summary>Runs until the clock reaches the hour (game time), calling <paramref name="each"/> after every step.</summary>
@@ -92,7 +94,7 @@ public class CityNpcTests
         while (sim.Clock.Time < time)
         {
             sim.Clock.Advance(Step);
-            foreach (var b in sim.Brains) b.Update(Step, sim.Clock.Time);
+            sim.Crowd.Step(Step, sim.Clock.Time);
             each?.Invoke();
         }
     }
@@ -163,6 +165,94 @@ public class CityNpcTests
                     shopped.Add(b.Person.Id);
         });
         Assert.True(shopped.Count >= 5, $"{shopped.Count} people visited a shop");
+    }
+
+    private static float Dist(float ax, float az, float bx, float bz) =>
+        MathF.Sqrt((ax - bx) * (ax - bx) + (az - bz) * (az - bz));
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void Residents_DontStayInsideEachOther(int seed) => DontOverlap(seed);
+
+    private const int MaxOverlaps = 15; // measured: 6-7 with collision, 30-52 without
+
+    private static void DontOverlap(int seed)
+    {
+        var sim = Start(5, seed, 6.5f); // the morning rush: everyone heads out
+        var overlapFor = new Dictionary<(int, int), float>();
+        var worst = 0f;
+        var worstPair = "";
+        var overlaps = 0; // times two people ended up inside each other
+        RunUntil(sim, 6.5 + 4, () =>
+        {
+            var bs = sim.Brains;
+            for (var i = 0; i < bs.Count; i++)
+                for (var j = i + 1; j < bs.Count; j++)
+                {
+                    var key = (i, j);
+                    if (Dist(bs[i].X, bs[i].Z, bs[j].X, bs[j].Z) < CityCrowd.NpcRadius * 2 - 0.1f)
+                    {
+                        if (!overlapFor.ContainsKey(key)) overlaps++;
+                        var t = overlapFor[key] = overlapFor.GetValueOrDefault(key) + Step;
+                        if (t > worst) (worst, worstPair) = (t, $"{bs[i].Person.Name} ({bs[i].Activity}) / {bs[j].Person.Name} ({bs[j].Activity})");
+                    }
+                    else overlapFor.Remove(key);
+                }
+        });
+        // Squeezing past someone in a doorway takes a moment; nobody stays inside anyone.
+        Assert.True(worst <= CityCrowd.GhostAfterSeconds + 4, $"{worstPair} overlapped for {worst:0.0} s");
+        // Only the rare squeeze past someone in a narrow spot; walking through each other would be hundreds.
+        Assert.True(overlaps <= MaxOverlaps, $"{overlaps} overlaps in 4 hours");
+    }
+
+    [Fact]
+    public void Residents_NeverWalkIntoPlayers_EvenInADoorway()
+    {
+        var sim = Start(5, 3, 6.5f);
+        // Players: one standing in the front yard of a home (right in its residents' way), and some on the streets.
+        var home = sim.Population.People.First(p => p.Role == NpcRole.Worker).Home;
+        var doorway = CityPaths.WayIn(sim.City.Parcels[home], (0, 0))[1];
+        var players = new List<(float X, float Z)> { doorway };
+        var rng = new Random(5);
+        var paths = new CityPaths(sim.City);
+        while (players.Count < 8)
+        {
+            var (x, z) = CityLayout.CellCenter(paths.StreetCells[rng.Next(paths.StreetCells.Count)]);
+            (x, z) = (x + (float)rng.NextDouble() * 4 - 2, z + (float)rng.NextDouble() * 4 - 2);
+            if (sim.Brains.All(b => Dist(b.X, b.Z, x, z) > 2)) players.Add((x, z));
+        }
+        sim.Crowd.SetPlayers(players);
+        var closest = float.MaxValue;
+        RunUntil(sim, 6.5 + 3, () =>
+        {
+            foreach (var b in sim.Brains)
+                foreach (var (px, pz) in players)
+                    closest = MathF.Min(closest, Dist(b.X, b.Z, px, pz));
+        });
+        Assert.True(closest >= CityCrowd.NpcRadius + CityCrowd.PlayerRadius - 0.01f, $"came within {closest:0.00} m of a player");
+        // The household behind the blocked gateway is still at home (waiting), not through the player.
+        Assert.Contains(sim.Brains, b => b.Person.Home == home && sim.City.ParcelAt(b.X, b.Z)?.Id == home);
+    }
+
+    [Fact]
+    public void Residents_WalkAroundAPlayerInTheStreet()
+    {
+        var sim = Start(5, 1, 7.4f);
+        // Wait until someone is walking down a street, then stand right in front of them.
+        CityNpcBrain? walker = null;
+        RunUntil(sim, 7.4 + 0.5, () => walker ??= sim.Brains.FirstOrDefault(b =>
+            b.Moving && CityPaths.IsOpenStreet(sim.City, b.X, b.Z, 2) && b.Person.Role != NpcRole.Guard));
+        Assert.NotNull(walker);
+        var ahead = (X: walker!.X - MathF.Sin(walker.Yaw) * 1.2f, Z: walker.Z - MathF.Cos(walker.Yaw) * 1.2f);
+        sim.Crowd.SetPlayers([ahead]);
+        var (startX, startZ) = (walker.X, walker.Z);
+        var closest = float.MaxValue;
+        RunUntil(sim, sim.Clock.Time + 20 / SecondsPerHour, // 20 seconds
+            () => closest = MathF.Min(closest, Dist(walker.X, walker.Z, ahead.X, ahead.Z)));
+        Assert.True(closest >= CityCrowd.NpcRadius + CityCrowd.PlayerRadius - 0.01f, $"came within {closest:0.00} m");
+        Assert.True(Dist(walker.X, walker.Z, startX, startZ) > 4, $"{walker.Person.Name} only got {Dist(walker.X, walker.Z, startX, startZ):0.0} m");
+        Assert.True(Dist(walker.X, walker.Z, ahead.X, ahead.Z) >= CityCrowd.NpcRadius + CityCrowd.PlayerRadius - 0.01f);
     }
 
     [Fact]

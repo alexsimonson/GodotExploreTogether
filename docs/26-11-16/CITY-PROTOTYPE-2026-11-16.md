@@ -160,7 +160,18 @@ Each one ends with something runnable and a screenshot. Trespass detection is pu
      - People visit shops.
      - A deliberately broken router is caught.
    - The smoke scenario checks that 40 residents and the clock reach the client.
-   - NPCs have no collision yet. Players walk through them.
+   - **Collision** (`core/City/CityCrowd`, residents 0.35 m radius, players 0.4 m):
+     - Players can't walk into residents. Each client blocks its own player, like players and enemies.
+     - Residents don't walk into players or each other.
+     - On streets, a blocked resident sidesteps (right first, so head-on pairs pass), onto open street only.
+     - In yards, gateways and doorways they wait. After 2.5 s blocked by another resident they squeeze past along their planned line. They never pass a player: a player in a doorway makes them wait.
+     - Two people arriving at one spot stop side by side and edge apart.
+     - Tests:
+       - Overlaps in a busy 4-hour morning: 6–7 with collision, 30–52 without; the limit is 15.
+       - Residents never come within 0.75 m of a player, even one blocking their doorway.
+       - Residents walk around a player standing in their way.
+       - The no-trespass rule still holds with sidestepping.
+     - Smoke scenario `crowd` (`--dev-chase-npc`): a player running at residents is stopped at 0.73–0.74 m.
 5. **Trespass detection (players):**
    - The server tracks which parcel each player is on and flags trespass, using the access rule above. Players have no home yet, so only shops are allowed.
    - HUD indicator and log line.
@@ -176,4 +187,4 @@ Each one ends with something runnable and a screenshot. Trespass detection is pu
 - **Loops:** is 15% extra streets the right openness? Judge it from the greybox (milestone 2).
 - **Fences:** they're 0.9 m, so players can hop them (the jump reaches about 1 m). Raise them to make trespassing harder.
 - **Shops:** public all the time for now. The clock exists now, so opening hours are easy to add.
-- **Residents:** should they step aside for players (collision), and should upper floors be used?
+- **Residents:** a player standing in a doorway blocks it indefinitely. Should residents give up and go elsewhere after a while? Should upper floors be used?

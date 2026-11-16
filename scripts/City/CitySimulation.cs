@@ -8,7 +8,8 @@ namespace ExploreTogether.City;
 
 /// <summary>
 /// Server-only, one per city instance: runs the city's clock and every resident's <see cref="CityNpcBrain"/>,
-/// and writes their positions into the replicated <see cref="CityNpc"/> nodes. Brains update at 20 Hz.
+/// and writes their positions into the replicated <see cref="CityNpc"/> nodes. Brains update at 20 Hz, as one
+/// <see cref="CityCrowd"/>, so residents keep out of the players (at their latest positions) and of each other.
 /// </summary>
 public partial class CitySimulation : Node
 {
@@ -17,6 +18,8 @@ public partial class CitySimulation : Node
     public CityClock Clock { get; private set; } = null!;
     public CityPopulation Population { get; private set; } = null!;
     private readonly List<(CityNpcBrain Brain, CityNpc Node)> _npcs = new();
+    private readonly CityCrowd _crowd = new();
+    private Func<IEnumerable<Vector3>> _players = () => [];
     private double _accumulator;
     private double _logTimer, _clockBroadcastTimer;
     private string _label = "";
@@ -26,12 +29,14 @@ public partial class CitySimulation : Node
 
     private static readonly bool DevLog = CmdArgs.Has("dev-log-npcs");
 
-    public void Init(string label, CityClock clock, CityPopulation population) =>
-        (_label, Clock, Population) = (label, clock, population);
+    /// <param name="players">Where the players in this city are now.</param>
+    public void Init(string label, CityClock clock, CityPopulation population, Func<IEnumerable<Vector3>> players) =>
+        (_label, Clock, Population, _players) = (label, clock, population, players);
 
     public void Add(CityNpcBrain brain, CityNpc node)
     {
         _npcs.Add((brain, node));
+        _crowd.Add(brain);
         Apply(brain, node);
     }
 
@@ -42,11 +47,9 @@ public partial class CitySimulation : Node
         {
             _accumulator -= TickSeconds;
             Clock.Advance(TickSeconds);
-            foreach (var (brain, node) in _npcs)
-            {
-                brain.Update((float)TickSeconds, Clock.Time);
-                Apply(brain, node);
-            }
+            _crowd.SetPlayers(_players().Select(p => (p.X, p.Z)));
+            _crowd.Step((float)TickSeconds, Clock.Time);
+            foreach (var (brain, node) in _npcs) Apply(brain, node);
         }
 
         if ((_clockBroadcastTimer += delta) >= 5)

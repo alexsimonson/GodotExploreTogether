@@ -14,6 +14,7 @@
     city    - two players go through the City Gate and end up in the same generated city; its doorways, fences
               and walls match the layout; its 40 residents and its clock reach the clients; both return to the hub,
               and the empty city is closed.
+    crowd   - a player runs at walking city residents: it is stopped at arm's length, never inside them.
     gather  - one player chops the hub's trees with an axe and puts the logs into the hub storage; another
               starts a dungeon, which must get its trees (and still bake navigation around them).
   Every scenario also checks: no engine/script errors, remote players never fly off vertically,
@@ -69,6 +70,17 @@ $Scenarios = [ordered]@{
             Expect Kermit 'entered instance 1 \(hub\)' 'Kermit returns to the hub' -After 'entered instance 2 \(city\)'
             Expect Blueberry 'entered instance 1 \(hub\)' 'Blueberry returns to the hub' -After 'entered instance 2 \(city\)'
             Expect server 'closed empty city 2' 'the empty city is closed'
+        }
+    }
+    crowd = @{
+        Port   = 7946
+        Server = @('--dev-skip-proximity', '--city-seed', '4', '--city-start-hour', '9', '--dev-quit-after', '50')
+        Clients = [ordered]@{
+            Kermit = @('--dev-city', '--dev-chase-npc', '--dev-quit-after', '40')
+        }
+        Checks = {
+            Expect Kermit 'closest resident so far: 0\.[67]\d m' 'Kermit runs at a resident and is stopped at arm''s length'
+            ExpectNot Kermit 'closest resident so far: 0\.[0-5]\d m' 'Kermit never walks into a resident'
         }
     }
     coop = @{

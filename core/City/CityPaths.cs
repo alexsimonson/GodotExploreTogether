@@ -27,6 +27,22 @@ public sealed class CityPaths
         StreetCells = cells;
     }
 
+    /// <summary>
+    /// True if (x, z) is on a street cell and at least <paramref name="margin"/> from every edge it shares with a
+    /// parcel (or the city wall): somewhere a resident can step aside to without brushing a fence.
+    /// </summary>
+    public static bool IsOpenStreet(CityLayout city, float x, float z, float margin = 0.5f)
+    {
+        var c = CityLayout.CellAt(x, z);
+        if (!city.IsStreet(c)) return false;
+        var r = CityLayout.CellRect(c);
+        if (x - r.MinX < margin && !city.IsStreet(c with { X = c.X - 1 })) return false;
+        if (r.MaxX - x < margin && !city.IsStreet(c with { X = c.X + 1 })) return false;
+        if (z - r.MinZ < margin && !city.IsStreet(c with { Z = c.Z - 1 })) return false;
+        if (r.MaxZ - z < margin && !city.IsStreet(c with { Z = c.Z + 1 })) return false;
+        return true;
+    }
+
     /// <summary>The street cell in front of a parcel's gate.</summary>
     public static Cell StreetOf(Parcel p)
     {
