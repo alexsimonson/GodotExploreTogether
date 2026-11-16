@@ -24,6 +24,7 @@ public partial class ServerGame
         ["Interact"] = new(10, 40),
         ["LockDoor"] = new(5, 10),
         ["DragBody"] = new(5, 10),
+        ["CityAction"] = new(15, 30),       // struggling free is mashing a key
         ["MoveItem"] = new(10, 20),
         ["DropItem"] = new(10, 20),
         ["InstanceReady"] = new(2, 5),

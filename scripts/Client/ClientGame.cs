@@ -141,6 +141,7 @@ public partial class ClientGame : Node
         _weaponLabel.Position += new Vector2(-12, -12);
 
         SetUpCombatClient(hud);
+        SetUpStealthClient(hud);
         SetUpStorageClient();
 
         if (_devAuto)
@@ -154,7 +155,7 @@ public partial class ClientGame : Node
 
     public override void _UnhandledInput(InputEvent @event)
     {
-        if (HandleCombatInput(@event))
+        if (HandleCombatInput(@event) || HandleStealthInput(@event))
         {
             GetViewport().SetInputAsHandled();
             return;
@@ -168,10 +169,6 @@ public partial class ClientGame : Node
         {
             NoteInteraction(_focused.InteractionId);
             _session.SendInteract(_focused.InteractionId);
-        }
-        else if (@event.IsActionPressed(InputSetup.LockDoor) && _focused is City.CityDoor door && !_dungeonMenu.Visible)
-        {
-            _session.SendLockDoor(door.InteractionId);
         }
         else if (@event.IsActionPressed(InputSetup.DragBody) && !_dungeonMenu.Visible && _currentKind == InstanceKinds.City)
         {
@@ -193,6 +190,8 @@ public partial class ClientGame : Node
         CombatProcess(delta);
         StorageProcess(delta);
         CityProcess(delta);
+        StealthProcess(delta);
+        DevStealthProcess(delta);
     }
 
     public override void _PhysicsProcess(double delta) => UpdateFocus();
@@ -214,7 +213,7 @@ public partial class ClientGame : Node
                 _focused = target;
         }
         _promptLabel.Visible = _focused != null;
-        if (_focused != null) _promptLabel.Text = $"[E] {_focused.Prompt}";
+        if (_focused != null) _promptLabel.Text = _focused.Prompt.StartsWith('[') ? _focused.Prompt : $"[E] {_focused.Prompt}";
     }
 
     private void ShowNotice(string message)
@@ -420,7 +419,11 @@ public partial class ClientGame : Node
         ClearInstances();
         _cityHour = -1; // until the city's clock arrives
         _draggingName = "";
-        if (kind == InstanceKinds.City) _cityLayoutData = layoutData;
+        if (kind == InstanceKinds.City)
+        {
+            _cityLayoutData = layoutData;
+            SetUpCityLighting(Core.City.CityLayout.Import(layoutData, City.CityCatalog.Catalog));
+        }
         _inventory.CloseLoot();
         _inventory.CloseSupply();
         _dungeonMenu.Visible = false;
@@ -488,6 +491,7 @@ public partial class ClientGame : Node
             GetTree().CreateTimer(CmdArgs.GetFloat("dev-drag-delay", 2.5f)).Timeout +=
                 () => { if (_currentInstanceId == instanceId) DevDragStart(instanceId); };
         if (kind == InstanceKinds.Hub) GetTree().CreateTimer(0.5).Timeout += DevHubStations;
+        if (kind == InstanceKinds.City) DevStealthStart(instanceId);
         if (kind == InstanceKinds.City && CmdArgs.Has("dev-doors"))
             GetTree().CreateTimer(2.5).Timeout += () => { if (_currentInstanceId == instanceId) DevDoorsStart(instanceId); };
         if (kind == InstanceKinds.Hub && CmdArgs.Has("dev-city") && !_devCityDone)

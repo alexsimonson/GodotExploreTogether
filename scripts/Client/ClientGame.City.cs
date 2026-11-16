@@ -98,16 +98,32 @@ public partial class ClientGame
         ? _main.Instances.GetNodeOrNull<CityDoor>($"{InstanceFactory.NodeName(id)}/Level/Door{parcel}")
         : null;
 
-    /// <summary>(parcel, open, locked) triples: every door on arrival (applied at once), then single changes (animated).</summary>
-    private void OnDoorStates(int[] triples)
+    /// <summary>
+    /// (parcel, flags) pairs (see <see cref="CityDoors.DoorState.Flags"/>): every door on arrival (applied at once),
+    /// then single changes (animated). Flag 32 on a single change: a kick that didn't break it (the panel shudders).
+    /// The flags also say whether the building's lights are on.
+    /// </summary>
+    private void OnDoorStates(int[] pairs)
     {
-        var single = triples.Length == 3;
-        for (var i = 0; i + 2 < triples.Length; i += 3)
-            DoorNode(triples[i])?.SetState(triples[i + 1] != 0, triples[i + 2] != 0, animate: single);
-        if (single && CmdArgs.Has("dev-doors"))
-            GD.Print($"[client] door {triples[0]}: {(triples[1] != 0 ? "open" : "closed")}, {(triples[2] != 0 ? "locked" : "unlocked")}");
-        else if (!single)
-            GD.Print($"[client] doors: {triples.Length / 3} ({Enumerable.Range(0, triples.Length / 3).Count(i => triples[i * 3 + 2] != 0)} locked)");
+        var single = pairs.Length == 2;
+        for (var i = 0; i + 1 < pairs.Length; i += 2)
+        {
+            var (parcel, flags) = (pairs[i], pairs[i + 1]);
+            var state = CityDoors.DoorState.FromFlags(flags);
+            var before = _doorStates.GetValueOrDefault(parcel);
+            _doorStates[parcel] = state;
+            var node = DoorNode(parcel);
+            node?.SetState(state, animate: single);
+            if ((flags & 32) != 0) node?.Shudder();
+            if (_currentInstanceId is { } id
+                && _main.Instances.GetNodeOrNull<Node3D>($"{InstanceFactory.NodeName(id)}/Level/Lights{parcel}") is { } lights)
+                lights.Visible = state.Lit;
+            if (single && (CmdArgs.Has("dev-doors") || CmdArgs.Has("dev-breach")) && (before with { Lit = false }) != (state with { Lit = false }))
+                GD.Print($"[client] door {parcel}: {(state.Open ? "open" : "closed")}, {(state.Locked ? "locked" : "unlocked")}" +
+                         $"{(state.Broken ? ", broken" : "")}{(state.LockBroken ? ", lock shot out" : "")}{((flags & 32) != 0 ? ", kicked" : "")}");
+        }
+        if (!single)
+            GD.Print($"[client] doors: {pairs.Length / 2} ({_doorStates.Values.Count(d => d.Locked)} locked, {_doorStates.Values.Count(d => d.Lit)} lit)");
     }
 
     // ---- searching bodies ----

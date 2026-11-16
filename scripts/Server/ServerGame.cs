@@ -28,6 +28,28 @@ public sealed class PeerSession(long peer)
     /// <summary>The body this player is dragging (node name), if any, and where it was picked up.</summary>
     public string? DraggingNpc { get; set; }
     public Vector3 DragStart { get; set; }
+    /// <summary>The standing resident this player is holding (node name), if any, and since when (server time).</summary>
+    public string? HoldingNpc { get; set; }
+    public double HoldingSince { get; set; }
+    /// <summary>The resident holding this player (node name), if any, and how hard the player has struggled so far.</summary>
+    public string? HeldByNpc { get; set; }
+    public float Struggle { get; set; }
+    /// <summary>A lock being picked: the door's parcel, when it's done, and where the player stood.</summary>
+    public (int Parcel, double DoneAt, Vector3 At, int Health)? Picking { get; set; }
+    public double LastKickAt { get; set; } = -1000;
+    /// <summary>The resident held was grabbed by surprise (from behind, unseen); when they next try to wriggle free.</summary>
+    public bool HoldingSurprised { get; set; }
+    public double NextEscapeRoll { get; set; }
+    public double LastPulledAt { get; set; }
+    /// <summary>Stealth: when this player last did something violent (attacked, fired) or broke into somewhere.</summary>
+    public double LastViolentAt { get; set; } = -1000;
+    public double LastBreakingAt { get; set; } = -1000;
+    /// <summary>Stealth: last position sample (for running), when the player last made footstep noise, and the HUD alert sent.</summary>
+    public Vector3 LastSample { get; set; }
+    public double LastSampleAt { get; set; }
+    public double LastFootstepAt { get; set; }
+    public float SampledSpeed { get; set; }
+    public int AlertSent { get; set; }
     /// <summary>
     /// Item events for changes not saved yet (slot moves are saved with the next save, not immediately).
     /// They're written in the same transaction as that save, so the log always matches the saved items.
@@ -130,13 +152,14 @@ public partial class ServerGame : Node
         _session.JoinDungeonRequested += OnJoinDungeon;
         _session.MoveItemRequested += OnMoveItem;
         SetUpCombat();
+        SetUpCityActions();
         _session.DropItemRequested += OnDropItem;
         _session.LockDoorRequested += OnLockDoor;
         _session.DragBodyRequested += OnDragBody;
         _session.PlayerTransformReceived += (peer, instanceId, position, yaw) =>
         {
             // Ignore movement for an instance the player has already left.
-            if (_instances.FindPlayer(peer) is { } f && f.Instance.Id == instanceId)
+            if (_instances.FindPlayer(peer) is { } f && f.Instance.Id == instanceId && AcceptMove(peer, f.Player, position))
                 f.Player.ApplySubmittedTransform(position, yaw); // a body being dragged follows in the physics tick
         };
 
@@ -307,6 +330,7 @@ public partial class ServerGame : Node
     {
         LetGoOfBody(s, notify: true);
         var from = _instances.FindPlayer(s.Peer)?.Instance;
+        if (from?.Kind == InstanceKinds.City) OnLeavingCity(s, from);
         if (from?.Kind == InstanceKinds.Dungeon) OnLeavingDungeon(s, from, connected: true);
         _instances.RemovePeer(s.Peer);
         if (from?.Kind == InstanceKinds.Dungeon) OnLeftDungeon(from);
@@ -469,7 +493,11 @@ public partial class ServerGame : Node
     {
         GD.Print($"[server] peer {peer} disconnected");
         var from = _instances.FindPlayer(peer)?.Instance;
-        if (_sessions.TryGetValue(peer, out var leaving)) LetGoOfBody(leaving, notify: false);
+        if (_sessions.TryGetValue(peer, out var leaving))
+        {
+            LetGoOfBody(leaving, notify: false);
+            if (from?.Kind == InstanceKinds.City) OnLeavingCity(leaving, from, connected: false);
+        }
         if (_sessions.Remove(peer, out var s))
         {
             if (from?.Kind == InstanceKinds.Dungeon) OnLeavingDungeon(s, from, connected: false);
@@ -519,14 +547,17 @@ public partial class ServerGame : Node
         const string origin = "dev starter kit";
         var inv = new Inventory();
         var events = new List<ItemEvent>();
-        foreach (var id in new[] { 1515, 1337, 567, 666, 8, 22, ItemCatalog.BatId }) // Sword, Pistol, Ice/Blood Wand, Axe, Helmet, Bat
+        foreach (var id in new[] { 1515, 1337, 567, 666, 8, 22, ItemCatalog.BatId, ItemCatalog.DoubleBarrelId, ItemCatalog.PumpShotgunId })
         {
             var uid = _db.RegisterItem(id, origin);
             inv.AddItem(id, uid: uid);
             events.Add(new ItemEvent(ItemActions.Created, id, 1, uid, character.Id, character.Name, Detail: origin));
         }
-        inv.AddItems(ItemCatalog.PistolRoundsId, 30);
-        events.Add(new ItemEvent(ItemActions.Created, ItemCatalog.PistolRoundsId, 30, null, character.Id, character.Name, Detail: origin));
+        foreach (var (id, count) in new[] { (ItemCatalog.PistolRoundsId, 30), (ItemCatalog.SlugId, 20), (ItemCatalog.LockpickId, 6) })
+        {
+            inv.AddItems(id, count);
+            events.Add(new ItemEvent(ItemActions.Created, id, count, null, character.Id, character.Name, Detail: origin));
+        }
         _db.SaveItems(character.Id, inv.Occupied(), [], events);
     }
 }

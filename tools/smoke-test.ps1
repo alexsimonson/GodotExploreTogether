@@ -23,6 +23,10 @@
     supply  - a player takes items from the hub's debug supply (dev servers).
     gather  - one player chops the hub's trees with an axe and puts the logs into the hub storage; another
               starts a dungeon, which must get its trees (and still bake navigation around them).
+    breach  - in an empty city, a player walks (validated movement) to three locked doors: kicks one in, picks
+              one, and shoots one's deadbolt out with a pump shotgun; the noise is heard; the shot-out lock won't lock.
+    stealth - with residents: a player trespasses in an occupied building, another grabs a passer-by, a third fires
+              into the air. Residents speak up, the police are called and respond, and someone grabs or fights a player.
   Every scenario also checks: no engine/script errors, remote players never fly off vertically,
   every process quits on its own, and the server saves and closes the database.
 
@@ -70,7 +74,7 @@ $Scenarios = [ordered]@{
             Expect server "\('Kermit'\) entered instance 2" 'Kermit enters the city'
             Expect server "\('Blueberry'\) entered instance 2" 'Blueberry joins the same city'
             Expect Kermit 'city check: (\d+)/\1 doors, fences and walls match' 'built doorways, fences and walls match the layout'
-            Expect server 'city 2: 40 people \(\d+ civilians, \d+ workers, 6 guards\), clock 08:00' 'the city gets 40 residents and a clock'
+            Expect server 'city 2: 40 people \(\d+ civilians, \d+ workers, 6 police, \d+ shopkeepers(, \d+ security guards)?\), clock 08:00' 'the city gets 40 residents and a clock'
             Expect Kermit 'city: 40 residents in view \(.*\), \d+ walking, clock 08:\d\d' "Kermit sees all the residents, and the city's clock"
             Expect Kermit "remote player \d+ \('Blueberry', #4f86f7\) spawned" 'Kermit sees Blueberry in the city' -After 'entered instance 2 \(city\)'
             Expect Kermit 'entered instance 1 \(hub\)' 'Kermit returns to the hub' -After 'entered instance 2 \(city\)'
@@ -91,7 +95,7 @@ $Scenarios = [ordered]@{
     }
     doors = @{
         Port   = 7947
-        Server = @('--dev-skip-proximity', '--dev-starter-kit', '--city-seed', '4', '--city-start-hour', '9', '--dev-kill-npcs', '2',
+        Server = @('--dev-skip-proximity', '--dev-starter-kit', '--city-seed', '4', '--city-start-hour', '9', '--dev-kill-npcs', '2', '--dev-oblivious',
                    '--dev-quit-after', '50')
         Clients = [ordered]@{
             Kermit    = @('--dev-city', '--dev-doors', '--dev-check-city', '--dev-return-after', '18', '--dev-trade-keys',
@@ -107,14 +111,14 @@ $Scenarios = [ordered]@{
             Expect server "door \d+ unlocked by 'Kermit' \(with a key\)" 'and unlocks it'
             Expect server "door \d+ opened by 'Kermit'" 'Kermit opens the door'
             Expect server "door \d+ closed by 'Kermit'" 'and closes it'
-            Expect Kermit "notice: You don't have the key to this door." "a door won't lock or unlock without its key"
+            Expect Kermit "notice: You don't have the key to this door.|Picking the lock" "without its key, a door won't lock or unlock (with lockpicks, picking starts instead)"
             Expect server "'Blueberry' hit .* with Pistol .*killed in city" 'Blueberry shoots a resident dead'
             Expect server "'Kermit' traded \d+ key\(s\) for \d+ coins at the locksmith" 'back in the hub, the locksmith buys the keys'
         }
     }
     drag = @{
         Port   = 7948
-        Server = @('--dev-skip-proximity', '--dev-starter-kit', '--city-seed', '4', '--city-start-hour', '9', '--dev-knockout-npcs', '1',
+        Server = @('--dev-skip-proximity', '--dev-starter-kit', '--city-seed', '4', '--city-start-hour', '9', '--dev-knockout-npcs', '1', '--dev-oblivious',
                    '--city-wake-seconds', '15', '--dev-quit-after', '50')
         Clients = [ordered]@{
             Kermit    = @('--dev-city', '--dev-drag', '--dev-quit-after', '25')
@@ -232,6 +236,50 @@ $Scenarios = [ordered]@{
             Expect server "'Kermit' opened their storage \(0 slot\(s\) used\)" 'Kermit opens an empty storage'
             Expect Kermit 'storage \(1 slots used\): Log x3' 'the logs end up in the storage'
             Expect server 'dungeon 2: navigation baked in \d+ ms, 5 enemies, 5 trees' 'a new dungeon gets 5 trees'
+        }
+    }
+    breach = @{
+        Port   = 7950
+        # Nobody lives here (--city-people 0), so every door is locked and nobody interferes.
+        Server = @('--dev-skip-proximity', '--dev-starter-kit', '--city-seed', '4', '--city-start-hour', '12', '--city-people', '0', '--dev-quit-after', '110')
+        Clients = [ordered]@{
+            Kermit = @('--dev-city', '--dev-breach', '--dev-quit-after', '100')
+        }
+        Checks = {
+            Expect server "'Kermit' kicks door \d+ \(1/\d\)" 'a kick that the door holds against'
+            Expect server "'Kermit' kicks in door \d+" 'Kermit kicks a locked door in'
+            Expect Kermit 'dev-breach: door \d+ kicked in' 'the door is broken (open for good) on the client too'
+            Expect server 'noise in city 2: door kicked' 'kicking is loud'
+            Expect server "'Kermit' starts picking door \d+" 'Kermit starts picking a lock'
+            Expect Kermit 'dev-breach: door \d+ picked' 'and gets it open (a failed try breaks a pick)'
+            Expect server "'Kermit' shoots out the lock of door \d+" 'a slug through the deadbolt destroys the lock'
+            Expect Kermit 'dev-breach: door \d+ lock shot out' 'the client sees the lock gone'
+            Expect server 'noise in city 2: gunshot' 'the shot is heard'
+            Expect Kermit "notice: The lock's been shot out." "the door can't be locked again"
+            ExpectNot server 'rejected a move by peer' 'walking there is never rejected by movement validation'
+        }
+    }
+    stealth = @{
+        Port   = 7951
+        # 10:00: workers at work, civilians out. Kermit walks into an occupied office or warehouse and stays (and
+        # struggles free if grabbed); Grape grabs a passer-by and holds on; Blueberry fires into the air (and is arrested for it).
+        Server = @('--dev-skip-proximity', '--dev-starter-kit', '--city-seed', '4', '--city-start-hour', '10', '--dev-quit-after', '100')
+        Clients = [ordered]@{
+            Kermit    = @('--dev-city', '--dev-trespass', '--dev-struggle', '--dev-quit-after', '80')
+            Blueberry = @('--dev-city', '--dev-weapon', 'Pistol', '--dev-shoot-air', '--dev-shoot-delay', '4', '--dev-quit-after', '85')
+            Grape     = @('--dev-city', '--dev-grab', '--dev-quit-after', '90')
+        }
+        Checks = {
+            Expect Kermit 'dev-trespass: walking into ' 'Kermit heads into an occupied building'
+            Expect Kermit ' says: ' 'residents speak up (warnings, shouts)'
+            Expect Kermit 'alert: (Suspicious|Wanted)' "Kermit's HUD shows he's been noticed"
+            Expect server "reports .*'(Kermit|Blueberry|Grape)'" 'someone calls the police on a player'
+            Expect server 'responding' 'police respond to a report'
+            Expect server "noise in city 2: gunshot" "Blueberry's gunfire is heard across the city"
+            Expect server "'Grape' grabs .*\((Civilian|Worker)" 'Grape grabs a resident'
+            Expect server "('Grape' chokes .* unconscious|breaks free from 'Grape')" 'they pass out or wriggle free'
+            Expect server "(fires .* at|hits|grabs) '(Kermit|Blueberry|Grape)'" 'residents fight back or grab a player'
+            Expect server "arrests '(Kermit|Blueberry|Grape)'" 'the police arrest someone'
         }
     }
 }

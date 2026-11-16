@@ -19,8 +19,8 @@ The earlier reviews still apply, in particular [ITEM-SECURITY-REVIEW-2026-11-15.
 | 1 | The debug supply creates items from nothing, and `dev-run` turns it on by default | **High** if a public server inherits the flag | Open |
 | 2 | City creation has no cap, so a client can make the server run many cities at once | **Medium** (DoS) | Open |
 | 3 | Body transfers and supply takes save to the database on every move | **Medium** (DoS) | Open |
-| 4 | "From inside" door locking trusts the client's position | **Medium** | Open (inherits the movement trust) |
-| 5 | Dragging and reach checks trust the client's position | Low–Medium | Open (same root cause as 4) |
+| 4 | "From inside" door locking trusts the client's position | **Medium** | Fixed: server-side movement validation (see STEALTH-AND-ROLES.md) |
+| 5 | Dragging and reach checks trust the client's position | Low–Medium | Fixed: server-side movement validation (see STEALTH-AND-ROLES.md) |
 | 6 | The locksmith turns farmable keys into coins | Low (economy) | Open |
 | 7 | "Take all" can trip the MoveItem rate limit | Low (functional) | Open |
 | 8 | Items left on bodies vanish when the city closes | Low | Accepted, logged |
@@ -89,6 +89,8 @@ A modified client can claim a position just behind any door, then unlock it and 
 - Searching, grabbing and door interactions all use `IsNear` on `NetPosition`.
 
 **Recommendation:** the same as finding 4. Bodies have no lasting value, so the impact is limited until stealth gives body placement meaning.
+
+**Fixed (2026-11-16):** `MoveGuard` (core) caps each player's movement at their current top speed (with a small burst allowance for network hiccups), and the server rejects moves that cross a wall, fence or closed door, sending the client back. Every position-based check now sees only accepted positions. Remaining gap: a client can still choose *where* to go within its speed, e.g. hop a fence; that's ordinary play.
 
 ### 6. The locksmith turns farmable keys into coins (Low, economy)
 

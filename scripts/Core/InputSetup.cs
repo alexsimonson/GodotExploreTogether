@@ -14,6 +14,10 @@ public static class InputSetup
     public const string Interact = "interact";
     public const string LockDoor = "lock_door";
     public const string DragBody = "drag_body";
+    public const string Crouch = "crouch";
+    /// <summary>Grab a standing resident (hold on to choke them out), or struggle free when held.</summary>
+    public const string Grab = "grab";
+    public const string KickDoor = "kick_door";
 
     public static void EnsureActions()
     {
@@ -26,6 +30,9 @@ public static class InputSetup
         Add(Interact, Key.E);
         Add(LockDoor, Key.L);
         Add(DragBody, Key.G);
+        Add(Crouch, Key.C);
+        Add(Grab, Key.F);
+        Add(KickDoor, Key.K);
     }
 
     private static void Add(string action, Key key)

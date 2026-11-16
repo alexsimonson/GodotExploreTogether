@@ -51,7 +51,11 @@ public partial class ServerGame
     {
         if (city.Doors is not { } doors || parcel < 0 || parcel >= doors.Count) return;
         var name = s.Character!.Name;
-        if (doors.IsOpen(parcel))
+        if (doors.IsBroken(parcel))
+        {
+            _session.SendNotice(s.Peer, "It's hanging off its hinges.");
+        }
+        else if (doors.IsOpen(parcel))
         {
             doors.Close(parcel);
             GD.Print($"[server] door {parcel} closed by '{name}'");
@@ -75,6 +79,11 @@ public partial class ServerGame
         if (!_sessions.TryGetValue(peer, out var s) || !CityDoor.TryParse(interactionId, out var parcel)) return;
         if (!IsNear(s, interactionId, out var city) || city.Doors is not { } doors || _instances.FindPlayer(peer) is not { } found) return;
         if (city.Nodes.Level.GetNodeOrNull<CityDoor>($"Door{parcel}") is not { } door) return;
+        if (doors[parcel].Damaged)
+        {
+            _session.SendNotice(peer, doors.IsBroken(parcel) ? "It's broken: it won't close, let alone lock." : "The lock's been shot out.");
+            return;
+        }
         if (doors.IsOpen(parcel))
         {
             _session.SendNotice(peer, "Close the door first.");
@@ -83,6 +92,12 @@ public partial class ServerGame
         var inside = door.IsInside(found.Player.NetPosition);
         if (!inside && (s.Inventory == null || !doors.HasKey(s.Inventory, parcel)))
         {
+            // No key: with a lockpick, pick it (the client holds L; letting go cancels).
+            if (doors.IsLocked(parcel) && s.Inventory?.CountOf(ItemCatalog.LockpickId) > 0)
+            {
+                StartPick(s, interactionId);
+                return;
+            }
             _session.SendNotice(peer, "You don't have the key to this door.");
             GD.Print($"[server] '{s.Character!.Name}' has no key to door {parcel}");
             return;
@@ -202,6 +217,11 @@ public partial class ServerGame
     private bool HitResident(PeerSession s, ServerInstance city, CityNpc npc, int damage, string weaponName, bool knocksOut)
     {
         if (npc.NetDead) return true; // the body takes the hit
+        s.LastViolentAt = Now;
+        var at = _instances.FindPlayer(s.Peer)?.Player.NetPosition ?? npc.Position;
+        if (npc.HeldBy != 0 && _sessions.TryGetValue(npc.HeldBy, out var holder)) LetGoOfResident(holder, escaped: false, notify: true);
+        // They know who did it: they react (if they're still standing) and remember (if they come round).
+        if (knocksOut && !npc.IsDown) npc.Brain.Attacked(s.Peer, at.X, at.Z);
         if (knocksOut)
         {
             if (npc.KnockOut(WakeSeconds))
@@ -209,6 +229,7 @@ public partial class ServerGame
             return true;
         }
         var killed = npc.TakeDamage(damage);
+        if (!npc.IsDown) npc.Brain.Attacked(s.Peer, at.X, at.Z);
         GD.Print($"[server] '{s.Character!.Name}' hit {npc.NetName} ({npc.Role}) with {weaponName} for {damage} " +
                  $"({npc.NetHealth} left){(killed ? $", killed in city {city.Id}" : "")}");
         return true;
@@ -301,13 +322,14 @@ public partial class ServerGame
     {
         var city = _instances.CreateCity(CitySize, CitySize, CitySeed, CityLoops, createdBy, CityFavor,
             CityPeople, CityStartHour, CityDayMinutes);
-        // Everyone in the city sees doors open, close, lock and unlock.
+        // Everyone in the city sees doors open, close, lock, unlock, break, and the lights inside.
         city.Doors!.Changed += parcel =>
         {
             var d = city.Doors[parcel];
             foreach (var peer in city.Players.Keys)
-                _session.SendDoorStates(peer, [parcel, d.Open ? 1 : 0, d.Locked ? 1 : 0]);
+                _session.SendDoorStates(peer, [parcel, d.Flags]);
         };
+        SetUpCityStealth(city);
         // Someone who comes round can't still be dragged or searched.
         foreach (var npc in city.Npcs.Values)
             npc.WokeUp += OnResidentWokeUp;

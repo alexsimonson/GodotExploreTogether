@@ -35,14 +35,22 @@ public static class CombatRules
     public const int BloodHealPerHit = 10;
     public const int MagicMaxDamage = 50;
 
-    public static WeaponProfile? ProfileFor(ItemDef? weapon) => weapon?.Class switch
+    public static WeaponProfile? ProfileFor(ItemDef? weapon)
     {
-        ItemClass.Melee => new(ItemClass.Melee, MeleeRange, MeleeDamage, true, 0.5f),
-        ItemClass.Tool => new(ItemClass.Tool, MeleeRange, MeleeDamage, true, 0.5f),
-        ItemClass.Gun => new(ItemClass.Gun, GunRange, GunDamage, false, 0.25f),
-        ItemClass.Magic => new(ItemClass.Magic, MagicPlaceRange, MagicMaxDamage, false, 0.75f),
-        _ => null,
-    };
+        WeaponProfile? profile = weapon?.Class switch
+        {
+            ItemClass.Melee => new(ItemClass.Melee, MeleeRange, MeleeDamage, true, 0.5f),
+            ItemClass.Tool => new(ItemClass.Tool, MeleeRange, MeleeDamage, true, 0.5f),
+            ItemClass.Gun => new(ItemClass.Gun, GunRange, GunDamage, false, 0.25f),
+            ItemClass.Magic => new(ItemClass.Magic, MagicPlaceRange, MagicMaxDamage, false, 0.75f),
+            _ => null,
+        };
+        if (profile == null) return null;
+        return profile with { Range = weapon!.Range ?? profile.Range, Cooldown = weapon.Cooldown ?? profile.Cooldown };
+    }
+
+    /// <summary>How close a shotgun must be to a deadbolt for the slug to destroy it (m, from the head).</summary>
+    public const float BreachRange = 6f;
 
     /// <summary>Port of Magic.Attack's damage roll: Random.Range(0, max_damage), i.e. 0..max-1.</summary>
     public static int RollMagicDamage(Random random, int maxDamage = MagicMaxDamage) => random.Next(0, maxDamage);

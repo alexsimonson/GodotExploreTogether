@@ -38,6 +38,8 @@ public static class CityBuilder
     private static readonly Color Fence = new(0.62f, 0.46f, 0.30f);
     private static readonly Color Stone = new(0.42f, 0.40f, 0.38f);
     private static readonly Color Window = new(0.12f, 0.16f, 0.22f);
+    private static readonly Color AlleyGround = new(0.22f, 0.21f, 0.2f);
+    private static readonly Color LampPost = new(0.12f, 0.12f, 0.13f);
 
     /// <summary>Wall and roof colors per building type.</summary>
     private static (Color Wall, Color Roof) Colors(BuildingType type) => type switch
@@ -84,6 +86,13 @@ public static class CityBuilder
                 var cell = new Cell(x, z);
                 if (city.IsStreet(cell)) AddStreet(b, city, cell);
             }
+
+        foreach (var alley in city.Alleys)
+        {
+            var r = alley.Rect;
+            b.Plate(r.MinX, r.MinZ, r.MaxX, r.MaxZ, 0.015f, AlleyGround);
+        }
+        AddStreetLamps(b, level, city);
 
         foreach (var parcel in city.Parcels)
         {
@@ -164,20 +173,26 @@ public static class CityBuilder
                 if (!city.InBounds(other)) continue; // the city wall
                 var neighbor = city.ParcelOf(other);
                 if (neighbor == p) continue;
+                // An alley side: each parcel builds its own fence, along its own (narrower) bounds.
+                var alley = (p.AlleySides & side) != 0 && neighbor != null;
                 // A fence between two parcels is shared: build it once, from the lower id.
-                if (neighbor != null && neighbor.Id < p.Id) continue;
+                if (!alley && neighbor != null && neighbor.Id < p.Id) continue;
 
-                // The fence stands just inside the parcel on a street edge, centered on the line between parcels.
+                // The fence stands just inside the parcel on a street or alley edge, centered on the line between parcels.
                 var alongX = side is Sides.North or Sides.South;
-                var inset = neighbor == null ? FenceThickness / 2 : 0;
+                var inset = neighbor == null || alley ? FenceThickness / 2 : 0;
+                var edge = alley ? p.Bounds : rect;
                 var line = side switch
                 {
-                    Sides.North => rect.MaxZ - inset,
-                    Sides.South => rect.MinZ + inset,
-                    Sides.East => rect.MaxX - inset,
-                    _ => rect.MinX + inset,
+                    Sides.North => edge.MaxZ - inset,
+                    Sides.South => edge.MinZ + inset,
+                    Sides.East => edge.MaxX - inset,
+                    _ => edge.MinX + inset,
                 };
                 var (a0, a1) = alongX ? (rect.MinX, rect.MaxX) : (rect.MinZ, rect.MaxZ);
+                // On a street edge, stop where an alley begins (shared fences run on and close the alley's far end).
+                if (neighbor == null) (a0, a1) = alongX ? (Mathf.Max(a0, p.Bounds.MinX), Mathf.Min(a1, p.Bounds.MaxX))
+                                                         : (Mathf.Max(a0, p.Bounds.MinZ), Mathf.Min(a1, p.Bounds.MaxZ));
                 float? gap = neighbor == null && cell == p.FrontCell && side == p.Front
                     ? (alongX ? p.Door.X : p.Door.Z)
                     : null;
@@ -188,6 +203,20 @@ public static class CityBuilder
 
     private static void AddBuilding(Boxes b, Node3D level, Parcel p)
     {
+        // Lights inside, switched on (by the client, from the server's door states) while someone's awake at night.
+        var lights = new Node3D { Name = $"Lights{p.Id}", Visible = false };
+        level.AddChild(lights);
+        var fp = p.Footprint;
+        lights.AddChild(new OmniLight3D
+        {
+            Name = "Lamp",
+            Position = new Vector3(fp.CenterX, 2.3f, fp.CenterZ),
+            OmniRange = Mathf.Max(fp.Width, fp.Depth) / 2 + 3,
+            LightEnergy = 1.4f,
+            LightColor = new Color(1f, 0.82f, 0.55f),
+            ShadowEnabled = false,
+        });
+
         // A custom building scene: placed with its origin at the middle of the front edge, its front to the street.
         if (CityCatalog.SceneFor(p.Variant) is { } scene)
         {
@@ -227,11 +256,62 @@ public static class CityBuilder
                 b.Add(new Vector3(x, height + 0.35f, f.MaxZ - 0.2f), new Vector3(x + 0.8f, height + 0.9f, f.MaxZ + o), roof);
             }
 
-        AddWindows(b, p, floors);
+        var glow = new Boxes(lights);
+        AddWindows(b, p, floors, glow);
+        glow.Finish(GlowMaterial, "Glow");
+    }
+
+    private static readonly StandardMaterial3D GlowMaterial = new()
+    {
+        AlbedoColor = new Color(1f, 0.85f, 0.55f),
+        EmissionEnabled = true,
+        Emission = new Color(1f, 0.78f, 0.45f),
+        EmissionEnergyMultiplier = 1.6f,
+        ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+    };
+
+    private static readonly StandardMaterial3D LampHeadMaterial = new()
+    {
+        AlbedoColor = new Color(1f, 0.9f, 0.7f),
+        EmissionEnabled = true,
+        Emission = new Color(1f, 0.85f, 0.6f),
+        EmissionEnergyMultiplier = 3f,
+        ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+    };
+
+    /// <summary>
+    /// Street lamps (see <see cref="CityLighting"/>): a post with an arm (solid, part of the city mesh), and a
+    /// glowing head with a light in the "Lamps" node, which <see cref="CityDaylight"/> switches on at dusk.
+    /// </summary>
+    private static void AddStreetLamps(Boxes b, Node3D level, CityLayout city)
+    {
+        var lamps = new Node3D { Name = "Lamps", Visible = false };
+        level.AddChild(lamps);
+        const float h = CityLighting.LampHeight;
+        foreach (var (x, z) in new CityLighting(city).Lamps)
+        {
+            b.Add(new Vector3(x - 0.08f, 0, z - 0.08f), new Vector3(x + 0.08f, h + 0.1f, z + 0.08f), LampPost);
+            b.Add(new Vector3(x - 0.2f, h + 0.1f, z - 0.2f), new Vector3(x + 0.2f, h + 0.25f, z + 0.2f), LampPost, solid: false);
+            lamps.AddChild(new MeshInstance3D
+            {
+                Mesh = new BoxMesh { Size = new Vector3(0.3f, 0.08f, 0.3f), Material = LampHeadMaterial },
+                Position = new Vector3(x, h + 0.06f, z),
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+            });
+            lamps.AddChild(new OmniLight3D
+            {
+                Position = new Vector3(x, h - 0.2f, z),
+                OmniRange = CityLighting.LampRadius + 1,
+                OmniAttenuation = 1.2f,
+                LightEnergy = 2.2f,
+                LightColor = new Color(1f, 0.86f, 0.62f),
+                ShadowEnabled = false,
+            });
+        }
     }
 
     /// <summary>Dark window panes on the front and back faces (visual only), one row per floor, skipping the doorway.</summary>
-    private static void AddWindows(Boxes b, Parcel p, int floors)
+    private static void AddWindows(Boxes b, Parcel p, int floors, Boxes glow)
     {
         var f = p.Footprint;
         var alongX = p.Front is Sides.North or Sides.South;
@@ -261,6 +341,10 @@ public static class CityBuilder
                     var min = alongX ? new Vector3(mid - 0.5f, y0, lo) : new Vector3(lo, y0, mid - 0.5f);
                     var max = alongX ? new Vector3(mid + 0.5f, y0 + 1.2f, hi) : new Vector3(hi, y0 + 1.2f, mid + 0.5f);
                     b.Add(min, max, Window, solid: false);
+                    // The same pane lit from inside, just in front of the dark one (shown when the house is lit).
+                    var grow = alongX ? new Vector3(0.02f, 0.02f, 0) : new Vector3(0, 0.02f, 0.02f);
+                    var shift = alongX ? new Vector3(0, 0, outward * 0.012f) : new Vector3(outward * 0.012f, 0, 0);
+                    glow.Add(min + shift - grow, max + shift + grow, Godot.Colors.White, solid: false);
                 }
         }
     }
@@ -367,17 +451,19 @@ public static class CityBuilder
                 _st.AddVertex(v);
         }
 
-        public void Finish()
+        public void Finish(Material? material = null, string name = "Geometry")
         {
-            var material = new StandardMaterial3D
+            material ??= new StandardMaterial3D
             {
                 VertexColorUseAsAlbedo = true,
                 Roughness = 0.95f,
                 CullMode = BaseMaterial3D.CullModeEnum.Disabled,
             };
             _st.SetMaterial(material);
-            _parent.AddChild(new MeshInstance3D { Name = "Geometry", Mesh = _st.Commit() });
-            _parent.AddChild(_body);
+            _parent.AddChild(new MeshInstance3D { Name = name, Mesh = _st.Commit(), CastShadow = name == "Geometry"
+                ? GeometryInstance3D.ShadowCastingSetting.On : GeometryInstance3D.ShadowCastingSetting.Off });
+            if (_shapes > 0) _parent.AddChild(_body);
+            else _body.Free();
         }
     }
 }

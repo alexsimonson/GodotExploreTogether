@@ -13,14 +13,17 @@ public class CityPopulationTests
         var city = CityLayout.Generate(size, size, seed);
         var pop = CityPopulation.Generate(city, seed);
         Assert.Equal(CityPopulation.DefaultCount(city), pop.People.Count);
-        Assert.Equal(city.Parcels.Count(p => p.Building == BuildingType.Guardhouse) * CityPopulation.GuardsPerGuardhouse,
-            pop.People.Count(p => p.Role == NpcRole.Guard));
+        Assert.Equal(city.Parcels.Count(p => p.Building == BuildingType.Guardhouse) * CityPopulation.PolicePerStation,
+            pop.People.Count(p => p.Role == NpcRole.Police));
         Assert.Contains(pop.People, p => p.Role == NpcRole.Worker);
         Assert.Contains(pop.People, p => p.Role == NpcRole.Civilian);
+        Assert.Contains(pop.People, p => p.Role == NpcRole.Shopkeeper);
         foreach (var p in pop.People)
         {
             var home = city.Parcels[p.Home];
-            if (p.Role == NpcRole.Guard)
+            if (p.Role == NpcRole.Shopkeeper) Assert.Equal(BuildingType.Shop, city.Parcels[p.Work].Building);
+            if (p.Role == NpcRole.Security) Assert.True(CityPopulation.SecurityPosts(city.Parcels[p.Work].Building) > 0);
+            if (p.Role == NpcRole.Police)
             {
                 Assert.Equal(BuildingType.Guardhouse, home.Building);
                 Assert.Equal(p.Home, p.Work);
@@ -40,7 +43,7 @@ public class CityPopulationTests
     {
         var city = CityLayout.Generate(5, 5, 4);
         var pop = CityPopulation.Generate(city, 4);
-        foreach (var g in pop.People.Where(p => p.Role != NpcRole.Guard).GroupBy(p => p.Home))
+        foreach (var g in pop.People.Where(p => p.Role != NpcRole.Police).GroupBy(p => p.Home))
             Assert.InRange(g.Count(), 1, CityPopulation.HomeCapacity(city.Parcels[g.Key].Building));
         foreach (var g in pop.People.Where(p => p.Role == NpcRole.Worker).GroupBy(p => p.Work))
             Assert.InRange(g.Count(), 1, CityPopulation.Jobs(city.Parcels[g.Key].Building));
@@ -139,7 +142,7 @@ public class CityNpcTests
         var workers = sim.Brains.Where(b => b.Person.Role == NpcRole.Worker).ToList();
         var atWork = workers.Count(b => b.Inside == b.Person.Work);
         Assert.True(atWork >= workers.Count * 0.9, $"{atWork}/{workers.Count} workers at work at 11:30");
-        foreach (var g in sim.Brains.Where(b => b.Person.Role == NpcRole.Guard))
+        foreach (var g in sim.Brains.Where(b => b.Person.Role == NpcRole.Police))
         {
             if (g.Person.Shift == 0) Assert.Equal(-1, g.Inside);
             else Assert.Equal(g.Person.Home, g.Inside);
@@ -151,9 +154,10 @@ public class CityNpcTests
 
         // Night: everyone but the night guards is at home.
         RunUntil(sim, 24 + 3);
-        foreach (var b in sim.Brains.Where(b => !(b.Person.Role == NpcRole.Guard && b.Person.Shift == 1)))
+        foreach (var b in sim.Brains.Where(b => !(b.Person.WorksShifts && b.Person.Shift == 1)))
             Assert.True(b.Inside == b.Person.Home, $"{b.Person.Name} ({b.Person.Role}) is {b.Activity} at 03:00, inside {b.Inside}");
-        Assert.All(sim.Brains.Where(b => b.Person.Role == NpcRole.Guard && b.Person.Shift == 1), g => Assert.Equal(-1, g.Inside));
+        Assert.All(sim.Brains.Where(b => b.Person.Role == NpcRole.Police && b.Person.Shift == 1), g => Assert.Equal(-1, g.Inside));
+        Assert.All(sim.Brains.Where(b => b.Person.Role == NpcRole.Security && b.Person.Shift == 1), g => Assert.Equal(g.Person.Work, g.Inside));
     }
 
     [Fact]
@@ -245,7 +249,7 @@ public class CityNpcTests
         // Wait until someone is walking down a street, then stand right in front of them.
         CityNpcBrain? walker = null;
         RunUntil(sim, 7.4 + 0.5, () => walker ??= sim.Brains.FirstOrDefault(b =>
-            b.Moving && CityPaths.IsOpenStreet(sim.City, b.X, b.Z, 2) && b.Person.Role != NpcRole.Guard));
+            b.Moving && CityPaths.IsOpenStreet(sim.City, b.X, b.Z, 2) && b.Person.Role != NpcRole.Police));
         Assert.NotNull(walker);
         var ahead = (X: walker!.X - MathF.Sin(walker.Yaw) * 1.2f, Z: walker.Z - MathF.Cos(walker.Yaw) * 1.2f);
         sim.Crowd.SetPlayers([ahead]);

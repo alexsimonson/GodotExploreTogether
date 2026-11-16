@@ -15,8 +15,12 @@ namespace ExploreTogether.City;
 /// Either way they're down where they fell: players can search them (E), take what they carry, and drag them (G).
 /// The unconscious wake up after a while and carry on, minus whatever was taken.
 ///
-/// Replicated: NetPosition, NetYaw, NetMoving, NetActivity, NetHealth, NetDead, NetUnconscious (changes),
-/// NetName, NetRole, NetId (at spawn).
+/// Standing residents can be grabbed (F): see ServerGame.Grapple. They notice, react and remember (see
+/// <see cref="CityNpcBrain"/>'s reactions): clients show a "?" or "!" over their heads, what they say, and the
+/// weapon they've drawn.
+///
+/// Replicated: NetPosition, NetYaw, NetMoving, NetActivity, NetHealth, NetDead, NetUnconscious, NetMood, NetSpeech,
+/// NetWeapon, NetHeld (changes), NetName, NetRole, NetId (at spawn).
 /// </summary>
 public partial class CityNpc : Node3D
 {
@@ -33,6 +37,14 @@ public partial class CityNpc : Node3D
     [Export] public int NetHealth { get; set; } = MaxHealth;
     [Export] public bool NetDead { get; set; }
     [Export] public bool NetUnconscious { get; set; }
+    /// <summary>How worked up they are (<see cref="Mood"/> as an int).</summary>
+    [Export] public int NetMood { get; set; }
+    /// <summary>What they last said, as "n|text" (n changes each time, so saying the same thing twice shows twice).</summary>
+    [Export] public string NetSpeech { get; set; } = "";
+    /// <summary>The weapon they hold drawn (item id), or -1.</summary>
+    [Export] public int NetWeapon { get; set; } = -1;
+    /// <summary>In a player's grip.</summary>
+    [Export] public bool NetHeld { get; set; }
 
     /// <summary>Dead or knocked out: on the ground, searchable and draggable.</summary>
     public bool IsDown => NetDead || NetUnconscious;
@@ -49,6 +61,12 @@ public partial class CityNpc : Node3D
     public Gear Gear { get; set; } = new();
     /// <summary>The peer dragging this body, or 0.</summary>
     public long DraggedBy { get; set; }
+    /// <summary>The peer holding this (standing) resident in a grip, or 0.</summary>
+    public long HeldBy { get; set; }
+    /// <summary>The player this resident holds in a grip (peer), or 0.</summary>
+    public long Holding { get; set; }
+    /// <summary>When the brain's last speech was copied to <see cref="NetSpeech"/>.</summary>
+    public double SpokeAt { get; set; } = -1000;
     /// <summary>Server: they came round (whoever was dragging or searching them has to let go).</summary>
     public event System.Action<CityNpc>? WokeUp;
     private double _wakeIn;
@@ -58,6 +76,11 @@ public partial class CityNpc : Node3D
     private Interactable _hitbox = null!;
     private float _walkPhase, _fall;
     private string _shownLabel = "\0";
+    private Label3D? _speech;
+    private string _shownSpeech = "";
+    private double _speechLeft;
+    private MeshInstance3D? _weaponMesh;
+    private int _shownWeapon = -1;
 
     public override void _Ready()
     {
@@ -66,15 +89,31 @@ public partial class CityNpc : Node3D
         _hitbox = GetNode<Interactable>("Hitbox");
         Position = NetPosition;
         Rotation = new Vector3(0, NetYaw, 0);
+        _hitbox.InteractionId = LootId;
         if (IsDown) MarkDown();
+        else MarkStanding();
         if (Main.IsServer) return;
+
+        _speech = new Label3D
+        {
+            Name = "Speech",
+            Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
+            FontSize = 36,
+            OutlineSize = 8,
+            PixelSize = 0.005f,
+            Modulate = new Color(1f, 1f, 0.85f),
+            Position = new Vector3(0, 2.75f, 0),
+            Visible = false,
+            NoDepthTest = true,
+        };
+        AddChild(_speech);
 
         var (clothes, hat) = Look(Role, NetId);
         var torso = GetNode<MeshInstance3D>("Body/Torso");
         torso.MaterialOverride = new StandardMaterial3D { AlbedoColor = clothes, Roughness = 0.85f };
         var hatMesh = GetNode<MeshInstance3D>("Body/Hat");
         hatMesh.Visible = hat != null;
-        if (hat is { } h) hatMesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = h, Roughness = 0.5f, Metallic = Role == NpcRole.Guard ? 0.6f : 0 };
+        if (hat is { } h) hatMesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = h, Roughness = 0.5f, Metallic = Role == NpcRole.Police ? 0.6f : 0 };
         if (IsDown) _fall = 1;
     }
 
@@ -83,8 +122,12 @@ public partial class CityNpc : Node3D
     {
         switch (role)
         {
-            case NpcRole.Guard:
+            case NpcRole.Police:
                 return (new Color(0.18f, 0.24f, 0.42f), new Color(0.65f, 0.67f, 0.72f));
+            case NpcRole.Security:
+                return (new Color(0.16f, 0.16f, 0.18f), new Color(0.12f, 0.12f, 0.14f));
+            case NpcRole.Shopkeeper:
+                return (new Color(0.22f, 0.45f, 0.30f), null);
             case NpcRole.Worker:
                 Color[] work = [new(0.55f, 0.36f, 0.20f), new(0.62f, 0.45f, 0.18f), new(0.40f, 0.33f, 0.25f)];
                 return (work[id % work.Length], new Color(0.35f, 0.25f, 0.15f));
@@ -147,17 +190,26 @@ public partial class CityNpc : Node3D
     private void MarkDown()
     {
         if (Main.IsServer) Pose(1); // clients animate the fall
-        _hitbox.InteractionId = LootId;
         _hitbox.Prompt = $"Search {NetName}  ·  [G] Drag";
     }
+
+    /// <summary>Standing: can be grabbed (and, held for a while, choked unconscious).</summary>
+    private void MarkStanding() => _hitbox.Prompt = $"[F] Grab {NetName}";
 
     public override void _PhysicsProcess(double delta)
     {
         if (!Main.IsServer || !NetUnconscious || NetDead) return;
         if ((_wakeIn -= delta) > 0) return;
+        WakeNow();
+    }
+
+    /// <summary>Server: comes round now (their time is up, or someone helped them up).</summary>
+    public void WakeNow()
+    {
+        if (!NetUnconscious || NetDead) return;
         // Coming round (minus whatever was taken), they find their way back to the street.
         NetUnconscious = false;
-        _hitbox.InteractionId = "";
+        MarkStanding();
         Pose(0);
         Brain.WakeUp();
         NetActivity = Brain.Activity;
@@ -176,13 +228,13 @@ public partial class CityNpc : Node3D
 
         if (IsDown)
         {
-            if (_hitbox.InteractionId != LootId) MarkDown();
+            if (!_hitbox.Prompt.StartsWith("Search")) MarkDown();
             // Topple backwards over about half a second, and stay down.
             _fall = Mathf.Min(1f, _fall + dt * 2f);
         }
         else
         {
-            if (_hitbox.InteractionId != "") _hitbox.InteractionId = ""; // came round
+            if (_hitbox.Prompt.StartsWith("Search")) MarkStanding(); // came round
             _fall = Mathf.Max(0f, _fall - dt); // get back up
             // A little bob while walking.
             _walkPhase = NetMoving ? _walkPhase + dt * 9f : 0;
@@ -190,9 +242,59 @@ public partial class CityNpc : Node3D
         Pose(_fall);
         if (NetMoving && !IsDown) _body.Position += new Vector3(0, Mathf.Abs(Mathf.Sin(_walkPhase)) * 0.06f, 0);
 
+        var marker = IsDown ? "" : (Mood)NetMood switch
+        {
+            Mood.Curious => "?  ",
+            Mood.Suspicious => "?!  ",
+            Mood.Alarmed => "!  ",
+            Mood.Hostile => "!!  ",
+            _ => "",
+        };
         var text = NetDead ? $"{NetName}\n(dead)"
             : NetUnconscious ? $"{NetName}\n(unconscious)"
-            : $"{NetName}\n{Role.ToString().ToLowerInvariant()}, {NetActivity}" + (NetHealth < MaxHealth ? $"  ♥{NetHealth}" : "");
-        if (_shownLabel != text) _label.Text = _shownLabel = text;
+            : $"{marker}{NetName}\n{Role.ToString().ToLowerInvariant()}, {NetActivity}" + (NetHealth < MaxHealth ? $"  ♥{NetHealth}" : "");
+        if (_shownLabel != text)
+        {
+            _label.Text = _shownLabel = text;
+            _label.Modulate = (Mood)NetMood switch
+            {
+                Mood.Curious => new Color(1f, 0.95f, 0.5f),
+                Mood.Suspicious => new Color(1f, 0.75f, 0.3f),
+                Mood.Alarmed => new Color(1f, 0.5f, 0.25f),
+                Mood.Hostile => new Color(1f, 0.25f, 0.2f),
+                _ => Colors.White,
+            };
+        }
+        UpdateSpeech(dt);
+        UpdateWeapon();
+    }
+
+    private void UpdateSpeech(float dt)
+    {
+        if (_speech == null) return;
+        if (NetSpeech != _shownSpeech)
+        {
+            _shownSpeech = NetSpeech;
+            var bar = NetSpeech.IndexOf('|');
+            var said = bar >= 0 ? NetSpeech[(bar + 1)..] : NetSpeech;
+            _speech.Text = $"\u201c{said}\u201d";
+            _speech.Visible = said != "";
+            _speechLeft = 3.5;
+            if (said != "") GD.Print($"[client] {NetName} says: {said}");
+        }
+        if (_speech.Visible && (_speechLeft -= dt) <= 0) _speech.Visible = false;
+    }
+
+    private void UpdateWeapon()
+    {
+        var weapon = IsDown ? -1 : NetWeapon;
+        if (weapon == _shownWeapon) return;
+        _shownWeapon = weapon;
+        _weaponMesh?.QueueFree();
+        _weaponMesh = null;
+        if (ItemCatalog.Get(weapon) is not { } def) return;
+        _weaponMesh = WeaponLook.Create(def);
+        _weaponMesh.Position = new Vector3(0.35f, 1.05f, -0.3f);
+        _body.AddChild(_weaponMesh);
     }
 }

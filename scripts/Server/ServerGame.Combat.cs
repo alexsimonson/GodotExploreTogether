@@ -58,6 +58,8 @@ public partial class ServerGame
             ResolveAttack(attack);
         TickMagicAreas();
         TickDrags();
+        TickGrapples();
+        TickPicks();
     }
 
     private void ResolveAttack(PendingAttack attack)
@@ -84,6 +86,13 @@ public partial class ServerGame
                 }
                 SendAmmoState(s);
                 HitScan(s, found.Instance, space, origin, dir, profile, weapon!);
+                if (found.Instance.Kind == InstanceKinds.City)
+                {
+                    s.LastViolentAt = Now; // gunfire: anyone who sees it is alarmed, and everyone around hears it
+                    EmitNoise(found.Instance, new Core.City.Noise(origin.X, origin.Z,
+                        weapon!.Breaches ? Core.City.Stealth.ShotgunRadius : Core.City.Stealth.GunshotRadius,
+                        "gunshot", Core.City.Severity.Violent, s.Peer));
+                }
                 break;
 
             case ItemClass.Melee:
@@ -110,8 +119,20 @@ public partial class ServerGame
     private bool HitScan(PeerSession s, ServerInstance instance, PhysicsDirectSpaceState3D space,
         Vector3 origin, Vector3 dir, WeaponProfile profile, ItemDef weapon)
     {
-        var query = PhysicsRayQueryParameters3D.Create(origin, origin + dir * profile.Range, collisionMask: 1 | 8);
+        var query = PhysicsRayQueryParameters3D.Create(origin, origin + dir * profile.Range, collisionMask: 1 | 8,
+            exclude: _instances.FindPlayer(s.Peer) is { } me ? [me.Player.GetRid()] : null);
         var hit = space.IntersectRay(query);
+        if (profile.Class == ItemClass.Gun)
+        {
+            var end = hit.Count > 0 ? (Vector3)hit["position"] : origin + dir * Mathf.Min(profile.Range, 200);
+            var muzzle = origin + dir * 0.5f + new Vector3(0, -0.25f, 0);
+            foreach (var peer in instance.Players.Keys) _session.SendShot(peer, muzzle, end);
+        }
+        if (hit.Count > 0 && hit["collider"].AsGodotObject() is City.CityDeadbolt bolt)
+        {
+            if (weapon.Breaches) BreakDoorLock(s, instance, bolt.Door, origin.DistanceTo((Vector3)hit["position"]));
+            return false;
+        }
         if (hit.Count > 0 && hit["collider"].AsGodotObject() is Node { } body && body.GetParent() is City.CityNpc npc)
             return HitResident(s, instance, npc, profile.Damage, weapon.Name, weapon.KnocksOut);
         if (hit.Count == 0 || hit["collider"].AsGodotObject() is not EnemyCharacter enemy) return false;

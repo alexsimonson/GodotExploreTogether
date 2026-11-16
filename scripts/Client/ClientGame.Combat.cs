@@ -229,8 +229,27 @@ public partial class ClientGame
 
     // ---- dev ----
 
+    private double _devCityTime;
+    private int _devAirShots;
+
+    /// <summary>--dev-shoot-air: in a city, after --dev-shoot-delay seconds, fire 8 shots straight up, 2 s apart.</summary>
+    private void DevShootAir(double delta)
+    {
+        if (!CmdArgs.Has("dev-shoot-air") || _currentKind != InstanceKinds.City || _devAirShots >= 8) return;
+        var before = _devCityTime;
+        _devCityTime += delta;
+        var start = CmdArgs.GetFloat("dev-shoot-delay", 0);
+        if (_devCityTime < start || (int)((before - start) / 2) == (int)((_devCityTime - start) / 2) && before >= start) return;
+        if (EquippedWeapon?.Class != ItemClass.Gun) return;
+        if (_magazine == 0) { _session.SendReload(); return; }
+        _devAirShots++;
+        GD.Print($"[client] dev-shoot-air: shot {_devAirShots}");
+        _session.SendAttack(Vector3.Up);
+    }
+
     private void DevFight(double delta)
     {
+        DevShootAir(delta);
         if (!CmdArgs.Has("dev-fight") || _currentKind is not (InstanceKinds.Dungeon or InstanceKinds.City)
             || PlayerCharacter.Local is not { } me) return;
         if ((_devFightTimer -= delta) > 0) return;

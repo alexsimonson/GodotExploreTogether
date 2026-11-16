@@ -49,6 +49,7 @@ public partial class NetSession : Node
     public event Action<long, Vector3>? AttackRequested;                // aim direction (camera forward)
     public event Action<long, int, bool, Vector3>? AimReceived;         // instance id, aiming?, ghost position
     public event Action<long>? ReloadRequested;
+    public event Action<long, string, string>? CityActionRequested;     // action, target (see ServerGame.CityActions)
 
     /// <summary>
     /// Server only: decides whether a request from a client is handled (rate limiting). Called with the sender's
@@ -81,6 +82,11 @@ public partial class NetSession : Node
     public event Action<int, int>? AmmoReceived;                         // magazine, reserve
     public event Action<Vector3, int, float, Color>? MagicAreaReceived;  // position, magic style, lifetime, caster's color
     public event Action<string>? CharacterLostReceived;                  // hardcore death: back to character select
+    public event Action<Vector3>? PositionCorrectionReceived;            // the server rejected our movement: go back here
+    public event Action<string, float>? ProgressReceived;                // a timed action (label, seconds; 0 = cancelled)
+    public event Action<string, string>? GrabStateReceived;              // "holding"/"held"/"" and the other one's name
+    public event Action<Vector3, Vector3>? ShotReceived;                 // a gunshot: muzzle and where it hit
+    public event Action<int, string>? AlertReceived;                     // how aware the city is of us (0..3), and why
 
     // =========================================================== client -> server
 
@@ -104,6 +110,15 @@ public partial class NetSession : Node
     public void SendAttack(Vector3 aimDirection) => RpcId(1, MethodName.Attack, aimDirection);
 
     public void SendReload() => RpcId(1, MethodName.Reload);
+
+    /// <summary>City actions: kick a door, pick a lock, grab or let go, struggle, crouch (see ServerGame.CityActions).</summary>
+    public void SendCityAction(string action, string target) => RpcId(1, MethodName.CityAction, action, target);
+
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void CityAction(string action, string target)
+    {
+        if (Accept()) CityActionRequested?.Invoke(Multiplayer.GetRemoteSenderId(), action, target);
+    }
 
     /// <summary>Where this player's magic ghost is (or that they stopped aiming), so others can see it.</summary>
     public void SendAim(int instanceId, bool aiming, Vector3 position) =>
@@ -235,6 +250,27 @@ public partial class NetSession : Node
         RpcId(peer, MethodName.MagicArea, position, style, lifetime, color);
 
     public void SendCharacterLost(long peer, string message) => RpcId(peer, MethodName.CharacterLost, message);
+
+    public void SendPositionCorrection(long peer, Vector3 position) => RpcId(peer, MethodName.PositionCorrection, position);
+    public void SendProgress(long peer, string label, float seconds) => RpcId(peer, MethodName.Progress, label, seconds);
+    public void SendGrabState(long peer, string state, string other) => RpcId(peer, MethodName.GrabState, state, other);
+    public void SendShot(long peer, Vector3 from, Vector3 to) => RpcId(peer, MethodName.Shot, from, to);
+    public void SendAlert(long peer, int level, string reason) => RpcId(peer, MethodName.Alert, level, reason);
+
+    [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void PositionCorrection(Vector3 position) => PositionCorrectionReceived?.Invoke(position);
+
+    [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void Progress(string label, float seconds) => ProgressReceived?.Invoke(label, seconds);
+
+    [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void GrabState(string state, string other) => GrabStateReceived?.Invoke(state, other);
+
+    [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.UnreliableOrdered)]
+    private void Shot(Vector3 from, Vector3 to) => ShotReceived?.Invoke(from, to);
+
+    [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void Alert(int level, string reason) => AlertReceived?.Invoke(level, reason);
 
     /// <summary>The player's whole inventory as (slot, item id, count, data) quads, plus gear item ids and data per slot.</summary>
     public void SendInventory(long peer, int[] quads, int[] gear, int[] gearData) =>

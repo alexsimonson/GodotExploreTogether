@@ -80,8 +80,14 @@ public class CityLayoutTests
             foreach (var p in city.Parcels)
             {
                 Assert.InRange(p.Cells.Count, 1, 3);
+                // The cells' area, less half an alley's width along each alley side.
                 var b = p.Bounds;
-                Assert.Equal(p.Cells.Count * CityLayout.CellSize * CityLayout.CellSize, b.Width * b.Depth, 3);
+                var sides = new[] { Sides.North, Sides.South, Sides.East, Sides.West }.Count(s => (p.AlleySides & s) != 0);
+                Assert.Equal(1, p.Cells.Count == 1 || sides == 0 ? 1 : 0); // alleys only between single lots
+                var cut = CityLayout.AlleyWidth / 2;
+                var bw = CityLayout.CellSize - cut * new[] { Sides.East, Sides.West }.Count(s => (p.AlleySides & s) != 0);
+                var bd = CityLayout.CellSize - cut * new[] { Sides.North, Sides.South }.Count(s => (p.AlleySides & s) != 0);
+                Assert.Equal(sides == 0 ? p.Cells.Count * CityLayout.CellSize * CityLayout.CellSize : bw * bd, b.Width * b.Depth, 2);
             }
     }
 

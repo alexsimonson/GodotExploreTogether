@@ -25,11 +25,16 @@ public sealed class CityClock(float startHour, float hoursPerSecond)
 /// Days (each person shifts their times by up to ±45 minutes):
 /// - Civilian: home until 8, errands (shops and walks) until 12, home for lunch, errands 13 to 18, home.
 /// - Worker: home until 7, at work 7 to 17, errands until 18:30, home.
-/// - Guard: patrols streets near the guardhouse on shift (day 6 to 18, or night), rests in the guardhouse off shift.
+/// - Shopkeeper: home until 7:30, keeps the shop 7:30 to 18:30, home.
+/// - Police: patrol streets near the station on shift (day 6 to 18, or night), rest in the station off shift.
+/// - Security: on watch at their post on shift (day or night), at home off shift.
+///
+/// Trouble interrupts the day (see CityNpcBrain.Reactions.cs and <see cref="Stealth"/>): while reacting, the
+/// schedule waits, and afterwards they find their way back to it.
 ///
 /// Yaw follows the game's convention: a character faces -Z at yaw 0, so walking along (dx, dz) is atan2(-dx, -dz).
 /// </summary>
-public sealed class CityNpcBrain
+public sealed partial class CityNpcBrain
 {
     public Person Person { get; }
     public float X { get; private set; }
@@ -69,6 +74,7 @@ public sealed class CityNpcBrain
     private readonly record struct Waypoint(float X, float Z, int Door = -1, bool Entering = false)
     {
         public static implicit operator Waypoint((float X, float Z) p) => new(p.X, p.Z);
+        public static implicit operator Waypoint(NavPoint p) => new(p.X, p.Z, p.Door, p.Entering);
         public void Deconstruct(out float x, out float z) => (x, z) = (X, Z);
     }
 
@@ -91,7 +97,7 @@ public sealed class CityNpcBrain
         _lane = ((float)(_random.NextDouble() * 2 - 1) * CityPaths.MaxLaneOffset,
                  (float)(_random.NextDouble() * 2 - 1) * CityPaths.MaxLaneOffset);
         _offset = (float)(_random.NextDouble() * 1.5 - 0.75);
-        Speed = person.Role switch { NpcRole.Guard => 1.5f, NpcRole.Worker => 1.4f, _ => 1.25f };
+        Speed = person.Role switch { NpcRole.Police or NpcRole.Security => 1.5f, NpcRole.Worker or NpcRole.Shopkeeper => 1.4f, _ => 1.25f };
         PlaceAtStart(time);
     }
 
@@ -99,8 +105,16 @@ public sealed class CityNpcBrain
     /// <param name="crowd">The others to keep out of (see <see cref="CityCrowd"/>); null walks through everyone.</param>
     public void Update(float seconds, double time, CityCrowd? crowd = null)
     {
+        _clockSeconds += seconds;
         if (IsDown) return;
         (_crowd, _doors) = (crowd, crowd?.Doors);
+        if (Held) return;
+        if (_act != Act.None)
+        {
+            React(seconds, time);
+            Walk(seconds, time, crowd);
+            return;
+        }
         if (_recovering)
         {
             if (_route.Count > 0)
@@ -135,11 +149,19 @@ public sealed class CityNpcBrain
         if (h >= 24) h -= 24;
         switch (p.Role)
         {
-            case NpcRole.Guard:
+            case NpcRole.Police:
                 var dayShift = h >= 6 && h < 18;
                 return dayShift == (p.Shift == 0)
                     ? new Goal(GoalKind.Patrol, -1, "patrolling")
                     : new Goal(GoalKind.Stay, p.Home, h < 6 || h >= 22 ? "sleeping" : "resting");
+            case NpcRole.Security:
+                var onDuty = (h >= 6 && h < 18) == (p.Shift == 0);
+                if (onDuty) return new Goal(GoalKind.Stay, p.Work, "on watch");
+                return new Goal(GoalKind.Stay, p.Home, h < 6 || h >= 22 || p.Shift == 1 && h >= 7 && h < 14 ? "sleeping" : "at home");
+            case NpcRole.Shopkeeper:
+                if (h < 7.5f) return new Goal(GoalKind.Stay, p.Home, h < 6.5f ? "sleeping" : "at home");
+                if (h < 18.5f) return new Goal(GoalKind.Stay, p.Work, "keeping shop");
+                return new Goal(GoalKind.Stay, p.Home, h >= 22 ? "sleeping" : "at home");
             case NpcRole.Worker:
                 if (h < 7) return new Goal(GoalKind.Stay, p.Home, h < 6 ? "sleeping" : "at home");
                 if (h < 17) return new Goal(GoalKind.Stay, p.Work, "working");
@@ -275,7 +297,7 @@ public sealed class CityNpcBrain
 
     private void Walk(float seconds, double time, CityCrowd? crowd)
     {
-        var step = Speed * seconds;
+        var step = Speed * _pace * seconds;
         Moving = false;
         if (_route.Count == 0)
         {
@@ -288,9 +310,12 @@ public sealed class CityNpcBrain
             var next = _route.Peek();
             if (next.Door >= 0 && _doors != null && !_doorReady)
             {
-                if (!OpenDoor(next))
+                var result = OpenDoor(next, time);
+                if (result == DoorResult.Wait) break;
+                if (result == DoorResult.Blocked)
                 {
-                    TurnBack(next, time);
+                    if (_act != Act.None) DoorBlocked(next.Door, time);
+                    else TurnBack(next, time);
                     break;
                 }
                 _doorReady = true;
@@ -392,24 +417,41 @@ public sealed class CityNpcBrain
     private bool HasKey(int parcel) =>
         HasKeyTo?.Invoke(parcel) ?? (parcel == Person.Home || parcel == Person.Work);
 
-    /// <summary>Opens the door on the way (unlocking it with their key, or from inside). False if they can't.</summary>
-    private bool OpenDoor(Waypoint through)
+    private enum DoorResult { Open, Wait, Blocked }
+    private double _nextKick;
+
+    /// <summary>
+    /// Opens the door on the way (unlocking it with their key, or from inside). Police responding to trouble kick
+    /// in a door they can't unlock (a kick every <see cref="Breaching.KickCooldown"/> s, waiting meanwhile).
+    /// </summary>
+    private DoorResult OpenDoor(Waypoint through, double time)
     {
         var door = through.Door;
-        if (_doors!.IsOpen(door)) return true;
+        if (_doors!.IsOpen(door)) return DoorResult.Open;
         _relock = false;
         if (_doors.IsLocked(door))
         {
-            if (through.Entering && !HasKey(door)) return false; // locked out
+            if (through.Entering && !HasKey(door))
+            {
+                if (_act == Act.None || Person.Role != NpcRole.Police) return DoorResult.Blocked; // locked out
+                if (_clockSeconds < _nextKick) return DoorResult.Wait;
+                _nextKick = _clockSeconds + Breaching.KickCooldown * 1.5;
+                var p = _city.Parcels[door];
+                var broke = _doors.Kick(door, Breaching.KicksToBreak(p.Building));
+                Say("Police! Open up!");
+                Emit(NpcIntent.MakeNoise(p.Door.X, p.Door.Z, broke ? Stealth.BreakRadius : Stealth.KickRadius, "door kicked in", Severity.Suspicious));
+                return broke ? DoorResult.Open : DoorResult.Wait;
+            }
             _relock = !through.Entering; // let themselves out: the latch locks again behind them
             _doors.Unlock(door);
         }
-        return _doors.Open(door);
+        return _doors.Open(door) ? DoorResult.Open : DoorResult.Blocked;
     }
 
     /// <summary>Through the door: close it (unless a player stands in the way), and lock up when appropriate.</summary>
     private void CloseBehind(Waypoint through, double time)
     {
+        if (_act != Act.None) return; // in a hurry: doors stay as they are
         var door = through.Door;
         var p = _city.Parcels[door];
         if (_crowd?.PlayerNear(p.Door.X, p.Door.Z, 1.6f) == true) return; // leave it open rather than shut it on someone
@@ -447,6 +489,8 @@ public sealed class CityNpcBrain
     public void KnockOut()
     {
         if (IsDown) return;
+        EndReaction();
+        Held = false;
         Unconscious = true;
         Moving = false;
         _route.Clear();
@@ -476,11 +520,14 @@ public sealed class CityNpcBrain
         _routeLabel = "dazed";
         _dwellHours = 0;
         _recovering = true;
+        ReactToWaking();
     }
 
     /// <summary>Killed: drops where they stand and does nothing more.</summary>
     public void Die()
     {
+        EndReaction();
+        Held = false;
         Dead = true;
         Unconscious = false;
         Moving = false;

@@ -30,7 +30,10 @@ public sealed record ItemDef(
     bool KnocksOut = false,    // blunt (new): a hit knocks a city resident out instead of hurting them
     int LootCount = 1,         // how many make up one pickup when generated as loot
     bool Retired = false,      // no longer generated as loot, but still loads from saves (never delete an id)
-    ToolRole? Role = null)     // tools only: which resources it can gather from
+    ToolRole? Role = null,     // tools only: which resources it can gather from
+    bool Breaches = false,     // guns (new): a shot at a door's deadbolt destroys the lock (shotgun slugs)
+    float? Range = null,       // overrides the class's attack range (m)
+    float? Cooldown = null)    // overrides the class's time between attacks (s): a pump-action is slow
 {
     /// <summary>The original's valid_equipment_types: Equipment and every Weapon subclass.</summary>
     public bool IsEquipment => Class != ItemClass.Item;
@@ -69,6 +72,13 @@ public static class ItemCatalog
     /// dungeon enemies they're ordinary melee weapons.</summary>
     public const int BatId = 1701, ConcreteBlockId = 1702;
 
+    /// <summary>New: picks a locked city door (hold L without the key). Breaks when an attempt fails.</summary>
+    public const int LockpickId = 1703;
+
+    /// <summary>New: shotguns firing 12-gauge slugs. Heavy damage at short range, and a slug through a door's
+    /// deadbolt destroys the lock (the door can then be opened, but never locked again).</summary>
+    public const int DoubleBarrelId = 1704, PumpShotgunId = 1705, SlugId = 1706;
+
     public static readonly IReadOnlyList<ItemDef> All =
     [
         new(0, "Default Item", "Placeholder really", true, "default_item.png"),
@@ -98,6 +108,14 @@ public static class ItemCatalog
             KnocksOut: true),
         new(ConcreteBlockId, "Concrete Block", "Heavy and blunt. Knocks people out cold", false, "", ItemClass.Melee, EquipmentType.Weapon,
             WeaponStyle.Melee, 10, KnocksOut: true),
+        new(LockpickId, "Lockpick", "Opens a lock without its key, given time. Breaks if you slip", true, "", LootCount: 3),
+        new(DoubleBarrelId, "Double-Barrel Shotgun", "Two quick shots, then reload. Slugs blow out door locks", false, "",
+            ItemClass.Gun, EquipmentType.Weapon, WeaponStyle.Gun, 10, MagazineSize: 2, AmmoItemId: SlugId,
+            Breaches: true, Range: 40, Cooldown: 0.3f),
+        new(PumpShotgunId, "Pump Shotgun", "Six slugs, pumped between shots. Slugs blow out door locks", false, "",
+            ItemClass.Gun, EquipmentType.Weapon, WeaponStyle.Gun, 10, MagazineSize: 6, AmmoItemId: SlugId,
+            Breaches: true, Range: 40, Cooldown: 0.9f),
+        new(SlugId, "12 Gauge Slug", "Shotgun ammunition: one heavy lead slug", true, "", LootCount: 6),
     ];
 
     private static readonly Dictionary<int, ItemDef> ById = All.ToDictionary(i => i.Id);

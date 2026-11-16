@@ -27,10 +27,17 @@ public partial class PlayerCharacter : CharacterBody3D
     /// <summary>Server-validated magic aim, replicated so other players see this player's ghost pentagram.</summary>
     [Export] public bool AimActive { get; set; }
     [Export] public Vector3 AimPoint { get; set; }
+    /// <summary>Sneaking (C held): slower, lower, harder for city residents to spot and hear.</summary>
+    [Export] public bool NetCrouching { get; set; }
+    /// <summary>The equipped weapon's item id (-1: none), so everyone sees what a player is holding.</summary>
+    [Export] public int NetWeapon { get; set; } = -1;
     private Node3D? _aimGhost;
+    private MeshInstance3D? _weaponMesh;
+    private int _shownWeapon = -1;
+    private float _crouchBlend;
 
-    private const float WalkSpeed = 5f;
-    private const float SprintSpeed = 8f;
+    private const float WalkSpeed = Core.Net.PlayerSpeeds.Walk;
+    private const float SprintSpeed = Core.Net.PlayerSpeeds.Sprint;
     private const float JumpVelocity = 4.5f;
     private const float MouseSensitivity = 0.0025f;
     private const float RemoteSmoothing = 15f;
@@ -45,11 +52,23 @@ public partial class PlayerCharacter : CharacterBody3D
     // Dev/test helpers (see Main for the args).
     private static readonly bool DevAutowalk = CmdArgs.Has("dev-autowalk");
 
-    /// <summary>Local player: dragging a body (the server says so). Slow walk, no sprinting or jumping.</summary>
+    /// <summary>Local player: dragging a body or holding someone (the server says so). Slow walk, no sprinting or jumping.</summary>
     public bool Dragging { get; set; }
+
+    /// <summary>Local player: held by a resident (the server says so). Barely moving until they break free.</summary>
+    public bool Held { get; set; }
+
+    /// <summary>Server: checks this player's submitted movement (reset whenever the server places them).</summary>
+    public Core.Net.MoveGuard? Guard { get; set; }
+
+    /// <summary>Local player: crouch changed (the client tells the server, which replicates it).</summary>
+    public event System.Action<bool>? CrouchChanged;
 
     /// <summary>Dev automation: walk straight ahead (e.g. dragging a body somewhere).</summary>
     public bool DevWalkForward { get; set; }
+
+    /// <summary>Dev automation: walk straight to this point (cleared on arrival).</summary>
+    public Vector3? DevWalkTarget { get; set; }
     private static readonly bool DevLog = CmdArgs.Has("dev-log");
     private double _devLogTimer;
 
@@ -168,12 +187,32 @@ public partial class PlayerCharacter : CharacterBody3D
             input = new Vector2(0, -1);
         }
 
-        if (captured && Input.IsActionJustPressed(InputSetup.Jump) && IsOnFloor() && !Dragging)
+        var crouch = captured && Input.IsActionPressed(InputSetup.Crouch) && !Held;
+        if (crouch != NetCrouching)
+        {
+            NetCrouching = crouch;
+            CrouchChanged?.Invoke(crouch);
+        }
+        UpdateCrouchPose(delta);
+
+        if (captured && Input.IsActionJustPressed(InputSetup.Jump) && IsOnFloor() && !Dragging && !Held && !crouch)
             velocity.Y = JumpVelocity;
 
-        var speed = Dragging ? Core.City.BodyDrag.DragSpeed
+        var speed = Held ? Core.Net.PlayerSpeeds.Held
+            : Dragging ? Core.Net.PlayerSpeeds.Dragging
+            : crouch ? Core.Net.PlayerSpeeds.Crouch
             : captured && Input.IsActionPressed(InputSetup.Sprint) ? SprintSpeed : WalkSpeed;
         if (DevWalkForward) input = new Vector2(0, -1);
+        if (DevWalkTarget is { } walkTo)
+        {
+            var flat = new Vector3(walkTo.X, Position.Y, walkTo.Z);
+            if (flat.DistanceTo(Position) < 0.25f) DevWalkTarget = null;
+            else
+            {
+                LookAt(flat);
+                input = new Vector2(0, -1);
+            }
+        }
         var direction = (Transform.Basis * new Vector3(input.X, 0, input.Y)).Normalized();
         velocity.X = direction.X * speed;
         velocity.Z = direction.Z * speed;
@@ -317,9 +356,37 @@ public partial class PlayerCharacter : CharacterBody3D
             : _aimGhost.GlobalPosition.Lerp(target, 1f - Mathf.Exp(-20f * delta));
     }
 
+    /// <summary>Crouching lowers the camera (own player) or squats the body (others), over a fifth of a second.</summary>
+    private void UpdateCrouchPose(float delta)
+    {
+        _crouchBlend = Mathf.MoveToward(_crouchBlend, NetCrouching ? 1 : 0, delta * 5);
+        if (IsLocal) _head.Position = new Vector3(0, 1.6f - 0.6f * _crouchBlend, 0);
+        else
+        {
+            var body = GetNode<Node3D>("Body");
+            body.Scale = new Vector3(1, 1 - 0.35f * _crouchBlend, 1);
+            body.Position = new Vector3(0, 0.9f * (1 - 0.35f * _crouchBlend), 0);
+        }
+    }
+
+    /// <summary>Others see the weapon a player holds: a simple shape at the right hand, sized by kind.</summary>
+    private void UpdateWeaponMesh()
+    {
+        if (_shownWeapon == NetWeapon) return;
+        _shownWeapon = NetWeapon;
+        _weaponMesh?.QueueFree();
+        _weaponMesh = null;
+        if (Core.Items.ItemCatalog.Get(NetWeapon) is not { } def) return;
+        _weaponMesh = WeaponLook.Create(def);
+        _weaponMesh.Position = new Vector3(0.38f, 1.0f, -0.3f);
+        AddChild(_weaponMesh);
+    }
+
     private void SmoothRemote(float delta)
     {
         UpdateRemoteAimGhost(delta);
+        UpdateCrouchPose(delta);
+        UpdateWeaponMesh();
         if (Position.DistanceTo(NetPosition) > RemoteSnapDistance)
             Position = NetPosition;
         else
@@ -331,7 +398,7 @@ public partial class PlayerCharacter : CharacterBody3D
     /// <summary>Server: applies the owner's submitted transform (see NetSession.SendPlayerTransform).</summary>
     public void ApplySubmittedTransform(Vector3 position, float yaw)
     {
-        // Movement validation (speed checks, etc.) belongs here later.
+        // ServerGame validated it first (MoveGuard and a wall check).
         NetPosition = position;
         NetYaw = yaw;
         Position = position;

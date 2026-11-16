@@ -32,7 +32,7 @@ public class CityDoorTests
         Assert.False(doors.IsLocked(3));
         doors.Close(3);
         Assert.Equal(4, changes); // lock, unlock, open, close
-        Assert.Equal([3, 0, 0], doors.Export().Skip(9).Take(3));
+        Assert.Equal([3, 0], doors.Export().Skip(6).Take(2)); // (parcel, flags): closed, unlocked
     }
 
     [Fact]
@@ -61,12 +61,10 @@ public class NpcLoadoutTests
             var keys = inv.slots.Where(s => s.itemId == ItemCatalog.KeyId).Select(s => doors.ParcelForKey(s.data!.Value)).ToList();
             Assert.All(keys, k => Assert.True(k == person.Home || k == person.Work, $"{person.Name} has a key to {k}"));
             Assert.NotNull(gear.slots[(int)EquipmentType.Torso].itemId);
-            if (person.Role == NpcRole.Guard)
-            {
-                Assert.Equal(22, gear.slots[(int)EquipmentType.Head].itemId); // helmet
-                Assert.NotNull(gear.EquippedWeapon);
-            }
-            else Assert.Null(gear.EquippedWeapon);
+            if (person.Role == NpcRole.Police) Assert.Equal(22, gear.slots[(int)EquipmentType.Head].itemId); // helmet
+            if (person.Role is NpcRole.Police or NpcRole.Security) Assert.NotNull(gear.EquippedWeapon);
+            else if (!person.Has(NpcTraits.Armed)) Assert.Null(gear.EquippedWeapon);
+            if (gear.EquippedWeapon is { Class: ItemClass.Gun } gun) Assert.Equal(gun.MagazineSize, gear.WeaponSlot.data); // loaded
         }
     }
 }

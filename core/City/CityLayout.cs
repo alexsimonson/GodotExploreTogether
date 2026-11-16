@@ -57,6 +57,8 @@ public sealed class Parcel
     public (float X, float Z) Origin { get; internal set; }
     /// <summary>Spots inside the building where people stand (world x, z).</summary>
     public IReadOnlyList<(float X, float Z)> Spots { get; internal set; } = [];
+    /// <summary>Sides with an alley along them: the parcel's fence there stands back from the cell edge.</summary>
+    public Sides AlleySides { get; internal set; }
 
     /// <summary>The building's rotation about +Y in radians: its local +Z (front) turned toward the street.</summary>
     public float Yaw => Front switch
@@ -84,9 +86,16 @@ public sealed class Parcel
         return (Origin.X + ax * localX + ox * localZ, Origin.Z + az * localX + oz * localZ);
     }
 
-    /// <summary>Open to anyone (later: only while open).</summary>
+    /// <summary>Open to anyone while it's open for business (see <see cref="Stealth"/> for opening hours).</summary>
     public bool IsPublic => Building == BuildingType.Shop;
 }
+
+/// <summary>
+/// A narrow, unlit passage between two neighboring lots (dense, commercial areas only): public ground, but
+/// nobody walks there and no street lamp lights it, so it's where people go to not be seen.
+/// <see cref="Mouths"/> are points on the street just outside each open end.
+/// </summary>
+public sealed record Alley(GroundRect Rect, IReadOnlyList<(float X, float Z)> Mouths);
 
 /// <summary>
 /// A city made from the original maze: each maze node is a 36 m tile of 3×3 cells (12 m). The tile's
@@ -103,7 +112,7 @@ public sealed class CityLayout
     public const int TileSize = CellSize * TileCells;
     public const float StreetRoadWidth = 8;
     public const float FrontSetback = 1.5f;
-    private const int FormatVersion = 2;
+    private const int FormatVersion = 3; // 3: alleys
 
     public int Width { get; }
     public int Height { get; }
@@ -116,12 +125,17 @@ public sealed class CityLayout
     public int CellsX => Width * TileCells;
     public int CellsZ => Height * TileCells;
     public IReadOnlyList<Parcel> Parcels => parcels;
+    public IReadOnlyList<Alley> Alleys => alleys;
+
+    /// <summary>Alleys are this wide (m), taken half from each lot.</summary>
+    public const float AlleyWidth = 2.6f;
 
     private readonly bool[,] street;   // [cx, cz]
     private readonly int[,] parcelAt;  // [cx, cz], -1 for street
     private readonly bool[,] linkEast; // [tx, tz]: tile connects to tile tx + 1
     private readonly bool[,] linkNorth; // [tx, tz]: tile connects to tile tz + 1
     private readonly List<Parcel> parcels = new();
+    private readonly List<Alley> alleys = new();
     private readonly Random random;
 
     private CityLayout(int width, int height, int seed, int loopPercent, BuildingCatalog catalog, int favoredVariant)
@@ -183,8 +197,16 @@ public sealed class CityLayout
 
     public Parcel? ParcelOf(Cell c) => InBounds(c) && parcelAt[c.X, c.Z] >= 0 ? parcels[parcelAt[c.X, c.Z]] : null;
 
-    /// <summary>The parcel at a world position, or null on a street or outside the city.</summary>
-    public Parcel? ParcelAt(float x, float z) => ParcelOf(CellAt(x, z));
+    /// <summary>The parcel at a world position, or null on a street, in an alley, or outside the city.</summary>
+    public Parcel? ParcelAt(float x, float z) => ParcelOf(CellAt(x, z)) is { } p && p.Bounds.Contains(x, z) ? p : null;
+
+    /// <summary>The alley at a world position, if any.</summary>
+    public Alley? AlleyAt(float x, float z)
+    {
+        foreach (var a in alleys)
+            if (a.Rect.Contains(x, z)) return a;
+        return null;
+    }
 
     public static Cell CellAt(float x, float z) =>
         new((int)MathF.Floor((x + CellSize * 1.5f) / CellSize), (int)MathF.Floor((z + CellSize * 1.5f) / CellSize));
@@ -335,8 +357,10 @@ public sealed class CityLayout
                     }
             }
 
-        foreach (var (cells, zone, center) in groups)
+        var shrink = FindAlleys(groups);
+        for (var gi = 0; gi < groups.Count; gi++)
         {
+            var (cells, zone, center) = groups[gi];
             // The front: a side of one of its cells that touches a street. A side cell's front faces the tile
             // center (which is always street); prefer it, since it makes wide parcels face along their length.
             var options = new List<(Cell Cell, Sides Side)>();
@@ -348,6 +372,10 @@ public sealed class CityLayout
 
             var rect = cells.Select(CellRect).Aggregate((r, s) =>
                 new GroundRect(Math.Min(r.MinX, s.MinX), Math.Min(r.MinZ, s.MinZ), Math.Max(r.MaxX, s.MaxX), Math.Max(r.MaxZ, s.MaxZ)));
+            var sides = shrink.GetValueOrDefault(gi);
+            const float h = AlleyWidth / 2;
+            rect = new GroundRect(rect.MinX + ((sides & Sides.West) != 0 ? h : 0), rect.MinZ + ((sides & Sides.South) != 0 ? h : 0),
+                rect.MaxX - ((sides & Sides.East) != 0 ? h : 0), rect.MaxZ - ((sides & Sides.North) != 0 ? h : 0));
             parcels.Add(new Parcel
             {
                 Id = parcels.Count,
@@ -356,8 +384,59 @@ public sealed class CityLayout
                 FrontCell = frontCell,
                 Front = front,
                 Bounds = rect,
+                AlleySides = sides,
             });
         }
+    }
+
+    /// <summary>
+    /// Alleys: between two neighboring single-lot parcels in the commercial zone (about half the time), when at least
+    /// one end of the edge between them opens onto a street. Each lot gives up half the alley's width on that side.
+    /// Returns the sides to shrink per group.
+    /// </summary>
+    private Dictionary<int, Sides> FindAlleys(List<(List<Cell> Cells, Zone Zone, Cell Center)> groups)
+    {
+        var shrink = new Dictionary<int, Sides>();
+        for (var gi = 0; gi < groups.Count; gi++)
+        {
+            if (groups[gi].Cells.Count != 1 || groups[gi].Zone != Zone.Commercial) continue;
+            var c = groups[gi].Cells[0];
+            foreach (var side in new[] { Sides.East, Sides.North }) // each pair once
+            {
+                var n = Step(c, side);
+                if (!InBounds(n) || parcelAt[n.X, n.Z] is var gn && (gn < 0 || gn == gi)) continue;
+                if (groups[gn].Cells.Count != 1 || groups[gn].Zone != Zone.Commercial) continue;
+                // The edge's two ends: along the edge, before and after.
+                var (endA, endB) = side == Sides.East ? (Sides.South, Sides.North) : (Sides.West, Sides.East);
+                var mouths = new List<(float X, float Z)>();
+                var rc = CellRect(c);
+                // The edge line, and the alley's span across it.
+                var line = side == Sides.East ? rc.MaxX : rc.MaxZ;
+                const float h = AlleyWidth / 2;
+                foreach (var end in new[] { endA, endB })
+                {
+                    bool streetC = IsStreet(Step(c, end)), streetN = IsStreet(Step(n, end));
+                    if (!streetC && !streetN) continue;
+                    // The open part of the mouth: both halves, or only the half beside a street.
+                    var lo = streetC ? line - h : line;
+                    var hi = streetN ? line + h : line;
+                    var mid = (lo + hi) / 2;
+                    var (ex, ez) = MazePieces.Vector(end);
+                    var edge = side == Sides.East
+                        ? (end == Sides.North ? rc.MaxZ : rc.MinZ)
+                        : (end == Sides.East ? rc.MaxX : rc.MinX);
+                    mouths.Add(side == Sides.East ? (mid, edge + ez * 1.5f) : (edge + ex * 1.5f, mid));
+                }
+                if (mouths.Count == 0 || random.Next(100) >= 50) continue;
+                shrink[gi] = shrink.GetValueOrDefault(gi) | side;
+                shrink[gn] = shrink.GetValueOrDefault(gn) | (side == Sides.East ? Sides.West : Sides.South);
+                var rect = side == Sides.East
+                    ? new GroundRect(line - h, rc.MinZ, line + h, rc.MaxZ)
+                    : new GroundRect(rc.MinX, line - h, rc.MaxX, line + h);
+                alleys.Add(new Alley(rect, mouths));
+            }
+        }
+        return shrink;
     }
 
     private void AssignBuildings()

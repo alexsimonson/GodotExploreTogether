@@ -11,6 +11,7 @@ using ExploreTogether.Items;
 using ExploreTogether.Net;
 using ExploreTogether.Player;
 using Godot;
+using Noise = ExploreTogether.Core.City.Noise;
 
 namespace ExploreTogether.Server;
 
@@ -30,6 +31,12 @@ public sealed class ServerInstance
     public Dictionary<string, CityNpc> Npcs { get; } = new();
     /// <summary>Cities only: every building's front door.</summary>
     public CityDoors? Doors { get; set; }
+    /// <summary>Cities only: street lamps and how lit any point is (stealth).</summary>
+    public CityLighting? Lighting { get; set; }
+    /// <summary>Cities only: sounds made since the last perception tick.</summary>
+    public List<Noise> Noises { get; } = new();
+    /// <summary>Cities only: recent calls to the police (so ten witnesses don't send ten officers).</summary>
+    public List<(double At, float X, float Z, long Player)> RecentReports { get; } = new();
     public int[] LayoutData { get; init; } = [];
     public string CreatedBy { get; init; } = "";
     public DateTime CreatedAt { get; } = DateTime.UtcNow;
@@ -200,10 +207,15 @@ public sealed class InstanceManager
         doors.Changed += parcel =>
         {
             if (instance.Nodes.Level.GetNodeOrNull<CityDoor>($"Door{parcel}") is { } node)
-                node.SetState(doors.IsOpen(parcel), doors.IsLocked(parcel), animate: false);
+                node.SetState(doors[parcel], animate: false);
         };
         simulation.SetUpDoors(city, doors);
-        var roles = population.People.GroupBy(p => p.Role).OrderBy(g => g.Key).Select(g => $"{g.Count()} {g.Key.ToString().ToLowerInvariant()}s");
+        var roles = population.People.GroupBy(p => p.Role).OrderBy(g => g.Key).Select(g => g.Key switch
+        {
+            NpcRole.Police => $"{g.Count()} police",
+            NpcRole.Security => $"{g.Count()} security guards",
+            _ => $"{g.Count()} {g.Key.ToString().ToLowerInvariant()}s",
+        });
         GD.Print($"[server] city {instance.Id}: {population.People.Count} people ({string.Join(", ", roles)}), " +
                  $"clock {CityClock.Format(clock.HourOfDay)}, {dayMinutes:0.#} min per day; {simulation.Summary()}");
     }
@@ -249,6 +261,7 @@ public sealed class InstanceManager
         player.Position = spawn;
         player.NetPosition = spawn;
         player.NetYaw = yaw;
+        player.Guard = new Core.Net.MoveGuard(spawn.X, spawn.Y, spawn.Z, Time.GetTicksMsec() / 1000.0);
         instance.Nodes.Players.AddChild(player, forceReadableName: true);
 
         // Visibility (scenes set public_visibility = false): the new peer sees every player and item
