@@ -9,7 +9,9 @@ namespace ExploreTogether.UI;
 /// The inventory + equipment screen (port of the HUD's InventoryUI and GearUI, opened together like
 /// the original's onToggleInventory):
 /// - Equipment: the 12 EquipmentSlotButtons at their original paper-doll positions (EquipmentScrollView prefab);
-/// - Inventory: a scrolling 4-column grid of 100x100 slots with 10 px spacing (InventoryScrollView prefab).
+/// - Inventory: a scrolling 4-column grid of 100x100 slots with 10 px spacing (InventoryScrollView prefab);
+/// - Storage (only while the hub's storage chest is open): the same kind of grid, next to the inventory
+///   (port of the HUD's storage InventoryUI, which the original showed together with the player's inventory).
 /// Drags and drops are forwarded as requests; the screen redraws from the state the server sends.
 /// </summary>
 public partial class InventoryScreen : CanvasLayer
@@ -30,17 +32,20 @@ public partial class InventoryScreen : CanvasLayer
 
     private readonly List<ItemSlotButton> _inventorySlots = new();
     private readonly List<ItemSlotButton> _gearSlots = new();
+    private readonly List<ItemSlotButton> _storageSlots = new();
     private Control _root = null!;
+    private Control _storagePanel = null!;
+    private Label _hint = null!;
+
+    /// <summary>True while the storage panel is showing.</summary>
+    public bool StorageOpen => Visible && _storagePanel.Visible;
 
     public override void _Ready()
     {
-        var center = new CenterContainer();
-        center.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-        AddChild(center);
-
+        // Centered and scaled by hand in FitToScreen (a CenterContainer would reset the scale on every layout).
         _root = new VBoxContainer();
         _root.AddThemeConstantOverride("separation", 8);
-        center.AddChild(_root);
+        AddChild(_root);
 
         var panels = new HBoxContainer();
         panels.AddThemeConstantOverride("separation", 16);
@@ -48,18 +53,19 @@ public partial class InventoryScreen : CanvasLayer
 
         panels.AddChild(BuildGearPanel());
         panels.AddChild(BuildInventoryPanel());
+        _storagePanel = BuildStoragePanel();
+        _storagePanel.Visible = false;
+        panels.AddChild(_storagePanel);
 
-        var hint = new Label
-        {
-            Text = "Drag to move or equip  ·  Ctrl + right-click to drop  ·  Tab to close",
-            HorizontalAlignment = HorizontalAlignment.Center,
-        };
-        hint.AddThemeColorOverride("font_outline_color", Colors.Black);
-        hint.AddThemeConstantOverride("outline_size", 6);
-        _root.AddChild(hint);
+        _hint = new Label { HorizontalAlignment = HorizontalAlignment.Center };
+        _hint.AddThemeColorOverride("font_outline_color", Colors.Black);
+        _hint.AddThemeConstantOverride("outline_size", 6);
+        _root.AddChild(_hint);
+        UpdateHint();
 
         // Scale down to fit small windows (the original layout assumed a large screen).
         GetViewport().SizeChanged += FitToScreen;
+        _root.MinimumSizeChanged += FitToScreen; // e.g. the storage panel opening or closing
         FitToScreen();
     }
 
@@ -81,9 +87,16 @@ public partial class InventoryScreen : CanvasLayer
         return box;
     }
 
-    private Control BuildInventoryPanel()
+    private Control BuildInventoryPanel() =>
+        SlotGridPanel("Inventory", ItemContainer.Inventory, Inventory.DefaultMaxSlots, _inventorySlots);
+
+    private Control BuildStoragePanel() =>
+        SlotGridPanel("Storage", ItemContainer.Storage, Inventory.HubStorageSlots, _storageSlots);
+
+    /// <summary>A titled, scrolling 4-column grid of slots (the original InventoryScrollView).</summary>
+    private Control SlotGridPanel(string title, ItemContainer container, int count, List<ItemSlotButton> into)
     {
-        var box = PanelWithTitle("Inventory", out var content);
+        var box = PanelWithTitle(title, out var content);
         var scroll = new ScrollContainer
         {
             CustomMinimumSize = new Vector2(4 * ItemSlotButton.SlotSize + 3 * 10 + 14, 524),
@@ -94,11 +107,11 @@ public partial class InventoryScreen : CanvasLayer
         grid.AddThemeConstantOverride("h_separation", 10);
         grid.AddThemeConstantOverride("v_separation", 10);
         scroll.AddChild(grid);
-        for (int i = 0; i < Inventory.DefaultMaxSlots; i++)
+        for (int i = 0; i < count; i++)
         {
-            var slot = NewSlot(ItemContainer.Inventory, i);
+            var slot = NewSlot(container, i);
             grid.AddChild(slot);
-            _inventorySlots.Add(slot);
+            into.Add(slot);
         }
         return box;
     }
@@ -131,32 +144,64 @@ public partial class InventoryScreen : CanvasLayer
     /// </summary>
     public void SetState(int[] inventoryQuads, int[] gear, int[] gearData)
     {
-        foreach (var s in _inventorySlots) s.SetItem(null, 0);
-        for (int i = 0; i + 3 < inventoryQuads.Length; i += 4)
-        {
-            var slot = inventoryQuads[i];
-            if (slot >= 0 && slot < _inventorySlots.Count)
-                _inventorySlots[slot].SetItem(inventoryQuads[i + 1], inventoryQuads[i + 2],
-                    inventoryQuads[i + 3] >= 0 ? inventoryQuads[i + 3] : null);
-        }
+        Fill(_inventorySlots, inventoryQuads);
         for (int i = 0; i < _gearSlots.Count; i++)
             _gearSlots[i].SetItem(i < gear.Length && gear[i] >= 0 ? gear[i] : null, 0,
                 i < gearData.Length && gearData[i] >= 0 ? gearData[i] : null);
     }
 
+    /// <summary>Shows the storage (from the server's (slot, item, count, data) quads), opening the screen if needed.</summary>
+    public void ShowStorage(int[] storageQuads)
+    {
+        Fill(_storageSlots, storageQuads);
+        if (_storagePanel.Visible && Visible) return;
+        _storagePanel.Visible = true;
+        UpdateHint();
+        if (!Visible) Toggle();
+    }
+
+    /// <summary>Updates the storage panel without opening it (e.g. after a move the server answered late).</summary>
+    public void UpdateStorage(int[] storageQuads) => Fill(_storageSlots, storageQuads);
+
+    /// <summary>Hides the storage panel (walked away, closed the screen, or left the hub).</summary>
+    public void CloseStorage()
+    {
+        if (!_storagePanel.Visible) return;
+        _storagePanel.Visible = false;
+        UpdateHint();
+    }
+
     public void Toggle()
     {
         Visible = !Visible;
+        if (!Visible) CloseStorage();
         Input.MouseMode = Visible ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
     }
+
+    private static void Fill(List<ItemSlotButton> slots, int[] quads)
+    {
+        foreach (var s in slots) s.SetItem(null, 0);
+        for (int i = 0; i + 3 < quads.Length; i += 4)
+        {
+            var slot = quads[i];
+            if (slot >= 0 && slot < slots.Count)
+                slots[slot].SetItem(quads[i + 1], quads[i + 2], quads[i + 3] >= 0 ? quads[i + 3] : null);
+        }
+    }
+
+    private void UpdateHint() => _hint.Text = _storagePanel.Visible
+        ? "Drag between inventory and storage  ·  Ctrl + right-click to drop  ·  Tab to close"
+        : "Drag to move or equip  ·  Ctrl + right-click to drop  ·  Tab to close";
 
     private void FitToScreen()
     {
         if (_root == null) return;
         var available = GetViewport().GetVisibleRect().Size;
-        var needed = _root.GetCombinedMinimumSize() + new Vector2(40, 40);
+        var size = _root.GetCombinedMinimumSize();
+        var needed = size + new Vector2(40, 40);
         var scale = Mathf.Min(1f, Mathf.Min(available.X / needed.X, available.Y / needed.Y));
+        _root.Size = size;
         _root.Scale = new Vector2(scale, scale);
-        _root.PivotOffset = _root.GetCombinedMinimumSize() / 2;
+        _root.Position = ((available - size * scale) / 2).Floor();
     }
 }

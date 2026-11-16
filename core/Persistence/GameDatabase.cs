@@ -217,9 +217,14 @@ public sealed class GameDatabase : IDisposable
 
     // ------------------------------------------------------------- inventory
 
-    public List<SlotRecord> LoadInventory(long characterId)
+    public List<SlotRecord> LoadInventory(long characterId) => LoadSlots("inventory_items", characterId);
+
+    /// <summary>The character's hub storage.</summary>
+    public List<SlotRecord> LoadStorage(long characterId) => LoadSlots("storage_items", characterId);
+
+    private List<SlotRecord> LoadSlots(string table, long characterId)
     {
-        using var cmd = Command("SELECT slot, item_id, count, data, uid FROM inventory_items WHERE character_id = $c ORDER BY slot;",
+        using var cmd = Command($"SELECT slot, item_id, count, data, uid FROM {table} WHERE character_id = $c ORDER BY slot;",
             ("$c", characterId));
         using var r = cmd.ExecuteReader();
         var list = new List<SlotRecord>();
@@ -249,19 +254,24 @@ public sealed class GameDatabase : IDisposable
     /// that was just unequipped, or lose one that was just equipped), and the event log always matches what
     /// was saved. Anything that moves items between containers must be saved through here.
     /// </summary>
+    /// <param name="storage">The hub storage's slots, saved in the same transaction; null leaves the saved storage as it is.</param>
     public void SaveItems(long characterId, IEnumerable<SlotRecord> inventory, IEnumerable<SlotRecord> gear,
-        IEnumerable<ItemEvent>? events = null)
+        IEnumerable<ItemEvent>? events = null, IEnumerable<SlotRecord>? storage = null)
     {
         using var tx = _connection.BeginTransaction(); // rolled back on dispose unless committed
         WriteGear(tx, characterId, gear);
         WriteInventory(tx, characterId, inventory);
+        if (storage != null) WriteSlots(tx, "storage_items", characterId, storage);
         if (events != null) WriteEvents(tx, events);
         tx.Commit();
     }
 
-    private void WriteInventory(SqliteTransaction tx, long characterId, IEnumerable<SlotRecord> slots)
+    private void WriteInventory(SqliteTransaction tx, long characterId, IEnumerable<SlotRecord> slots) =>
+        WriteSlots(tx, "inventory_items", characterId, slots);
+
+    private void WriteSlots(SqliteTransaction tx, string table, long characterId, IEnumerable<SlotRecord> slots)
     {
-        using (var del = Command("DELETE FROM inventory_items WHERE character_id = $c;", ("$c", characterId)))
+        using (var del = Command($"DELETE FROM {table} WHERE character_id = $c;", ("$c", characterId)))
         {
             del.Transaction = tx;
             del.ExecuteNonQuery();
@@ -269,7 +279,7 @@ public sealed class GameDatabase : IDisposable
         foreach (var s in slots)
         {
             using var ins = Command(
-                "INSERT INTO inventory_items (character_id, slot, item_id, count, data, uid) VALUES ($c, $s, $i, $n, $d, $u);",
+                $"INSERT INTO {table} (character_id, slot, item_id, count, data, uid) VALUES ($c, $s, $i, $n, $d, $u);",
                 ("$c", characterId), ("$s", s.Slot), ("$i", s.ItemId), ("$n", s.Count), ("$d", s.Data), ("$u", s.Uid));
             ins.Transaction = tx;
             ins.ExecuteNonQuery();
@@ -415,7 +425,7 @@ public sealed class GameDatabase : IDisposable
 
     /// <summary>
     /// Checks every saved item that carries a serial and reports problems:
-    /// - Duplicate: the same serial is saved in more than one place (inventory or gear, any character).
+    /// - Duplicate: the same serial is saved in more than one place (inventory, gear or storage, any character).
     /// - Unregistered: the registry never issued that serial (made up, or its registry row was lost).
     /// - WrongItem: the serial was issued for a different item than the one carrying it.
     /// </summary>
@@ -427,7 +437,10 @@ public sealed class GameDatabase : IDisposable
               FROM inventory_items i JOIN characters c ON c.id = i.character_id WHERE i.uid IS NOT NULL
             UNION ALL
             SELECT e.uid, e.item_id, c.name || ' (#' || c.id || ') gear slot ' || e.slot
-              FROM equipment_items e JOIN characters c ON c.id = e.character_id WHERE e.uid IS NOT NULL;
+              FROM equipment_items e JOIN characters c ON c.id = e.character_id WHERE e.uid IS NOT NULL
+            UNION ALL
+            SELECT t.uid, t.item_id, c.name || ' (#' || c.id || ') storage slot ' || t.slot
+              FROM storage_items t JOIN characters c ON c.id = t.character_id WHERE t.uid IS NOT NULL;
             """))
         using (var r = cmd.ExecuteReader())
             while (r.Read())

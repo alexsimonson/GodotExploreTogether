@@ -27,16 +27,20 @@ Every kind of item is an `ItemDef` record:
 | `MagazineSize`, `AmmoItemId` | Guns only: how many rounds it holds, and which item reloads it |
 | `LootCount` | How many make one pickup when generated as loot (Pistol Rounds: 10) |
 | `Retired` | Taken out of the game: no longer generated as loot, but saved copies still load. **Use this instead of deleting an id.** |
+| `Role` | Tools only: the original `Tool.Role` (Axe, Pickaxe, Shovel, Rake, Screwdriver, Hammer). A resource needs a tool of its role. |
 
-`ItemCatalog` holds the 17 definitions with `Get(id)` and `NameOf(id)`, plus `GenerateItem(random)` for loot. It lives in `core/`, so the server, the client and the unit tests all compile the same list. Two named ids are used in code: `DungeonPassId` (999) and `PistolRoundsId` (1338).
+`ItemCatalog` holds the 17 definitions with `Get(id)` and `NameOf(id)`, plus `GenerateItem(random)` for loot. It lives in `core/`, so the server, the client and the unit tests all compile the same list. Three named ids are used in code: `DungeonPassId` (999), `PistolRoundsId` (1338) and `LogId` (432).
+
+**Log stacks** (since phase 6), unlike the original asset: trees give logs over and over. Logs saved before then load as stacks of one, and lose their serials.
 
 ### Containers: inventory and gear
 
 All in `core/Items/`, Godot-free and unit-tested:
 - **`Inventory`**: 28 slots. Stackables go onto an existing stack; others take a free slot each.
 - **`Gear`**: 12 slots, one per `EquipmentType`, in the original's order.
+- **Hub storage**: another `Inventory`, of 50 slots, per character (`PeerSession.Storage`). Usable only at the hub's storage chest.
 - **`ItemSlot`**: item id, count, and `data`.
-- **`SlotContainerLogic`**: the original's drag rules between the two containers (swap, equip only into the matching slot, unequip, swap equipment). It also handles drop: Ctrl + right-click drops the whole stack.
+- **`SlotContainerLogic`**: the original's drag rules between the containers (`ItemContainer`: Inventory, Gear, Storage). Storage follows the inventory's rules: swap, equip only into the matching slot, unequip, swap equipment. Dropping a stack onto the same stackable item merges them. It also handles drop: Ctrl + right-click drops the whole stack.
 
 ### Per-copy state (`data`)
 
@@ -57,10 +61,11 @@ Schema in [core/Persistence/Migrations.cs](../core/Persistence/Migrations.cs):
 
 - `inventory_items (character_id, slot, item_id, count, data, uid)`
 - `equipment_items (character_id, slot, item_id, data, uid)`
+- `storage_items (character_id, slot, item_id, count, data, uid)`: the hub storage (v7)
 - `item_serials (uid, item_id, created_at, origin)`: every non-stackable copy ever issued
-- `item_events (at, character_id, character_name, action, item_id, count, uid, instance_id, run_id, detail)`: an append-only history (created, registered, picked_up, dropped, equipped, unequipped, loaded, destroyed). It isn't tied to characters by foreign key, so it outlives a deleted character.
+- `item_events (at, character_id, character_name, action, item_id, count, uid, instance_id, run_id, detail)`: an append-only history (created, registered, picked_up, dropped, equipped, unequipped, stored, retrieved, loaded, destroyed). Gathering logs `created` with "gathered from Tree". It isn't tied to characters by foreign key, so it outlives a deleted character.
 
-The server loads items when a character is selected and saves at checkpoints: pickups, drops, reloads, the 15 s autosave and disconnecting. Moving items between slots (including equipping) is **not** saved immediately; its events wait on the session (`PeerSession.PendingItemEvents`) and go into the next save. Each save rewrites all of a character's inventory and gear rows, plus the events describing the change, in **one transaction** (`GameDatabase.SaveItems`). The Dungeon Pass is never saved or tracked. Item definitions are not in the database; only ids are.
+The server loads items when a character is selected and saves at checkpoints: pickups, drops, reloads, the 15 s autosave and disconnecting. Moving items between slots (including equipping) is **not** saved immediately; its events wait on the session (`PeerSession.PendingItemEvents`) and go into the next save. Each save rewrites all of a character's inventory, gear and storage rows, plus the events describing the change, in **one transaction** (`GameDatabase.SaveItems`). The Dungeon Pass is never saved or tracked. Item definitions are not in the database; only ids are.
 
 Duplicates are detected in three ways:
 - an audit of the whole database at server startup;
@@ -104,7 +109,8 @@ The server is authoritative: clients ask to move, drop or pick up, and the serve
 - **A new plain item** (resource, junk, quest item): add one line to `ItemCatalog.All` with a new unused id, and put a PNG in `assets/icons/`. It stacks, moves, drops, saves, shows in the UI and appears as dungeon loot automatically.
 - **New equipment** (a ring, boots): the same, with `ItemClass.Equipment` and a `Slot`. It equips into its slot with no other changes, but it does nothing yet, because no stats exist.
 - **A new weapon of an existing class** (a second sword or gun): one line. It behaves exactly like the others of its class; see the first limit below.
-- **A new container** (hub storage, a chest): `Inventory` already takes a slot count. The storage work is a second container, a new table, and widening `SlotContainerLogic` beyond the two containers it knows.
+- **A new container** (a shared chest, a bank tab): `Inventory` already takes a slot count, and the hub storage shows the pattern: an `ItemContainer` value, a table with the inventory's columns, saving it in `SaveItems`, and adding it to the serial checks in `ServerGame.ItemTracking`.
+- **A new resource** (a rock that needs a pickaxe): one `ResourceDef` in `ResourceCatalog`, plus somewhere to spawn it.
 
 ### What needs code, and the current limits
 1. **Weapons of the same class are identical.** Damage comes from per-class constants, so the `Damage` field on each item is ignored. A stronger sword needs combat code to read per-item stats (damage, and perhaps range and cooldown) from the `ItemDef`.
@@ -129,7 +135,7 @@ In rough order, each small:
 1. Use per-item `Damage` in combat, and add a `MagicStyle` field (limits 1–2).
 2. Add a "not loot" flag or loot weights, and hide Default Item (limit 5).
 3. Add a catalog test: unique ids, icons exist, ammo references are valid (limit 9).
-4. When building storage, generalize `ItemContainer` and `SlotContainerLogic` to any number of containers rather than adding a third special case.
+4. ✅ Storage is in: `SlotContainerLogic` treats every container except gear alike, so further inventory-like containers need no new rules.
 5. Add a use action when the first consumable is needed (limit 3).
 
 ## Adding an item: checklist

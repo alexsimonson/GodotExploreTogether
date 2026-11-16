@@ -4,6 +4,7 @@ using System.Linq;
 using ExploreTogether.Core.Dungeon;
 using ExploreTogether.Dungeon;
 using ExploreTogether.Enemies;
+using ExploreTogether.Gathering;
 using ExploreTogether.Items;
 using ExploreTogether.Net;
 using ExploreTogether.Player;
@@ -31,6 +32,8 @@ public sealed class ServerInstance
     /// <summary>Enemies in the instance (alive or corpses), by node name.</summary>
     public Dictionary<string, EnemyCharacter> Enemies { get; } = new();
     public int NextEnemyNumber { get; set; } = 1;
+    /// <summary>Gatherable resources (trees), by node name.</summary>
+    public Dictionary<string, ResourceNode> Resources { get; } = new();
 
     // ---- Dungeon run state (unused for the hub) ----
     public long? RunId { get; set; }
@@ -42,7 +45,8 @@ public sealed class ServerInstance
     public IEnumerable<MultiplayerSynchronizer> Synchronizers =>
         Players.Values.Select(p => p.Sync)
             .Concat(Items.Values.Select(i => i.Sync))
-            .Concat(Enemies.Values.Select(e => e.Sync));
+            .Concat(Enemies.Values.Select(e => e.Sync))
+            .Concat(Resources.Values.Select(r => r.Sync));
 }
 
 /// <summary>
@@ -76,7 +80,15 @@ public sealed class InstanceManager
 
     public IEnumerable<ServerInstance> Dungeons => _instances.Values.Where(i => i.Kind == InstanceKinds.Dungeon);
 
-    public void CreateHub() => Hub = Create(InstanceKinds.Hub, null, "");
+    public void CreateHub()
+    {
+        Hub = Create(InstanceKinds.Hub, null, "");
+        // Trees stand at the hub scene's ResourceSpots markers (the original demo scene had a TreeResource too).
+        if (Hub.Nodes.Level.GetNodeOrNull("ResourceSpots") is { } spots)
+            foreach (var spot in spots.GetChildren())
+                if (spot is Node3D marker)
+                    SpawnResource(Hub, Core.Gathering.ResourceCatalog.Tree.Kind, marker.Position);
+    }
 
     public ServerInstance CreateDungeon(int width, int height, int length, string createdBy)
     {
@@ -90,9 +102,15 @@ public sealed class InstanceManager
         foreach (var placement in DungeonContents.Generate(layout, seed ^ 0x5eed))
             SpawnItem(instance, placement.ItemId, DungeonBuilder.ItemPosition(layout, placement), placement.Count);
 
+        // Trees, as in FillMazeWithItems. Placed before the navigation bake so enemies walk around them.
+        var treeNodes = DungeonContents.TreeNodes(layout, seed ^ 0x73ee);
+        for (int i = 0; i < treeNodes.Count; i++)
+            SpawnResource(instance, Core.Gathering.ResourceCatalog.Tree.Kind,
+                DungeonBuilder.TreePosition(layout, treeNodes[i], DungeonContents.TreeOffset(seed, i)));
+
         // Enemies walk the navigation mesh baked from the maze.
         var started = DateTime.UtcNow;
-        DungeonBuilder.BakeNavigation(instance.Nodes.Level, layout);
+        DungeonBuilder.BakeNavigation(instance.Nodes.Level, layout, instance.Resources.Values);
         var enemyNodes = DungeonContents.EnemyNodes(layout, seed ^ 0xe4e);
         for (int i = 0; i < enemyNodes.Count; i++)
         {
@@ -100,7 +118,7 @@ public sealed class InstanceManager
             SpawnEnemy(instance, DungeonBuilder.EnemyPosition(layout, node, (i % 2) * 0.9f - 0.45f));
         }
         GD.Print($"[server] dungeon {instance.Id}: navigation baked in {(DateTime.UtcNow - started).TotalMilliseconds:0} ms, " +
-                 $"{enemyNodes.Count} enemies");
+                 $"{enemyNodes.Count} enemies, {treeNodes.Count} trees");
         GD.Print($"[server] dungeon {instance.Id}: {width}x{height}, length {length}, seed {seed}, " +
                  $"{layout.Nodes.Count} cells (by '{createdBy}')");
         return instance;
@@ -214,6 +232,20 @@ public sealed class InstanceManager
         instance.Items.Remove(item.Name);
         item.GetParent().RemoveChild(item);
         item.QueueFree();
+    }
+
+    /// <summary>Puts a gatherable resource (e.g. a tree) into the instance, visible to everyone inside.</summary>
+    public ResourceNode SpawnResource(ServerInstance instance, string kind, Vector3 position)
+    {
+        var resource = GD.Load<PackedScene>(InstanceFactory.ResourceScenePath).Instantiate<ResourceNode>();
+        resource.Name = $"Resource{instance.Resources.Count + 1}";
+        resource.Kind = kind;
+        resource.Position = position;
+        instance.Nodes.Resources.AddChild(resource, forceReadableName: true);
+        instance.Resources[resource.Name] = resource;
+        foreach (var peer in instance.Players.Keys)
+            resource.Sync.SetVisibilityFor((int)peer, true);
+        return resource;
     }
 
     public EnemyCharacter SpawnEnemy(ServerInstance instance, Vector3 position)

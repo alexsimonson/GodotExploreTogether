@@ -45,7 +45,7 @@ public partial class ServerGame
     {
         if (s.Inventory == null || s.Gear == null) return;
         var events = new List<ItemEvent>();
-        foreach (var slot in s.Inventory.slots.Concat(s.Gear.slots))
+        foreach (var slot in s.Inventory.slots.Concat(s.Gear.slots).Concat(s.Storage?.slots ?? []))
         {
             if (slot.itemId is not { } id || slot.uid != null || !NeedsSerial(id)) continue;
             slot.uid = _db.RegisterItem(id, "saved before item serials existed");
@@ -71,14 +71,15 @@ public partial class ServerGame
     }
 
     private static IEnumerable<(long Uid, int ItemId)> Serials(PeerSession s) =>
-        (s.Inventory?.slots ?? []).Concat(s.Gear?.slots ?? [])
+        (s.Inventory?.slots ?? []).Concat(s.Gear?.slots ?? []).Concat(s.Storage?.slots ?? [])
             .Where(x => x.uid != null && x.itemId != null).Select(x => (x.uid!.Value, x.itemId!.Value));
 
-    /// <summary>Logs everything a character carried as destroyed (hardcore death), before the character is deleted.</summary>
+    /// <summary>Logs everything a character carried or stored as destroyed (hardcore death), before the character is deleted.</summary>
     private void LogItemsDestroyed(PeerSession s, ServerInstance instance, string reason)
     {
         // Unsaved equip/unequip events first, so the history leading up to the death is complete.
         var events = s.PendingItemEvents.Concat((s.Inventory?.Occupied() ?? []).Concat(s.Gear?.Occupied() ?? [])
+            .Concat(s.Storage?.Occupied() ?? [])
             .Where(r => r.ItemId != ItemCatalog.DungeonPassId)
             .Select(r => ItemEventFor(s, ItemActions.Destroyed, r.ItemId, r.Count, r.Uid, instance, reason)))
             .ToList();

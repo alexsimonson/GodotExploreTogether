@@ -25,6 +25,7 @@ public sealed record DungeonSummary(int Id, string CreatedBy, int Width, int Hei
 ///       SelectCharacter -> EnterInstance -> client builds it -> InstanceReady -> server spawns the player
 ///       Interact(id) -> server checks distance and acts (e.g. ShowDungeonMenu, or EnterInstance for the hub)
 ///       CreateDungeon / JoinDungeon -> EnterInstance (with the maze layout) -> InstanceReady -> spawn
+///       Interact(hub_storage) -> Storage (contents); MoveItem/DropItem involving the storage -> Inventory + Storage
 ///
 /// Note: ENet traffic is not encrypted yet, so passwords cross the network in plain text.
 /// Fine on a LAN for development; must be fixed before public hosting (see PLAN.md).
@@ -66,6 +67,8 @@ public partial class NetSession : Node
     public event Action<string>? NoticeReceived;                         // short message for the HUD
     /// <summary>inventory (slot, item id, count, data) quads (data -1 = none); gear item ids and gear data per slot (-1 = empty/none)</summary>
     public event Action<int[], int[], int[]>? InventoryReceived;
+    /// <summary>The hub storage as (slot, item id, count, data) quads: sent when the player opens it and after each change.</summary>
+    public event Action<int[]>? StorageReceived;
     public event Action<DungeonStatus>? DungeonStatusReceived;
     public event Action<int, int>? AmmoReceived;                         // magazine, reserve
     public event Action<Vector3, int, float, Color>? MagicAreaReceived;  // position, magic style, lifetime, caster's color
@@ -215,6 +218,8 @@ public partial class NetSession : Node
     public void SendInventory(long peer, int[] quads, int[] gear, int[] gearData) =>
         RpcId(peer, MethodName.Inventory, quads, gear, gearData);
 
+    public void SendStorage(long peer, int[] quads) => RpcId(peer, MethodName.Storage, quads);
+
     public void SendDungeonStatus(long peer, DungeonStatus status) =>
         RpcId(peer, MethodName.DungeonStatusUpdate, status.ExitOpen, status.PassHolder, status.Escaped, status.PlayersInside);
 
@@ -263,6 +268,9 @@ public partial class NetSession : Node
 
     [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void Inventory(int[] quads, int[] gear, int[] gearData) => InventoryReceived?.Invoke(quads, gear, gearData);
+
+    [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void Storage(int[] quads) => StorageReceived?.Invoke(quads);
 
     [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void DungeonStatusUpdate(bool exitOpen, string passHolder, string[] escaped, int playersInside) =>

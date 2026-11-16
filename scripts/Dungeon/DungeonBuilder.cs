@@ -94,7 +94,11 @@ public static class DungeonBuilder
     /// used NavMeshSurface per piece). Only the floor level is kept, so the tops of the ceiling slabs
     /// don't become walkable. Each instance has its own world, so its own navigation map.
     /// </summary>
-    public static void BakeNavigation(Node level, MazeLayout layout)
+    /// <param name="obstacles">
+    /// Things standing in the maze that enemies must walk around (trees): their collision shapes are added
+    /// to the baked geometry. They aren't under Pieces (they're replicated separately), so they aren't parsed.
+    /// </param>
+    public static void BakeNavigation(Node level, MazeLayout layout, IEnumerable<CollisionObject3D>? obstacles = null)
     {
         // Geometry is parsed in the Pieces node's own space (floor surface at y = FloorSurfaceY), so the
         // region lives under Pieces too. Bake only the maze's area, from the floor slab to below the ceiling.
@@ -114,9 +118,56 @@ public static class DungeonBuilder
         };
         var source = new NavigationMeshSourceGeometryData3D();
         NavigationServer3D.ParseSourceGeometryData(navMesh, source, pieces);
+        var toPieces = pieces.GlobalTransform.AffineInverse();
+        foreach (var obstacle in obstacles ?? [])
+            foreach (var child in obstacle.FindChildren("*", nameof(CollisionShape3D), recursive: true, owned: false))
+                if (child is CollisionShape3D shape && SolidFaces(shape.Shape) is { } faces)
+                    source.AddFaces(faces, toPieces * shape.GlobalTransform);
         NavigationServer3D.BakeFromSourceGeometryData(navMesh, source);
         var region = new NavigationRegion3D { Name = "Navigation", NavigationMesh = navMesh };
         pieces.AddChild(region);
+    }
+
+    /// <summary>
+    /// Triangles enclosing the shape's volume, for the navigation baker: a cylinder becomes an octagonal prism,
+    /// a box a box. (Built here rather than from a Mesh, which the baker would have to read back from the renderer.)
+    /// </summary>
+    private static Vector3[]? SolidFaces(Shape3D? shape) => shape switch
+    {
+        CylinderShape3D c => Prism(8, c.Radius / Mathf.Cos(Mathf.Pi / 8), c.Height, Mathf.Pi / 8), // circumscribes the cylinder
+        BoxShape3D b => Prism(4, new Vector2(b.Size.X, b.Size.Z).Length() / 2, b.Size.Y, Mathf.Atan2(b.Size.Z, b.Size.X), b.Size),
+        _ => null,
+    };
+
+    /// <summary>A closed prism around the Y axis, centered on the origin. For a box, the corners are taken from its size.</summary>
+    private static Vector3[] Prism(int sides, float radius, float height, float startAngle, Vector3? box = null)
+    {
+        var ring = new Vector2[sides];
+        for (int i = 0; i < sides; i++)
+        {
+            var a = startAngle + i * Mathf.Tau / sides;
+            ring[i] = box is { } b
+                ? new Vector2((i is 0 or 3 ? 1 : -1) * b.X / 2, (i < 2 ? 1 : -1) * b.Z / 2)
+                : new Vector2(Mathf.Cos(a), Mathf.Sin(a)) * radius;
+        }
+        float y0 = -height / 2, y1 = height / 2;
+        var faces = new System.Collections.Generic.List<Vector3>();
+        for (int i = 0; i < sides; i++)
+        {
+            var (p, q) = (ring[i], ring[(i + 1) % sides]);
+            Vector3 a0 = new(p.X, y0, p.Y), a1 = new(p.X, y1, p.Y), b0 = new(q.X, y0, q.Y), b1 = new(q.X, y1, q.Y);
+            faces.AddRange([a0, b0, b1, a0, b1, a1]); // side
+            faces.AddRange([new Vector3(0, y1, 0), a1, b1]); // top
+            faces.AddRange([new Vector3(0, y0, 0), b0, a0]); // bottom
+        }
+        return faces.ToArray();
+    }
+
+    /// <summary>Where a tree stands in a node: towards one corner of the cell, on the floor.</summary>
+    public static Vector3 TreePosition(MazeLayout layout, int nodeIndex, (float X, float Z) offset)
+    {
+        var n = layout.Nodes[nodeIndex].mazePosition;
+        return new Vector3(n.X * Cell + offset.X, n.Y, n.Z * Cell + offset.Z);
     }
 
     /// <summary>Where an enemy starts in a node (cell center, on the floor).</summary>

@@ -21,6 +21,8 @@ public sealed class PeerSession(long peer)
     public Inventory? Inventory { get; set; }
     /// <summary>The character's equipment (12 slots), loaded with the inventory.</summary>
     public Gear? Gear { get; set; }
+    /// <summary>The character's hub storage (50 slots), loaded with the inventory. Usable only at the hub's storage chest.</summary>
+    public Inventory? Storage { get; set; }
     /// <summary>
     /// Item events for changes not saved yet (slot moves are saved with the next save, not immediately).
     /// They're written in the same transaction as that save, so the log always matches the saved items.
@@ -29,6 +31,7 @@ public sealed class PeerSession(long peer)
     /// <summary>Health while playing (full again whenever the player reaches the hub).</summary>
     public Core.Combat.Health Health { get; } = new(100);
     public double LastAttackAt { get; set; } = -1000;
+    public double LastGatherAt { get; set; } = -1000;
     /// <summary>Instance the client was told to load and hasn't confirmed yet.</summary>
     public int? PendingInstanceId { get; set; }
     /// <summary>True while a password hash is being computed for this peer.</summary>
@@ -43,6 +46,7 @@ public sealed class PeerSession(long peer)
 ///   -> EnterInstance(hub) -> client builds it -> InstanceReady -> player spawned
 ///   hub: Interact(dungeon_entrance) -> dungeon menu -> CreateDungeon/JoinDungeon -> EnterInstance(dungeon)
 ///   dungeon: Interact(dungeon_entrance) -> back to the hub
+///   anywhere: Interact(resource:NAME) -> gather (ServerGame.Gathering); hub: Interact(hub_storage) -> storage (ServerGame.Storage)
 /// Owns the database; character progress is saved on disconnect, every AutosaveSeconds, and at shutdown.
 /// </summary>
 public partial class ServerGame : Node
@@ -279,6 +283,8 @@ public partial class ServerGame : Node
         s.Inventory.Load(_db.LoadInventory(character.Id));
         s.Gear = new Gear();
         s.Gear.Load(_db.LoadGearRecords(character.Id));
+        s.Storage = new Inventory(Inventory.HubStorageSlots);
+        s.Storage.Load(_db.LoadStorage(character.Id));
         OnCharacterItemsLoaded(s); // serials for old items, and a duplicate check against everyone online
         s.PlayTimeCountedUntil = DateTime.UtcNow;
         SendToInstance(s, _instances.Hub);
@@ -343,6 +349,16 @@ public partial class ServerGame : Node
         if (interactionId.StartsWith(Items.ItemPickup.InteractionPrefix))
         {
             PickUp(s, instance, interactionId);
+            return;
+        }
+        if (interactionId.StartsWith(Gathering.ResourceNode.InteractionPrefix))
+        {
+            Gather(s, instance, interactionId);
+            return;
+        }
+        if (interactionId == HubStorageId && instance == _instances.Hub)
+        {
+            OpenStorage(s);
             return;
         }
         if (interactionId == DungeonExit.Id && instance.Kind == InstanceKinds.Dungeon)

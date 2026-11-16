@@ -28,6 +28,9 @@ public sealed class Inventory
 {
     public const int DefaultMaxSlots = 28;
 
+    /// <summary>The hub storage's size (the Hub prefab's Storage has storage_slots = 50).</summary>
+    public const int HubStorageSlots = 50;
+
     public int max_slots;
     public ItemSlot[] slots;
 
@@ -115,6 +118,10 @@ public sealed class Inventory
     }
 
     public bool Contains(int itemId) => FindItemInSlot(itemId) >= 0;
+
+    /// <summary>True if AddItem would find room for one of this item (an existing stack, or an empty slot).</summary>
+    public bool CanAdd(int itemId) =>
+        ItemCatalog.Get(itemId) is { } def && (def.Stack && Contains(itemId) || FindEmptySlot() >= 0);
 
     /// <summary>Occupied slots, e.g. for saving or sending to the client.</summary>
     public IEnumerable<SlotRecord> Occupied() =>

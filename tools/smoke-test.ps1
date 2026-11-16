@@ -11,6 +11,8 @@
               the wand user's aim ghost must show up for a teammate.
     death   - two unarmed players next to enemies: enemies must land hits (up close), the normal character
               returns to the hub, the hardcore one is deleted.
+    gather  - one player chops the hub's trees with an axe and puts the logs into the hub storage; another
+              starts a dungeon, which must get its trees (and still bake navigation around them).
   Every scenario also checks: no engine/script errors, remote players never fly off vertically,
   every process quits on its own, and the server saves and closes the database.
 
@@ -117,6 +119,22 @@ $Scenarios = [ordered]@{
             Expect Grape 'Grape died and was a hardcore character' "Grape's client is told"
             ExpectNot Grape 'entered instance' "Grape's client stays out of the world afterwards" -After 'hardcore character'
             Expect server 'run \d+ \(instance \d+\) abandoned: 0/\d escaped' 'both runs are recorded as abandoned' -Min 2
+        }
+    }
+    gather = @{
+        Port   = 7944
+        Server = @('--dev-skip-proximity', '--dungeon-empty-timeout', '3', '--dev-starter-kit', '--dev-quit-after', '30')
+        Clients = [ordered]@{
+            Kermit    = @('--dev-weapon', 'Axe', '--dev-gather', '3', '--dev-quit-after', '22')
+            Blueberry = @('--dev-dungeon', 'new:5x5x400', '--dev-quit-after', '12')
+        }
+        Checks = {
+            Expect server "'Kermit' weapon: Axe" 'Kermit equips the axe'
+            Expect server "'Kermit' gathered Log from Resource\d+ in instance 1 \(now 3\)" 'Kermit chops 3 logs from the hub trees'
+            Expect Kermit 'notice: You get Log' "Kermit's client is told about each log" -Min 3
+            Expect server "'Kermit' opened their storage \(0 slot\(s\) used\)" 'Kermit opens an empty storage'
+            Expect Kermit 'storage \(1 slots used\): Log x3' 'the logs end up in the storage'
+            Expect server 'dungeon 2: navigation baked in \d+ ms, 5 enemies, 5 trees' 'a new dungeon gets 5 trees'
         }
     }
 }

@@ -6,8 +6,7 @@ namespace ExploreTogether.Core.Dungeon;
 public readonly record struct ItemPlacement(int ItemId, int NodeIndex, float OffsetX, float OffsetZ, int Count = 1);
 
 /// <summary>
-/// What the original Maze.FillMazeWithItems put into a new dungeon (the item part; enemies and
-/// trees come in later phases):
+/// What the original Maze.FillMazeWithItems put into a new dungeon (items here; enemies and trees below):
 /// - one Dungeon Pass (item 999) on a random node,
 /// - 20 random items (never the pass), each on a random node,
 /// both via RandomSpawnPointInGenerated(5): a node index in [5, count - 5), i.e. away from both ends.
@@ -53,6 +52,26 @@ public static class DungeonContents
             if (i % 4 == 2)
                 nodes.Add(RandomNodeIndex(layout.Nodes.Count, EnemyPadding, random));
         return nodes;
+    }
+
+    /// <summary>
+    /// Trees, from the same loop: SpawnResource("Prefabs/TreeResource") for every item where i % 4 == 2
+    /// (5 of the 20), at RandomSpawnPointInGenerated() (padding 10), drawn from their own seeded sequence.
+    /// Where in the cell the tree stands is up to the builder (see TreeOffset).
+    /// </summary>
+    public static List<int> TreeNodes(MazeLayout layout, int seed, int itemCount = DefaultItemCount) =>
+        EnemyNodes(layout, seed, itemCount); // same rule; the caller passes a different seed
+
+    /// <summary>
+    /// Where a tree stands relative to its cell center: towards one corner, chosen from the seed, so it
+    /// never blocks a corridor (cells are 3 m wide between the walls) or stands on an enemy's start spot.
+    /// </summary>
+    public const float TreeCornerOffset = 0.8f;
+
+    public static (float X, float Z) TreeOffset(int seed, int treeIndex)
+    {
+        var corner = new Random(seed + treeIndex).Next(4);
+        return ((corner & 1) == 0 ? TreeCornerOffset : -TreeCornerOffset, (corner & 2) == 0 ? TreeCornerOffset : -TreeCornerOffset);
     }
 
     /// <summary>

@@ -164,14 +164,15 @@ public partial class ServerGame
     /// <summary>
     /// Saves the inventory and gear, plus the item events describing the change, in one transaction (so a
     /// crash can't duplicate or lose an item moving between them, and the log always matches the save).
-    /// Leaves out the Dungeon Pass (it belongs to the dungeon).
+    /// Leaves out the Dungeon Pass (it belongs to the dungeon). The hub storage is saved in the same transaction.
     /// </summary>
     private void SaveInventory(PeerSession s, params ItemEvent[] events)
     {
         if (s.Inventory == null || s.Gear == null || s.Character == null) return;
         _db.SaveItems(s.Character.Id,
             s.Inventory.Occupied().Where(o => o.ItemId != ItemCatalog.DungeonPassId),
-            s.Gear.Occupied(), s.PendingItemEvents.Concat(events).ToList());
+            s.Gear.Occupied(), s.PendingItemEvents.Concat(events).ToList(),
+            s.Storage?.Occupied().Where(o => o.ItemId != ItemCatalog.DungeonPassId));
         s.PendingItemEvents.Clear(); // only once the save succeeded (SaveItems throws otherwise)
     }
 }

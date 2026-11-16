@@ -127,6 +127,7 @@ public partial class ClientGame : Node
         _weaponLabel.Position += new Vector2(-12, -12);
 
         SetUpCombatClient(hud);
+        SetUpStorageClient();
 
         if (_devAuto)
         {
@@ -165,6 +166,7 @@ public partial class ClientGame : Node
         if (_noticeTimeLeft > 0 && (_noticeTimeLeft -= delta) <= 0)
             _noticeLabel.Visible = false;
         CombatProcess(delta);
+        StorageProcess(delta);
     }
 
     public override void _PhysicsProcess(double delta) => UpdateFocus();
@@ -198,6 +200,7 @@ public partial class ClientGame : Node
 
     private void OnInventory(int[] quads, int[] gear, int[] gearData)
     {
+        _lastInventoryQuads = quads;
         _inventory.SetState(quads, gear, gearData);
         UpdateEquippedWeapon(gear);
         _weaponLabel.Visible = true;

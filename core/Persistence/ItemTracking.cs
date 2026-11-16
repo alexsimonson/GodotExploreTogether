@@ -15,7 +15,7 @@ public sealed record ItemEventRecord(long Id, string At, ItemEvent Event);
 /// <summary>What the item event log records. Stored as text, so new actions need no migration.</summary>
 public static class ItemActions
 {
-    /// <summary>A new copy came into existence (Detail: where from). Loot gets its serial on first pickup.</summary>
+    /// <summary>A new copy came into existence (Detail: where from, e.g. "gathered from Tree"). Loot gets its serial on first pickup.</summary>
     public const string Created = "created";
     /// <summary>A copy saved before serials existed was given one when its owner logged in.</summary>
     public const string Registered = "registered";
@@ -23,6 +23,10 @@ public static class ItemActions
     public const string Dropped = "dropped";
     public const string Equipped = "equipped";
     public const string Unequipped = "unequipped";
+    /// <summary>Moved into the hub storage.</summary>
+    public const string Stored = "stored";
+    /// <summary>Taken out of the hub storage.</summary>
+    public const string Retrieved = "retrieved";
     /// <summary>Ammo moved into a gun (ItemId = the ammo, Count = rounds; Detail names the gun's serial).</summary>
     public const string Loaded = "loaded";
     /// <summary>Gone for good, e.g. carried by a hardcore character who died.</summary>

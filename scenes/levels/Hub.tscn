@@ -9,6 +9,7 @@
 [ext_resource type="Material" path="res://assets/materials/rockbottom.tres" id="7_rockbottom"]
 [ext_resource type="Material" path="res://assets/materials/roof_wood.tres" id="8_roof_wood"]
 [ext_resource type="PackedScene" path="res://scenes/props/DungeonEntrance.tscn" id="9_entrance"]
+[ext_resource type="PackedScene" path="res://scenes/props/StorageChest.tscn" id="10_storage"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_sky"]
 
@@ -222,3 +223,17 @@ mesh = SubResource("PlaneMesh_chess_patch")
 
 [node name="DungeonEntrance" parent="." instance=ExtResource("9_entrance")]
 transform = Transform3D(-1, 0, 0, 0, 1, 0, 0, 0, -1, 0, 0, 19.2)
+
+[node name="HubStorage" parent="." instance=ExtResource("10_storage")]
+transform = Transform3D(0, 0, -1, 0, 1, 0, 1, 0, 0, 5, 0, 14)
+
+[node name="ResourceSpots" type="Node3D" parent="."]
+
+[node name="Tree1" type="Marker3D" parent="ResourceSpots"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -12, 0, 4)
+
+[node name="Tree2" type="Marker3D" parent="ResourceSpots"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -15, 0, 8)
+
+[node name="Tree3" type="Marker3D" parent="ResourceSpots"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -10.5, 0, 10)

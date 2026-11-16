@@ -143,6 +143,21 @@ public static class Migrations
             CREATE INDEX idx_item_events_uid ON item_events(uid) WHERE uid IS NOT NULL;
             CREATE INDEX idx_item_events_character ON item_events(character_id);
             """),
+
+        // Hub storage (port of the original's CharacterData.hub_storage_inventory): per character, same
+        // columns as inventory_items. Deleted with the character, like the rest of what it owns.
+        new(7, "hub storage", Sql: """
+            CREATE TABLE storage_items (
+                character_id  INTEGER NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+                slot          INTEGER NOT NULL,
+                item_id       INTEGER NOT NULL,
+                count         INTEGER NOT NULL,
+                data          INTEGER,
+                uid           INTEGER,
+                PRIMARY KEY (character_id, slot)
+            );
+            CREATE INDEX idx_storage_items_uid ON storage_items(uid) WHERE uid IS NOT NULL;
+            """),
     ];
 
     public static int LatestVersion => All.Count;

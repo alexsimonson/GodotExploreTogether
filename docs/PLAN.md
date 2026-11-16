@@ -152,12 +152,31 @@ Each phase ends with something runnable.
   - A non-hardcore death returned to the hub with items intact.
   - A hardcore death deleted the character.
   - A screenshot confirmed the look. 102 unit tests.
-- Not ported: the original's enemy model and animations (placeholder for now), the held-weapon models, trees/resources, the Wave Survival mode.
+- Not ported: the original's enemy model and animations (placeholder for now), the held-weapon models, the Wave Survival mode. (Trees came in phase 6.)
+
+### Phase 6 — Gathering and hub storage
+- ✅ Gathering, ported from `Resource` / `TreeResource.prefab` (`core/Gathering/ResourceRules`, unit-tested):
+  - A tree needs an **Axe** (a `Tool` whose `ToolRole` is Axe) equipped. Press E on it, or hit it with the axe (the original `Tool.Attack` used whatever interactable it hit).
+  - The original rolls: 0–511, success on 12–399 (≈76%) gives a **Log**; after a success, 100–200 (≈20%) depletes the tree, which grows back after 5 s.
+  - Trees are replicated per instance like items (`ResourceNode`, `ResourceSpawner`); the depleted state is synced, and the canopy turns gray like the original's material swap.
+  - Dungeons get 5 trees from the original `FillMazeWithItems` loop (one per `i % 4 == 2`, padding 10), seeded. Each stands towards a corner of its cell so it never blocks a corridor or an enemy's start. Trees are baked into the navigation mesh as obstacles, so enemies walk around them.
+  - The hub has 3 trees (the original demo scene had one), at `ResourceSpots` markers in `Hub.tscn`.
+  - Differences (for review): **logs stack** (the original Log asset didn't, which would fill the inventory after a few swings); a full inventory stops the attempt instead of losing the log; the player gets a notice for each outcome (the original only logged them); a 0.6 s gather cooldown (the original rolled on every key press).
+  - Placeholder look: a trunk and a ball canopy (the original was a plain cube).
+- ✅ Hub storage, ported from `Storage` on `Hub.prefab`:
+  - **50 slots per character**, like the original's `CharacterData.hub_storage_inventory`. Everyone uses the same chest in the hub but sees their own storage.
+  - Open it with E at the chest (`StorageChest.tscn`). The inventory screen shows it as a third panel. Walking away closes the panel.
+  - Same drag rules as the inventory (`SlotContainerLogic` now has a `Storage` container): swap with the inventory, equip from it, unequip into it, drop from it. New: dropping a stack onto the same stackable item merges them.
+  - The server checks the player is at the chest for every request touching the storage. The Dungeon Pass can't be stored.
+  - Database v7: `storage_items`, same columns as `inventory_items`. Saved in the **same transaction** as inventory and gear (`SaveItems`), so nothing can be duplicated or lost moving between them. Serials travel into storage; the duplicate audit and the hardcore-death "destroyed" log include it. Item log actions `stored` / `retrieved`; gathered items are logged as `created` ("gathered from Tree").
+- ✅ Fixed on the way: the inventory screen never actually scaled down to fit small windows (its `CenterContainer` reset the scale). It now does, which the three-panel storage view needs at the default 1152×648.
+- ✅ **Done:** 152 unit tests. Smoke test `gather` scenario: a player chops 3 logs from the hub trees and stores them, another starts a dungeon with 5 trees. Also checked by hand (scripted): storage survives a re-login and new logs merge onto the stored stack; the navmesh has a hole around each dungeon tree; screenshots of the hub and the storage screen.
+- Open questions: storage per **character** (the original) or per **account** (would let characters share items)? What should logs be used for (crafting, building)?
 
 ### Later (not ordered)
 - Steam login/friends/invites.
 - Before public hosting: server-side movement validation and DTLS (security review findings 1 and the phase 2 warning). Rate limits, relay off and retired item ids are done (`docs/26-11-15/ITEM-SECURITY-REVIEW-2026-11-15.md`).
-- Hub features: storage, skills, crafting/resources, wave survival mode.
+- Hub features: skills (the original `SkillSystem` had Lumberjacking, Mining, ...), crafting, more resources, wave survival mode.
 - Inventory/gear UI polish. Art overhaul.
 - Deploying the server somewhere other than this PC (a Linux VPS, etc.). First step: a Linux dev server on a spare PC with Docker, see `docs/DEV_SERVER_SETUP.md`.
 - Exports for Linux/macOS clients.
