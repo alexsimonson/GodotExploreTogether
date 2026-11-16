@@ -98,6 +98,7 @@ public partial class ClientGame : Node
         _session.CityClockReceived += OnCityClock;
         _session.DoorStatesReceived += OnDoorStates;
         _session.LootReceived += OnLoot;
+        _session.DragStateReceived += OnDragState;
 
         _inventory = new InventoryScreen { Name = "Inventory", Visible = false };
         AddChild(_inventory);
@@ -169,6 +170,12 @@ public partial class ClientGame : Node
         else if (@event.IsActionPressed(InputSetup.LockDoor) && _focused is City.CityDoor door && !_dungeonMenu.Visible)
         {
             _session.SendLockDoor(door.InteractionId);
+        }
+        else if (@event.IsActionPressed(InputSetup.DragBody) && !_dungeonMenu.Visible && _currentKind == InstanceKinds.City)
+        {
+            // G: let go of the body being dragged, or take hold of the one looked at.
+            if (_draggingName != "") _session.SendDragBody("");
+            else if (_focused?.InteractionId.StartsWith(City.CityNpc.LootPrefix) == true) _session.SendDragBody(_focused.InteractionId);
         }
         else if (@event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Tab }
                  && _currentInstanceId != null && !_dungeonMenu.Visible)
@@ -409,6 +416,7 @@ public partial class ClientGame : Node
     {
         ClearInstances();
         _cityHour = -1; // until the city's clock arrives
+        _draggingName = "";
         if (kind == InstanceKinds.City) _cityLayoutData = layoutData;
         _inventory.CloseLoot();
         _dungeonMenu.Visible = false;
@@ -472,6 +480,8 @@ public partial class ClientGame : Node
                 _session.SendInteract(door.InteractionId);
                 me.LookAt(new Vector3(door.GlobalPosition.X, me.GlobalPosition.Y, door.GlobalPosition.Z));
             };
+        if (kind == InstanceKinds.City && CmdArgs.Has("dev-drag"))
+            GetTree().CreateTimer(2.5).Timeout += () => { if (_currentInstanceId == instanceId) DevDragStart(instanceId); };
         if (kind == InstanceKinds.City && CmdArgs.Has("dev-doors"))
             GetTree().CreateTimer(2.5).Timeout += () => { if (_currentInstanceId == instanceId) DevDoorsStart(instanceId); };
         if (kind == InstanceKinds.Hub && CmdArgs.Has("dev-city") && !_devCityDone)

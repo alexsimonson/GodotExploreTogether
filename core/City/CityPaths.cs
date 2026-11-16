@@ -81,6 +81,67 @@ public sealed class CityPaths
         ];
     }
 
+    /// <summary>
+    /// From anywhere on a parcel (say, where someone was dragged and left) back out to the street: from inside the
+    /// building through its door, otherwise across the yard to the door's front (around the house if it's in the
+    /// way), then out through the gate. Returns the points and whether the walk starts inside the building
+    /// (then the second leg passes through the door).
+    /// </summary>
+    public static (List<(float X, float Z)> Points, bool ThroughDoor) WayToStreet(Parcel p, (float X, float Z) from)
+    {
+        var way = WayIn(p, from); // [street at the gate, yard in front of the door, just inside, ...]
+        var (gateOut, yard, inside) = (way[0], way[1], way[2]);
+        if (p.Footprint.Contains(from.X, from.Z))
+            return ([inside, yard, gateOut], true);
+
+        // In the yard: go round the building if the straight line to the door's front crosses it.
+        var block = Grow(p.Footprint, CityCrowd.NpcRadius + 0.1f);
+        var corners = new List<(float X, float Z)>();
+        var g = Grow(p.Footprint, 0.9f);
+        foreach (var c in new[] { (g.MinX, g.MinZ), (g.MaxX, g.MinZ), (g.MaxX, g.MaxZ), (g.MinX, g.MaxZ) })
+            corners.Add((Math.Clamp(c.Item1, p.Bounds.MinX + 0.4f, p.Bounds.MaxX - 0.4f),
+                         Math.Clamp(c.Item2, p.Bounds.MinZ + 0.4f, p.Bounds.MaxZ - 0.4f)));
+        bool Clear((float X, float Z) a, (float X, float Z) b) => !SegmentHitsRect(a, b, block);
+        static float Len((float X, float Z) a, (float X, float Z) b) => MathF.Sqrt((a.X - b.X) * (a.X - b.X) + (a.Z - b.Z) * (a.Z - b.Z));
+
+        List<(float X, float Z)>? best = Clear(from, yard) ? [] : null;
+        var bestLength = best != null ? Len(from, yard) : float.MaxValue;
+        foreach (var c in corners)
+            if (Clear(from, c) && Clear(c, yard) && Len(from, c) + Len(c, yard) < bestLength)
+                (best, bestLength) = ([c], Len(from, c) + Len(c, yard));
+        if (best == null)
+            foreach (var c1 in corners)
+                foreach (var c2 in corners)
+                    if (c1 != c2 && Clear(from, c1) && Clear(c1, c2) && Clear(c2, yard)
+                        && Len(from, c1) + Len(c1, c2) + Len(c2, yard) < bestLength)
+                        (best, bestLength) = ([c1, c2], Len(from, c1) + Len(c1, c2) + Len(c2, yard));
+        var points = best ?? [];
+        points.Add(yard);
+        points.Add(gateOut);
+        return (points, false);
+    }
+
+    private static GroundRect Grow(GroundRect r, float by) => new(r.MinX - by, r.MinZ - by, r.MaxX + by, r.MaxZ + by);
+
+    /// <summary>Does the segment a-b pass through the rectangle (Liang-Barsky clipping)?</summary>
+    public static bool SegmentHitsRect((float X, float Z) a, (float X, float Z) b, GroundRect r)
+    {
+        float t0 = 0, t1 = 1, dx = b.X - a.X, dz = b.Z - a.Z;
+        foreach (var (p, q) in new[] { (-dx, a.X - r.MinX), (dx, r.MaxX - a.X), (-dz, a.Z - r.MinZ), (dz, r.MaxZ - a.Z) })
+        {
+            if (MathF.Abs(p) < 1e-6f)
+            {
+                if (q < 0) return false;
+                continue;
+            }
+            var t = q / p;
+            if (p < 0) t0 = MathF.Max(t0, t);
+            else t1 = MathF.Min(t1, t);
+            if (t0 > t1) return false;
+        }
+        return true;
+    }
+
     /// <summary>Street cells from one to another (both included), shortest first; empty if unreachable.</summary>
     public List<Cell> StreetRoute(Cell from, Cell to)
     {

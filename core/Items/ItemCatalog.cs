@@ -27,6 +27,7 @@ public sealed record ItemDef(
     int Damage = 0,
     int? MagazineSize = null,  // guns: rounds the weapon holds (loaded rounds travel with the weapon)
     int? AmmoItemId = null,    // guns: which item reloads it
+    bool KnocksOut = false,    // blunt (new): a hit knocks a city resident out instead of hurting them
     int LootCount = 1,         // how many make up one pickup when generated as loot
     bool Retired = false,      // no longer generated as loot, but still loads from saves (never delete an id)
     ToolRole? Role = null)     // tools only: which resources it can gather from
@@ -64,6 +65,10 @@ public static class ItemCatalog
     /// </summary>
     public const int KeyId = 1700;
 
+    /// <summary>New: blunt weapons. A hit knocks a city resident unconscious (draggable, wakes up later); against
+    /// dungeon enemies they're ordinary melee weapons.</summary>
+    public const int BatId = 1701, ConcreteBlockId = 1702;
+
     public static readonly IReadOnlyList<ItemDef> All =
     [
         new(0, "Default Item", "Placeholder really", true, "default_item.png"),
@@ -89,6 +94,10 @@ public static class ItemCatalog
         new(PistolRoundsId, "Pistol Rounds", "Ammunition for the pistol", true, "", LootCount: 10),
         new(1515, "Sword", "Just a sword", false, "sword.png", ItemClass.Melee, EquipmentType.Weapon, WeaponStyle.Melee, 10),
         new(KeyId, "Key", "Opens one particular door", false, ""),
+        new(BatId, "Bat", "A wooden bat. Knocks people out cold", false, "", ItemClass.Melee, EquipmentType.Weapon, WeaponStyle.Melee, 10,
+            KnocksOut: true),
+        new(ConcreteBlockId, "Concrete Block", "Heavy and blunt. Knocks people out cold", false, "", ItemClass.Melee, EquipmentType.Weapon,
+            WeaponStyle.Melee, 10, KnocksOut: true),
     ];
 
     private static readonly Dictionary<int, ItemDef> ById = All.ToDictionary(i => i.Id);

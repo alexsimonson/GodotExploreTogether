@@ -17,6 +17,8 @@
     crowd   - a player runs at walking city residents: it is stopped at arm's length, never inside them.
     doors   - a player searches a body, takes what it carried, and uses its key on the door it fits (lock, unlock,
               open, close) and fails on a door without its key; another player shoots a resident dead.
+    drag    - a player drags a knocked-out resident away and lets go; they come round later; another player knocks
+              residents out with a bat.
     gather  - one player chops the hub's trees with an axe and puts the logs into the hub storage; another
               starts a dungeon, which must get its trees (and still bake navigation around them).
   Every scenario also checks: no engine/script errors, remote players never fly off vertically,
@@ -104,6 +106,22 @@ $Scenarios = [ordered]@{
             Expect server "door \d+ closed by 'Kermit'" 'and closes it'
             Expect Kermit "notice: You don't have the key to this door." "a door won't lock or unlock without its key"
             Expect server "'Blueberry' hit .* with Pistol .*killed in city" 'Blueberry shoots a resident dead'
+        }
+    }
+    drag = @{
+        Port   = 7948
+        Server = @('--dev-skip-proximity', '--dev-starter-kit', '--city-seed', '4', '--city-start-hour', '9', '--dev-knockout-npcs', '1',
+                   '--city-wake-seconds', '15', '--dev-quit-after', '50')
+        Clients = [ordered]@{
+            Kermit    = @('--dev-city', '--dev-drag', '--dev-quit-after', '25')
+            Blueberry = @('--dev-city', '--dev-weapon', 'Bat', '--dev-fight', '--dev-chase-npc', '--dev-quit-after', '40')
+        }
+        Checks = {
+            Expect server "'Kermit' starts dragging .* \(unconscious\)" 'Kermit takes hold of a knocked-out resident'
+            Expect Kermit 'dragging ' "Kermit's client knows (slow walk)"
+            Expect server "'Kermit' lets go of .*, ([3-9]|\d{2,})\.\d m from where" 'and drags them a good way before letting go'
+            Expect server ' comes round' 'the knocked-out resident comes round later'
+            Expect server "'Blueberry' knocked out .* with Bat" 'a bat knocks a resident out'
         }
     }
     coop = @{

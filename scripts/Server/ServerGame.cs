@@ -25,6 +25,9 @@ public sealed class PeerSession(long peer)
     public Inventory? Storage { get; set; }
     /// <summary>The body this player is searching (node name of a dead city resident), if any.</summary>
     public string? LootingNpc { get; set; }
+    /// <summary>The body this player is dragging (node name), if any, and where it was picked up.</summary>
+    public string? DraggingNpc { get; set; }
+    public Vector3 DragStart { get; set; }
     /// <summary>
     /// Item events for changes not saved yet (slot moves are saved with the next save, not immediately).
     /// They're written in the same transaction as that save, so the log always matches the saved items.
@@ -129,11 +132,12 @@ public partial class ServerGame : Node
         SetUpCombat();
         _session.DropItemRequested += OnDropItem;
         _session.LockDoorRequested += OnLockDoor;
+        _session.DragBodyRequested += OnDragBody;
         _session.PlayerTransformReceived += (peer, instanceId, position, yaw) =>
         {
             // Ignore movement for an instance the player has already left.
             if (_instances.FindPlayer(peer) is { } f && f.Instance.Id == instanceId)
-                f.Player.ApplySubmittedTransform(position, yaw);
+                f.Player.ApplySubmittedTransform(position, yaw); // a body being dragged follows in the physics tick
         };
 
         var autosave = new Timer { WaitTime = AutosaveSeconds, Autostart = true };
@@ -301,6 +305,7 @@ public partial class ServerGame : Node
     /// <summary>Removes the player from where they are and tells their client to load the target.</summary>
     private async void SendToInstance(PeerSession s, ServerInstance target)
     {
+        LetGoOfBody(s, notify: true);
         var from = _instances.FindPlayer(s.Peer)?.Instance;
         if (from?.Kind == InstanceKinds.Dungeon) OnLeavingDungeon(s, from, connected: true);
         _instances.RemovePeer(s.Peer);
@@ -454,6 +459,7 @@ public partial class ServerGame : Node
     {
         GD.Print($"[server] peer {peer} disconnected");
         var from = _instances.FindPlayer(peer)?.Instance;
+        if (_sessions.TryGetValue(peer, out var leaving)) LetGoOfBody(leaving, notify: false);
         if (_sessions.Remove(peer, out var s))
         {
             if (from?.Kind == InstanceKinds.Dungeon) OnLeavingDungeon(s, from, connected: false);
@@ -503,7 +509,7 @@ public partial class ServerGame : Node
         const string origin = "dev starter kit";
         var inv = new Inventory();
         var events = new List<ItemEvent>();
-        foreach (var id in new[] { 1515, 1337, 567, 666, 8, 22 }) // Sword, Pistol, Ice/Blood Wand, Axe, Helmet
+        foreach (var id in new[] { 1515, 1337, 567, 666, 8, 22, ItemCatalog.BatId }) // Sword, Pistol, Ice/Blood Wand, Axe, Helmet, Bat
         {
             var uid = _db.RegisterItem(id, origin);
             inv.AddItem(id, uid: uid);

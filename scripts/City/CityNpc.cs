@@ -11,10 +11,12 @@ namespace ExploreTogether.City;
 ///
 /// Like a player, a resident has an inventory and equipment (server-side only: <see cref="Inventory"/>,
 /// <see cref="Gear"/>, see <see cref="NpcLoadout"/>). They can be hurt (the "Hitbox" is on the enemies'
-/// physics layer, so weapons hit it) and killed: the body then lies where it fell, and players can search it (E)
-/// and take what it carried.
+/// physics layer, so weapons hit it) and killed, or knocked out with a blunt weapon (a bat, a concrete block).
+/// Either way they're down where they fell: players can search them (E), take what they carry, and drag them (G).
+/// The unconscious wake up after a while and carry on, minus whatever was taken.
 ///
-/// Replicated: NetPosition, NetYaw, NetMoving, NetActivity, NetHealth, NetDead (changes), NetName, NetRole, NetId (at spawn).
+/// Replicated: NetPosition, NetYaw, NetMoving, NetActivity, NetHealth, NetDead, NetUnconscious (changes),
+/// NetName, NetRole, NetId (at spawn).
 /// </summary>
 public partial class CityNpc : Node3D
 {
@@ -30,6 +32,10 @@ public partial class CityNpc : Node3D
     [Export] public int NetId { get; set; }
     [Export] public int NetHealth { get; set; } = MaxHealth;
     [Export] public bool NetDead { get; set; }
+    [Export] public bool NetUnconscious { get; set; }
+
+    /// <summary>Dead or knocked out: on the ground, searchable and draggable.</summary>
+    public bool IsDown => NetDead || NetUnconscious;
 
     public MultiplayerSynchronizer Sync => GetNode<MultiplayerSynchronizer>("Sync");
     public NpcRole Role => (NpcRole)NetRole;
@@ -40,8 +46,13 @@ public partial class CityNpc : Node3D
     public CityNpcBrain Brain { get; set; } = null!;
     public Inventory Inventory { get; set; } = new();
     public Gear Gear { get; set; } = new();
-    /// <summary>What the body holds, once dead (inventory and gear together); players take from it.</summary>
+    /// <summary>What the body holds while down (inventory and gear together); players take from it.</summary>
     public Inventory? Loot { get; private set; }
+    /// <summary>The peer dragging this body, or 0.</summary>
+    public long DraggedBy { get; set; }
+    /// <summary>Server: they came round (whoever was dragging or searching them has to let go).</summary>
+    public event System.Action<CityNpc>? WokeUp;
+    private double _wakeIn;
 
     private Node3D _body = null!;
     private Label3D _label = null!;
@@ -56,7 +67,7 @@ public partial class CityNpc : Node3D
         _hitbox = GetNode<Interactable>("Hitbox");
         Position = NetPosition;
         Rotation = new Vector3(0, NetYaw, 0);
-        if (NetDead) MarkDead();
+        if (IsDown) MarkDown();
         if (Main.IsServer) return;
 
         var (clothes, hat) = Look(Role, NetId);
@@ -65,7 +76,7 @@ public partial class CityNpc : Node3D
         var hatMesh = GetNode<MeshInstance3D>("Body/Hat");
         hatMesh.Visible = hat != null;
         if (hat is { } h) hatMesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = h, Roughness = 0.5f, Metallic = Role == NpcRole.Guard ? 0.6f : 0 };
-        if (NetDead) _fall = 1;
+        if (IsDown) _fall = 1;
     }
 
     /// <summary>Clothes by role: guards in steel blue with a helmet, workers in work browns, civilians in varied colors.</summary>
@@ -86,7 +97,7 @@ public partial class CityNpc : Node3D
 
     // ============================================================ server
 
-    /// <summary>Server: damage from a player. Returns true if it killed them.</summary>
+    /// <summary>Server: damage from a player. Returns true if it killed them (an unconscious person too).</summary>
     public bool TakeDamage(int amount)
     {
         if (NetDead) return false;
@@ -94,20 +105,57 @@ public partial class CityNpc : Node3D
         if (NetHealth > 0) return false;
         Brain.Die();
         NetDead = true;
+        NetUnconscious = false;
         NetMoving = false;
         NetActivity = "dead";
-        Loot = NpcLoadout.ToLoot(Inventory, Gear);
-        Inventory = new Inventory();
-        Gear = new Gear();
-        MarkDead();
+        GoDown();
         return true;
     }
 
-    /// <summary>The body becomes searchable (and stops counting as solid).</summary>
-    private void MarkDead()
+    /// <summary>Server: a blunt blow. They drop, out cold, for <paramref name="seconds"/>. Returns false if already down.</summary>
+    public bool KnockOut(double seconds)
+    {
+        if (IsDown) return false;
+        Brain.KnockOut();
+        NetUnconscious = true;
+        NetMoving = false;
+        NetActivity = "unconscious";
+        _wakeIn = seconds;
+        GoDown();
+        return true;
+    }
+
+    /// <summary>Down: everything they carry becomes one searchable container.</summary>
+    private void GoDown()
+    {
+        if (Loot == null)
+        {
+            Loot = NpcLoadout.ToLoot(Inventory, Gear);
+            Inventory = new Inventory();
+            Gear = new Gear();
+        }
+        MarkDown();
+    }
+
+    /// <summary>The body becomes searchable and draggable (and stops counting as solid).</summary>
+    private void MarkDown()
     {
         _hitbox.InteractionId = LootId;
-        _hitbox.Prompt = $"Search {NetName}";
+        _hitbox.Prompt = $"Search {NetName}  ·  [G] Drag";
+    }
+
+    public override void _PhysicsProcess(double delta)
+    {
+        if (!Main.IsServer || !NetUnconscious || NetDead) return;
+        if ((_wakeIn -= delta) > 0) return;
+        // Coming round: what's left goes back on, and they find their way back to the street.
+        (Inventory, Gear) = NpcLoadout.FromLoot(Loot!);
+        Loot = null;
+        NetUnconscious = false;
+        _hitbox.InteractionId = "";
+        Brain.WakeUp();
+        NetActivity = Brain.Activity;
+        WokeUp?.Invoke(this);
     }
 
     // ============================================================ client
@@ -120,22 +168,24 @@ public partial class CityNpc : Node3D
         else Position = Position.Lerp(NetPosition, 1f - Mathf.Exp(-12f * dt));
         Rotation = new Vector3(0, Mathf.LerpAngle(Rotation.Y, NetYaw, 1f - Mathf.Exp(-10f * dt)), 0);
 
-        if (NetDead)
+        if (IsDown)
         {
-            if (_hitbox.InteractionId != LootId) MarkDead();
+            if (_hitbox.InteractionId != LootId) MarkDown();
             // Topple backwards over about half a second, and stay down.
             _fall = Mathf.Min(1f, _fall + dt * 2f);
-            _body.Rotation = new Vector3(Mathf.Pi / 2 * _fall * _fall, 0, 0);
-            _body.Position = new Vector3(0, 0.15f * _fall, 0);
         }
         else
         {
+            if (_hitbox.InteractionId != "") _hitbox.InteractionId = ""; // came round
+            _fall = Mathf.Max(0f, _fall - dt); // get back up
             // A little bob while walking.
             _walkPhase = NetMoving ? _walkPhase + dt * 9f : 0;
-            _body.Position = new Vector3(0, NetMoving ? Mathf.Abs(Mathf.Sin(_walkPhase)) * 0.06f : 0, 0);
         }
+        _body.Rotation = new Vector3(Mathf.Pi / 2 * _fall * _fall, 0, 0);
+        _body.Position = new Vector3(0, 0.15f * _fall + (NetMoving && !IsDown ? Mathf.Abs(Mathf.Sin(_walkPhase)) * 0.06f : 0), 0);
 
         var text = NetDead ? $"{NetName}\n(dead)"
+            : NetUnconscious ? $"{NetName}\n(unconscious)"
             : $"{NetName}\n{Role.ToString().ToLowerInvariant()}, {NetActivity}" + (NetHealth < MaxHealth ? $"  ♥{NetHealth}" : "");
         if (_shownLabel != text) _label.Text = _shownLabel = text;
     }

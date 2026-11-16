@@ -57,6 +57,7 @@ public partial class ServerGame
         while (_pendingAttacks.TryDequeue(out var attack))
             ResolveAttack(attack);
         TickMagicAreas();
+        TickDrags();
     }
 
     private void ResolveAttack(PendingAttack attack)
@@ -112,7 +113,7 @@ public partial class ServerGame
         var query = PhysicsRayQueryParameters3D.Create(origin, origin + dir * profile.Range, collisionMask: 1 | 8);
         var hit = space.IntersectRay(query);
         if (hit.Count > 0 && hit["collider"].AsGodotObject() is Node { } body && body.GetParent() is City.CityNpc npc)
-            return HitResident(s, instance, npc, profile.Damage, weapon.Name);
+            return HitResident(s, instance, npc, profile.Damage, weapon.Name, weapon.KnocksOut);
         if (hit.Count == 0 || hit["collider"].AsGodotObject() is not EnemyCharacter enemy) return false;
         if (!instance.Enemies.ContainsKey(enemy.Name) || enemy.IsDead) return false;
 
@@ -174,13 +175,13 @@ public partial class ServerGame
         {
             foreach (var npc in area.Instance.Npcs.Values)
             {
-                if (npc.NetDead || area.AlreadyHitNpcs.Contains(npc)) continue;
+                if (npc.IsDown || area.AlreadyHitNpcs.Contains(npc)) continue;
                 var off = npc.GlobalPosition - area.Center;
                 if (new Vector2(off.X, off.Z).Length() > CombatRules.MagicAreaRadius + Core.City.CityCrowd.NpcRadius || Mathf.Abs(off.Y) > 2f)
                     continue;
                 area.AlreadyHitNpcs.Add(npc);
                 if (_sessions.TryGetValue(area.OwnerPeer, out var caster))
-                    HitResident(caster, area.Instance, npc, area.Damage, $"magic ({area.Style})");
+                    HitResident(caster, area.Instance, npc, area.Damage, $"magic ({area.Style})", knocksOut: false);
             }
             foreach (var enemy in area.Instance.Enemies.Values.ToList())
             {

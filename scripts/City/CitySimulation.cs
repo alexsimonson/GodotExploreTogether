@@ -73,7 +73,7 @@ public partial class CitySimulation : Node
 
     private static void Apply(CityNpcBrain brain, CityNpc node)
     {
-        if (node.NetDead) return;
+        if (node.IsDown) return;
         var position = new Vector3(brain.X, 0, brain.Z);
         node.NetPosition = position;
         node.Position = position;

@@ -31,6 +31,9 @@ public partial class ServerGame
     private static readonly float CityDayMinutes = CmdArgs.GetFloat("city-day-minutes", 48);
 
     private static readonly int DevKillNpcs = CmdArgs.GetInt("dev-kill-npcs", 0);
+    private static readonly int DevKnockOutNpcs = CmdArgs.GetInt("dev-knockout-npcs", 0);
+    /// <summary>How long a knocked-out resident stays down (real seconds; --city-wake-seconds).</summary>
+    private static readonly float WakeSeconds = CmdArgs.GetFloat("city-wake-seconds", 90);
 
     /// <summary>A player has arrived in a city: tell them the time and the state of every door.</summary>
     private void OnEnteredCity(PeerSession s, ServerInstance city)
@@ -99,12 +102,109 @@ public partial class ServerGame
         }
     }
 
+    // ------------------------------------------------------------------ dragging bodies
+
+    /// <summary>G: take hold of a body (dead or knocked out), or let go ("").</summary>
+    private void OnDragBody(long peer, string interactionId)
+    {
+        if (!_sessions.TryGetValue(peer, out var s)) return;
+        if (interactionId == "" || s.DraggingNpc != null)
+        {
+            LetGoOfBody(s, notify: true);
+            if (interactionId == "") return;
+        }
+        if (!interactionId.StartsWith(CityNpc.LootPrefix) || !IsNear(s, interactionId, out var city)) return;
+        if (!city.Npcs.TryGetValue(interactionId[CityNpc.LootPrefix.Length..], out var npc) || !npc.IsDown) return;
+        if (npc.DraggedBy != 0 && npc.DraggedBy != peer)
+        {
+            _session.SendNotice(peer, "Someone else is dragging them.");
+            return;
+        }
+        npc.DraggedBy = peer;
+        s.DraggingNpc = npc.Name;
+        s.DragStart = npc.Position;
+        _session.SendDragState(peer, npc.NetName);
+        GD.Print($"[server] '{s.Character!.Name}' starts dragging {npc.NetName} ({(npc.NetDead ? "dead" : "unconscious")}) in city {city.Id}");
+    }
+
+    /// <summary>Each physics frame: bodies being dragged follow their draggers (never through walls, fences or closed doors).</summary>
+    private void TickDrags()
+    {
+        foreach (var s in _sessions.Values)
+        {
+            if (s.DraggingNpc is not { } name) continue;
+            if (_instances.FindPlayer(s.Peer) is not { Instance: { Kind: InstanceKinds.City } city } found
+                || !city.Npcs.TryGetValue(name, out var npc) || !npc.IsDown)
+            {
+                LetGoOfBody(s, notify: true);
+                continue;
+            }
+            var player = found.Player.NetPosition;
+            var (x, z, yaw) = Core.City.BodyDrag.Follow(npc.Position.X, npc.Position.Z, player.X, player.Z);
+            // Keep the body on the player's side of any wall: a ray from the player to where it would go.
+            var from = new Vector3(player.X, 0.3f, player.Z);
+            var to = new Vector3(x, 0.3f, z);
+            var hit = found.Player.GetWorld3D().DirectSpaceState.IntersectRay(
+                PhysicsRayQueryParameters3D.Create(from, to, collisionMask: 1));
+            if (hit.Count > 0)
+            {
+                var stop = from.DistanceTo((Vector3)hit["position"]) - 0.3f;
+                var dir = (to - from).Normalized();
+                (x, z) = (from.X + dir.X * Mathf.Max(0, stop), from.Z + dir.Z * Mathf.Max(0, stop));
+            }
+            var position = new Vector3(x, 0, z);
+            if (position.IsEqualApprox(npc.Position) && Mathf.IsEqualApprox(yaw, npc.NetYaw)) continue;
+            npc.Position = npc.NetPosition = position;
+            npc.NetYaw = yaw;
+            npc.Rotation = new Vector3(0, yaw, 0);
+            npc.Brain.MoveBody(x, z, yaw);
+        }
+    }
+
+    /// <summary>Lets go of the body this player drags (if any).</summary>
+    private void LetGoOfBody(PeerSession s, bool notify)
+    {
+        if (s.DraggingNpc is not { } name) return;
+        s.DraggingNpc = null;
+        foreach (var city in _instances.Cities)
+            if (city.Npcs.TryGetValue(name, out var npc) && npc.DraggedBy == s.Peer)
+            {
+                npc.DraggedBy = 0;
+                GD.Print($"[server] '{s.Character?.Name}' lets go of {npc.NetName}, " +
+                         $"{s.DragStart.DistanceTo(npc.Position):0.0} m from where they picked them up");
+            }
+        if (notify) _session.SendDragState(s.Peer, "");
+    }
+
+    private void OnResidentWokeUp(CityNpc npc)
+    {
+        GD.Print($"[server] {npc.NetName} comes round");
+        foreach (var s in _sessions.Values)
+        {
+            if (s.DraggingNpc == npc.Name)
+            {
+                LetGoOfBody(s, notify: true);
+                _session.SendNotice(s.Peer, $"{npc.NetName} comes round and pulls free!");
+            }
+            if (s.LootingNpc == npc.Name) s.LootingNpc = null;
+        }
+    }
+
     // ------------------------------------------------------------------ residents: harm and loot
 
-    /// <summary>A player's attack reached a resident. Returns true (it hit someone, alive or not).</summary>
-    private bool HitResident(PeerSession s, ServerInstance city, CityNpc npc, int damage, string weaponName)
+    /// <summary>
+    /// A player's attack reached a resident. A blunt weapon knocks a standing resident out; anything else hurts
+    /// (and can kill someone already knocked out). Returns true (it hit someone, standing or not).
+    /// </summary>
+    private bool HitResident(PeerSession s, ServerInstance city, CityNpc npc, int damage, string weaponName, bool knocksOut)
     {
         if (npc.NetDead) return true; // the body takes the hit
+        if (knocksOut)
+        {
+            if (npc.KnockOut(WakeSeconds))
+                GD.Print($"[server] '{s.Character!.Name}' knocked out {npc.NetName} ({npc.Role}) with {weaponName} in city {city.Id}");
+            return true;
+        }
         var killed = npc.TakeDamage(damage);
         GD.Print($"[server] '{s.Character!.Name}' hit {npc.NetName} ({npc.Role}) with {weaponName} for {damage} " +
                  $"({npc.NetHealth} left){(killed ? $", killed in city {city.Id}" : "")}");
@@ -114,7 +214,7 @@ public partial class ServerGame
     /// <summary>E on a body: show what it carries (take-only).</summary>
     private void SearchBody(PeerSession s, ServerInstance city, string npcName)
     {
-        if (!city.Npcs.TryGetValue(npcName, out var npc) || !npc.NetDead || npc.Loot == null) return;
+        if (!city.Npcs.TryGetValue(npcName, out var npc) || !npc.IsDown || npc.Loot == null) return;
         s.LootingNpc = npcName;
         SendLoot(s, npc);
         GD.Print($"[server] '{s.Character!.Name}' searches the body of {npc.NetName} ({npc.Loot.Occupied().Count()} item(s))");
@@ -130,7 +230,7 @@ public partial class ServerGame
         city = null!;
         npc = null!;
         if (s.LootingNpc is not { } name || _instances.FindPlayer(s.Peer)?.Instance is not { Kind: InstanceKinds.City } c) return false;
-        if (!c.Npcs.TryGetValue(name, out var n) || !n.NetDead || n.Loot == null || !IsNear(s, n.LootId, out _)) return false;
+        if (!c.Npcs.TryGetValue(name, out var n) || !n.IsDown || n.Loot == null || !IsNear(s, n.LootId, out _)) return false;
         (city, npc) = (c, n);
         return true;
     }
@@ -186,11 +286,20 @@ public partial class ServerGame
             foreach (var peer in city.Players.Keys)
                 _session.SendDoorStates(peer, [parcel, d.Open ? 1 : 0, d.Locked ? 1 : 0]);
         };
-        // Dev (--dev-kill-npcs N): bodies to search right away, preferably out on the street.
-        foreach (var npc in city.Npcs.Values.OrderBy(n => n.Brain.Inside >= 0).ThenBy(n => n.NetId).Take(DevKillNpcs).ToList())
+        // Someone who comes round can't still be dragged or searched.
+        foreach (var npc in city.Npcs.Values)
+            npc.WokeUp += OnResidentWokeUp;
+        // Dev (--dev-kill-npcs N, --dev-knockout-npcs N): bodies to search or drag right away, preferably on the street.
+        var onStreet = city.Npcs.Values.OrderBy(n => n.Brain.Inside >= 0).ThenBy(n => n.NetId).ToList();
+        foreach (var npc in onStreet.Take(DevKillNpcs))
         {
             npc.TakeDamage(CityNpc.MaxHealth);
             GD.Print($"[server] dev: {npc.NetName} ({npc.Role}) dies in city {city.Id}, carrying {npc.Loot!.Occupied().Count()} item(s)");
+        }
+        foreach (var npc in onStreet.Skip(DevKillNpcs).Take(DevKnockOutNpcs))
+        {
+            npc.KnockOut(WakeSeconds);
+            GD.Print($"[server] dev: {npc.NetName} ({npc.Role}) is knocked out in city {city.Id} for {WakeSeconds:0} s");
         }
         // Keep everyone's clock in step (clients run it on between updates).
         city.Simulation!.ClockBroadcast += (hour, rate) =>

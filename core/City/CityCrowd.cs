@@ -53,7 +53,7 @@ public sealed class CityCrowd
 
     /// <summary>Is anyone who lives or works on the parcel (other than <paramref name="self"/>) on it right now?</summary>
     public bool AnyoneBelongingInside(int parcel, CityNpcBrain self) =>
-        _city != null && _npcs.Any(b => b != self && !b.Dead && (b.Person.Home == parcel || b.Person.Work == parcel)
+        _city != null && _npcs.Any(b => b != self && !b.IsDown && (b.Person.Home == parcel || b.Person.Work == parcel)
                                        && _city.ParcelAt(b.X, b.Z)?.Id == parcel);
 
     public void Add(CityNpcBrain brain) => _npcs.Add(brain);
@@ -78,7 +78,7 @@ public sealed class CityCrowd
             if (Closer(fx, fz, x, z, px, pz, NpcRadius + PlayerRadius)) return Blocker.Player;
         if (ignoreNpcs) return Blocker.None;
         foreach (var other in _npcs)
-            if (other != self && !other.Dead && Closer(fx, fz, x, z, other.X, other.Z, NpcRadius * 2)) return Blocker.Npc;
+            if (other != self && !other.IsDown && Closer(fx, fz, x, z, other.X, other.Z, NpcRadius * 2)) return Blocker.Npc;
         return Blocker.None;
     }
 
@@ -89,7 +89,7 @@ public sealed class CityCrowd
         var bestD = NpcRadius * 2;
         foreach (var other in _npcs)
         {
-            if (other == self || other.Dead) continue;
+            if (other == self || other.IsDown) continue;
             var d = Dist(x, z, other.X, other.Z);
             if (d < bestD) (best, bestD) = (other, d);
         }

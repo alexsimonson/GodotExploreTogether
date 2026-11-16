@@ -18,15 +18,60 @@ namespace ExploreTogether.Client;
 /// - Searching a body: E on a dead resident opens the loot panel next to the inventory (take-only, "Take all").
 ///   Walking away closes it.
 ///
-/// Dev automation (needs the server's --dev-skip-proximity and --dev-kill-npcs N):
+/// - Dragging: G on someone who's down (dead or knocked out) takes hold of them; G again lets go. The server moves
+///   the body; the player walks slowly meanwhile (no sprinting or jumping).
+///
+/// Dev automation (needs the server's --dev-skip-proximity and --dev-kill-npcs N / --dev-knockout-npcs N):
 ///   --dev-doors   search a body, take everything, then lock and unlock the door their key fits, open and close
 ///                 it, and try a door without its key
+///   --dev-drag    take hold of the nearest body, walk straight ahead for 4 s, and let go
 /// </summary>
 public partial class ClientGame
 {
     private float _cityHour = -1, _cityHoursPerSecond;
     private int[] _cityLayoutData = [];
     private string? _lootNpcName; // the body being searched (node name)
+    private string _draggingName = ""; // whoever we're dragging (their name), or ""
+
+    private void OnDragState(string name)
+    {
+        _draggingName = name;
+        if (PlayerCharacter.Local is { } me) me.Dragging = name != "";
+        if (name != "") ShowNotice($"Dragging {name}. [G] to let go.");
+        GD.Print(name != "" ? $"[client] dragging {name}" : "[client] not dragging anyone");
+        DevDragStep(name);
+    }
+
+    // ---- dev automation: --dev-drag ----
+
+    private bool _devDragStarted;
+
+    private void DevDragStart(int instanceId)
+    {
+        if (!CmdArgs.Has("dev-drag") || _devDragStarted || PlayerCharacter.Local is not { } me) return;
+        _devDragStarted = true;
+        var body = _main.Instances.GetNodeOrNull(InstanceFactory.NodeName(instanceId))?.GetNode("Npcs").GetChildren()
+            .OfType<CityNpc>().Where(n => n.IsDown).MinBy(n => n.GlobalPosition.DistanceTo(me.GlobalPosition));
+        if (body == null)
+        {
+            GD.Print("[client] dev-drag: nobody down to drag");
+            return;
+        }
+        GD.Print($"[client] dev-drag: taking hold of {body.NetName} ({(body.NetDead ? "dead" : "unconscious")})");
+        _session.SendDragBody(body.LootId);
+    }
+
+    private void DevDragStep(string name)
+    {
+        if (!CmdArgs.Has("dev-drag") || name == "" || PlayerCharacter.Local is not { } me) return;
+        me.DevWalkForward = true;
+        GetTree().CreateTimer(4.0).Timeout += () =>
+        {
+            me.DevWalkForward = false;
+            GD.Print("[client] dev-drag: letting go");
+            _session.SendDragBody("");
+        };
+    }
 
     private void OnCityClock(float hour, float hoursPerSecond)
     {

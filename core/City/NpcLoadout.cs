@@ -6,8 +6,8 @@ namespace ExploreTogether.Core.City;
 /// What a city resident carries and wears, using the same inventory (28 slots) and gear (12 slots) as players.
 /// - Keys: one to their home's door and one to their workplace's (guards: their guardhouse).
 /// - Clothes: a shirt and pants; guards a helmet too.
-/// - Guards are armed: a sword, or now and then a pistol with spare rounds.
-/// - Some coins, sometimes a health kit; warehouse workers carry an axe.
+/// - Guards are armed: a sword, a bat, or now and then a pistol with spare rounds.
+/// - Some coins, sometimes a health kit; warehouse workers carry an axe (and often a concrete block).
 /// Nothing has a serial yet: items get one when a player takes them (like dungeon loot).
 /// </summary>
 public static class NpcLoadout
@@ -39,19 +39,43 @@ public static class NpcLoadout
         if (person.Role == NpcRole.Guard)
         {
             Wear(HelmetId);
-            if (random.Next(100) < 30)
+            var roll = random.Next(100);
+            if (roll < 30)
             {
                 Wear(PistolId);
                 inventory.AddItems(ItemCatalog.PistolRoundsId, 10 + random.Next(21));
             }
+            else if (roll < 55) Wear(ItemCatalog.BatId);
             else Wear(SwordId);
         }
         if (person.Role == NpcRole.Worker && city.Parcels[person.Work].Building == BuildingType.Warehouse)
+        {
             inventory.AddItems(AxeId, 1);
+            if (random.Next(100) < 50) inventory.AddItems(ItemCatalog.ConcreteBlockId, 1);
+        }
 
         var coins = random.Next(0, 26);
         if (coins > 0) inventory.AddItems(CoinId, coins);
         if (random.Next(100) < 20) inventory.AddItems(HealthKitId, 1);
+        return (inventory, gear);
+    }
+
+    /// <summary>
+    /// Waking up: whatever is left on them goes back on (equipment into its empty gear slot, the rest into the
+    /// inventory). What a player took stays taken.
+    /// </summary>
+    public static (Inventory Inventory, Gear Gear) FromLoot(Inventory loot)
+    {
+        var inventory = new Inventory();
+        var gear = new Gear();
+        foreach (var s in loot.slots.Where(s => s.itemId != null))
+        {
+            var def = ItemCatalog.Get(s.itemId!.Value);
+            var target = def?.Slot is { } type && gear.slots[(int)type].itemId == null
+                ? gear.slots[(int)type]
+                : inventory.FindEmptySlot() is var free and >= 0 ? inventory.slots[free] : null;
+            if (target != null) (target.itemId, target.stack_size, target.data, target.uid) = (s.itemId, s.stack_size, s.data, s.uid);
+        }
         return (inventory, gear);
     }
 

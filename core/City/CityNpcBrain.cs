@@ -43,6 +43,11 @@ public sealed class CityNpcBrain
     public float Speed { get; }
     /// <summary>Killed: stands (lies) still from now on.</summary>
     public bool Dead { get; private set; }
+    /// <summary>Knocked out: lies still (and can be dragged) until <see cref="WakeUp"/>.</summary>
+    public bool Unconscious { get; private set; }
+    /// <summary>Dead or knocked out: on the ground, not walking, not in anyone's way.</summary>
+    public bool IsDown => Dead || Unconscious;
+    private bool _recovering; // just woke up: finding the way back to the street
     /// <summary>
     /// Whether they carry a key to a parcel's door (parcel id). The server checks the resident's real inventory;
     /// by default (tests) they have keys to their home and workplace.
@@ -94,8 +99,18 @@ public sealed class CityNpcBrain
     /// <param name="crowd">The others to keep out of (see <see cref="CityCrowd"/>); null walks through everyone.</param>
     public void Update(float seconds, double time, CityCrowd? crowd = null)
     {
-        if (Dead) return;
+        if (IsDown) return;
         (_crowd, _doors) = (crowd, crowd?.Doors);
+        if (_recovering)
+        {
+            if (_route.Count > 0)
+            {
+                Walk(seconds, time, crowd);
+                return;
+            }
+            _recovering = false;
+            _hasGoal = false; // back on the street: carry on with the day from here
+        }
         var goal = DesiredGoal((float)(time % 24));
         if (!_hasGoal || goal != _goal)
         {
@@ -421,10 +436,53 @@ public sealed class CityNpcBrain
         Activity = "walking";
     }
 
+    /// <summary>A body being dragged: it goes where it's pulled (kept here so who-sees-what can use it later).</summary>
+    public void MoveBody(float x, float z, float yaw)
+    {
+        if (!IsDown) return;
+        (X, Z, Yaw) = (x, z, yaw);
+    }
+
+    /// <summary>Knocked out: drops where they stand until woken.</summary>
+    public void KnockOut()
+    {
+        if (IsDown) return;
+        Unconscious = true;
+        Moving = false;
+        _route.Clear();
+        _doorReady = false;
+        Inside = -1; // they may be dragged anywhere
+        Activity = "unconscious";
+    }
+
+    /// <summary>
+    /// Comes round wherever they lie (maybe dragged into someone's yard or house): first back out to the street the
+    /// safe way (through doors, round the building, out of the gate), then on with their day.
+    /// </summary>
+    public void WakeUp()
+    {
+        if (!Unconscious || Dead) return;
+        Unconscious = false;
+        Activity = "dazed";
+        _route.Clear();
+        _doorReady = false;
+        if (_city.ParcelAt(X, Z) is { } parcel)
+        {
+            var (points, throughDoor) = CityPaths.WayToStreet(parcel, (X, Z));
+            for (var i = 0; i < points.Count; i++)
+                _route.Enqueue(throughDoor && i == 1 ? new Waypoint(points[i].X, points[i].Z, parcel.Id) : points[i]);
+        }
+        _routeEndsIn = -1;
+        _routeLabel = "dazed";
+        _dwellHours = 0;
+        _recovering = true;
+    }
+
     /// <summary>Killed: drops where they stand and does nothing more.</summary>
     public void Die()
     {
         Dead = true;
+        Unconscious = false;
         Moving = false;
         _route.Clear();
         Activity = "dead";

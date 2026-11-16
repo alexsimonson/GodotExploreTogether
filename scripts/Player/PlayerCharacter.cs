@@ -44,6 +44,12 @@ public partial class PlayerCharacter : CharacterBody3D
 
     // Dev/test helpers (see Main for the args).
     private static readonly bool DevAutowalk = CmdArgs.Has("dev-autowalk");
+
+    /// <summary>Local player: dragging a body (the server says so). Slow walk, no sprinting or jumping.</summary>
+    public bool Dragging { get; set; }
+
+    /// <summary>Dev automation: walk straight ahead (e.g. dragging a body somewhere).</summary>
+    public bool DevWalkForward { get; set; }
     private static readonly bool DevLog = CmdArgs.Has("dev-log");
     private double _devLogTimer;
 
@@ -162,10 +168,12 @@ public partial class PlayerCharacter : CharacterBody3D
             input = new Vector2(0, -1);
         }
 
-        if (captured && Input.IsActionJustPressed(InputSetup.Jump) && IsOnFloor())
+        if (captured && Input.IsActionJustPressed(InputSetup.Jump) && IsOnFloor() && !Dragging)
             velocity.Y = JumpVelocity;
 
-        var speed = captured && Input.IsActionPressed(InputSetup.Sprint) ? SprintSpeed : WalkSpeed;
+        var speed = Dragging ? Core.City.BodyDrag.DragSpeed
+            : captured && Input.IsActionPressed(InputSetup.Sprint) ? SprintSpeed : WalkSpeed;
+        if (DevWalkForward) input = new Vector2(0, -1);
         var direction = (Transform.Basis * new Vector3(input.X, 0, input.Y)).Normalized();
         velocity.X = direction.X * speed;
         velocity.Z = direction.Z * speed;
@@ -240,7 +248,7 @@ public partial class PlayerCharacter : CharacterBody3D
                 if (!e.IsDead) yield return (e, BodyRadius + Enemies.EnemyCharacter.Radius);
         if (instance?.GetNodeOrNull("Npcs") is { } npcs)
             foreach (var n in npcs.GetChildren().OfType<City.CityNpc>())
-                if (!n.NetDead) yield return (n, BodyRadius + Core.City.CityCrowd.NpcRadius);
+                if (!n.IsDown) yield return (n, BodyRadius + Core.City.CityCrowd.NpcRadius);
     }
 
     /// <summary>Horizontal offset from another body and whether we overlap it vertically.</summary>

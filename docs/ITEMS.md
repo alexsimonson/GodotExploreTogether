@@ -28,6 +28,7 @@ Every kind of item is an `ItemDef` record:
 | `LootCount` | How many make one pickup when generated as loot (Pistol Rounds: 10) |
 | `Retired` | Taken out of the game: no longer generated as loot, but saved copies still load. **Use this instead of deleting an id.** |
 | `Role` | Tools only: the original `Tool.Role` (Axe, Pickaxe, Shovel, Rake, Screwdriver, Hammer). A resource needs a tool of its role. |
+| `KnocksOut` | New: a blunt weapon (Bat 1701, Concrete Block 1702). A hit knocks a city resident unconscious instead of hurting them; against dungeon enemies it's ordinary melee. |
 
 `ItemCatalog` holds the 17 definitions with `Get(id)` and `NameOf(id)`, plus `GenerateItem(random)` for loot. It lives in `core/`, so the server, the client and the unit tests all compile the same list. Three named ids are used in code: `DungeonPassId` (999), `PistolRoundsId` (1338) and `LogId` (432).
 

@@ -197,11 +197,29 @@ Each one ends with something runnable and a screenshot. Trespass detection is pu
      - Client: `--dev-doors` (search, take all, lock, unlock, open and close with the key, try a door without its key), `--dev-fight` also works in the city (shoots visible residents), `--dev-open-nearest-door`.
    - Smoke scenario `doors` covers the whole flow, plus the city check that every closed door blocks its doorway.
    - Deferred to the NPC depth phase: residents reacting to violence, guards responding, and any law or ownership consequences.
-6. **Trespass detection (players):**
+6. ✅ **Dragging bodies and knocking people out** (added on request, groundwork for stealth):
+   - **Dragging:** G on someone who's down (dead or knocked out) takes hold of them; G again lets go.
+     - The body trails the player on a 2.1 m "rope", head first, swinging round corners (`core/City/BodyDrag`, tested).
+     - The server moves it each physics frame from the player's position, with a ray so it never passes through walls, fences or closed doors.
+     - While dragging, the player walks at 2.2 m/s, can't sprint, and can't jump, so the only way past a fence is through a gate.
+     - Only one player can drag a body at a time. Leaving the city or disconnecting lets go.
+     - The brain keeps the body's position, so residents can discover bodies once stealth arrives.
+   - **Knocking out:** new blunt weapons, the Bat (1701) and the Concrete Block (1702), with `ItemDef.KnocksOut`. A hit knocks a standing resident out without hurting them.
+     - They drop and can be searched and dragged like a body. A lethal weapon kills them.
+     - They come round after `--city-wake-seconds` (90 by default). Whatever wasn't taken goes back on (`NpcLoadout.FromLoot`).
+     - Then they find their way back to the street (`CityPaths.WayToStreet`): out of a building through its door (unlocking from inside, relocking the latch), round the house if it's in the way, out through the gate, never through walls or fences. Then they carry on with their day.
+     - Tests: from behind a house and from inside a locked house (a mutation check confirms the detour is needed), and carrying on to work afterwards.
+     - Guards sometimes carry a bat instead of a sword; warehouse workers often carry a concrete block. The dev starter kit includes a bat.
+   - Dev:
+     - Server: `--dev-knockout-npcs N`, `--city-wake-seconds S`.
+     - Client: `--dev-drag` (grab the nearest body, walk 4 s, let go). `--dev-fight` with `--dev-weapon Bat` and `--dev-chase-npc` knocks residents out.
+   - Smoke scenario `drag`.
+   - Later (stealth phase): who notices a body, or someone being dragged or knocked out; hiding bodies; noise.
+7. **Trespass detection (players):**
    - The server tracks which parcel each player is on and flags trespass, using the access rule above. Players have no home yet, so only shops are allowed.
    - HUD indicator and log line.
    - Smoke scenario: a headless client walks into a yard and is flagged, then walks back to the street and the flag clears.
-7. **Seen trespassing:**
+8. **Seen trespassing:**
    - The people who belong on a parcel (`CityPopulation.PeopleOf`) and guards check vision (`EnemyBrain`'s rule) and report who saw the player.
    - Smoke scenario: a guard sees a player in a yard.
 

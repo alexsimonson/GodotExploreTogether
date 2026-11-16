@@ -316,6 +316,68 @@ public class CityNpcTests
         Assert.Null(sim.Crowd.Overlapping(sim.Brains.First(b => b != victim), x, z));
     }
 
+    /// <summary>Knocks someone out, drops their body at a spot, wakes them, and records where they walk until back on the street.</summary>
+    private static List<(float X, float Z)> WakeAt(Sim sim, CityNpcBrain who, (float X, float Z) spot)
+    {
+        who.KnockOut();
+        Assert.True(who.IsDown);
+        who.MoveBody(spot.X, spot.Z, 0);
+        RunUntil(sim, sim.Clock.Time + 0.2);
+        Assert.Equal(spot, (who.X, who.Z)); // out cold: doesn't move by itself
+        who.WakeUp();
+        var track = new List<(float X, float Z)>();
+        RunUntil(sim, sim.Clock.Time + 0.5, () => track.Add((who.X, who.Z))); // a minute of game time is plenty
+        return track;
+    }
+
+    [Fact]
+    public void WakingUpBehindAHouse_TheyGoRoundIt_AndOutOfTheGate()
+    {
+        var sim = Start(5, 2, 10);
+        var who = sim.Brains.First(b => b.Person.Role == NpcRole.Civilian && !b.Moving);
+        // The back of a 2-lot parcel's yard, behind its building.
+        var parcel = sim.City.Parcels.First(p => p.Cells.Count == 2);
+        var (bx, bz) = parcel.ToWorld(0, -parcel.Variant.Depth - 1.0f);
+        Assert.True(parcel.Bounds.Contains(bx, bz) && !parcel.Footprint.Contains(bx, bz));
+        var track = WakeAt(sim, who, (bx, bz));
+        Assert.DoesNotContain(track, t => parcel.Footprint.Contains(t.X, t.Z));
+        Assert.True(sim.City.IsStreet(CityLayout.CellAt(who.X, who.Z)) || who.Inside >= 0, $"{who.Person.Name} ended at ({who.X:0.0}, {who.Z:0.0})");
+        // Out through the gate only: never across a fence into another parcel.
+        Assert.All(track, t => Assert.True(sim.City.ParcelAt(t.X, t.Z) is not { } q || q == parcel || sim.Population.IsAllowed(who.Person, q)));
+    }
+
+    [Fact]
+    public void WakingUpInsideSomeonesHouse_TheyLeaveThroughTheDoor()
+    {
+        var sim = Start(5, 2, 10);
+        var who = sim.Brains.First(b => b.Person.Role == NpcRole.Worker);
+        var house = sim.City.Parcels.First(p => p.Building == BuildingType.House && p.Id != who.Person.Home);
+        sim.Doors.Close(house.Id);
+        sim.Doors.Lock(house.Id); // locked in: they can still let themselves out from inside
+        var track = WakeAt(sim, who, house.Spots[0]);
+        // Inside the building they stay within the walls until the doorway, then cross the yard to the gate.
+        var f = house.Footprint;
+        foreach (var t in track.Where(t => f.Contains(t.X, t.Z)))
+        {
+            var (lx, lz) = house.ToLocal(t.X, t.Z);
+            var (dx, _) = house.ToLocal(house.Door.X, house.Door.Z);
+            Assert.True(lz < -0.3f || MathF.Abs(lx - dx) < 0.8f, $"through the wall at local ({lx:0.0}, {lz:0.0})");
+        }
+        Assert.Null(sim.City.ParcelAt(track[^1].X, track[^1].Z) is { } end && end == house ? end : null);
+        Assert.True(sim.Doors.IsLocked(house.Id), "they should lock the latch behind them");
+    }
+
+    [Fact]
+    public void AfterWakingUp_TheyCarryOnWithTheirDay()
+    {
+        var sim = Start(5, 1, 9);
+        var who = sim.Brains.First(b => b.Person.Role == NpcRole.Worker);
+        var (x, z) = CityLayout.CellCenter(new CityPaths(sim.City).StreetCells[^1]);
+        WakeAt(sim, who, (x, z));
+        RunUntil(sim, 12.5);
+        Assert.Equal(who.Person.Work, who.Inside);
+    }
+
     [Fact]
     public void Clock_FormatsAndWraps()
     {

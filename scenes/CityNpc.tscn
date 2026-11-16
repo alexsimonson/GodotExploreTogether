@@ -62,6 +62,9 @@ properties/7/replication_mode = 2
 properties/8/path = NodePath(".:NetDead")
 properties/8/spawn = true
 properties/8/replication_mode = 2
+properties/9/path = NodePath(".:NetUnconscious")
+properties/9/spawn = true
+properties/9/replication_mode = 2
 
 [node name="CityNpc" type="Node3D"]
 script = ExtResource("1_npc")

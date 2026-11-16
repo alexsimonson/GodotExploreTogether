@@ -122,3 +122,69 @@ public class LootRulesTests
         Assert.True(SlotContainerLogic.IsAllowedForLoot(inv, gear, loot, ItemContainer.Inventory, 0, ItemContainer.Inventory, 7)); // no loot involved
     }
 }
+
+public class BodyDragTests
+{
+    [Fact]
+    public void TheBody_TrailsOnTheRope_AndPointsItsHeadAtThePlayer()
+    {
+        // Player 5 m north of the body: the body is pulled to 2.1 m behind them, head north (+Z: yaw 0).
+        var (x, z, yaw) = BodyDrag.Follow(0, 0, 0, 5);
+        Assert.Equal(0, x, 3);
+        Assert.Equal(5 - BodyDrag.RopeLength, z, 3);
+        Assert.Equal(0, yaw, 3);
+        // Player east: head toward +X (yaw 90 degrees).
+        Assert.Equal(MathF.PI / 2, BodyDrag.Follow(0, 0, 4, 0).Yaw, 3);
+    }
+
+    [Fact]
+    public void WalkingBackToTheBody_DoesntPushIt()
+    {
+        var (x, z, _) = BodyDrag.Follow(1, 1, 1.5f, 1.5f);
+        Assert.Equal((1f, 1f), (x, z));
+    }
+
+    [Fact]
+    public void TurningACorner_SwingsTheBodyAround()
+    {
+        // Walk north 5 m, then east 5 m: the body follows the corner rather than staying south of the player.
+        float bx = 0, bz = -BodyDrag.RopeLength, px = 0, pz = 0;
+        for (var i = 0; i < 50; i++) { pz += 0.1f; (bx, bz, _) = BodyDrag.Follow(bx, bz, px, pz); }
+        for (var i = 0; i < 50; i++) { px += 0.1f; (bx, bz, _) = BodyDrag.Follow(bx, bz, px, pz); }
+        var d = MathF.Sqrt((px - bx) * (px - bx) + (pz - bz) * (pz - bz));
+        Assert.Equal(BodyDrag.RopeLength, d, 2);
+        Assert.True(bx > 2.5f, $"body at ({bx:0.0}, {bz:0.0}) didn't come round the corner");
+    }
+}
+
+public class KnockOutLootTests
+{
+    [Fact]
+    public void WakingUp_PutsBackWhatWasntTaken()
+    {
+        var city = CityLayout.Generate(5, 5, 2);
+        var doors = new CityDoors(city);
+        var guard = CityPopulation.Generate(city, 2).People.First(p => p.Role == NpcRole.Guard);
+        var (inv, gear) = NpcLoadout.Generate(guard, city, doors, 2);
+        var weapon = gear.EquippedWeapon!.Id;
+        var loot = NpcLoadout.ToLoot(inv, gear);
+        // A player takes the key.
+        var key = loot.slots.First(s => s.itemId == ItemCatalog.KeyId);
+        key.itemId = null;
+        key.stack_size = 0;
+        key.data = null;
+        var (inv2, gear2) = NpcLoadout.FromLoot(loot);
+        Assert.False(doors.HasKey(inv2, guard.Home));
+        Assert.Equal(weapon, gear2.EquippedWeapon!.Id);
+        Assert.Equal(22, gear2.slots[(int)EquipmentType.Head].itemId);
+    }
+
+    [Fact]
+    public void BluntWeapons_KnockOut_AndAreNotRandomLoot()
+    {
+        Assert.True(ItemCatalog.Get(ItemCatalog.BatId)!.KnocksOut);
+        Assert.True(ItemCatalog.Get(ItemCatalog.ConcreteBlockId)!.KnocksOut);
+        Assert.False(ItemCatalog.Get(1515)!.KnocksOut);
+        Assert.Equal(ItemClass.Melee, ItemCatalog.Get(ItemCatalog.BatId)!.Class);
+    }
+}

@@ -207,7 +207,7 @@ public class ItemCatalogTests
     /// next save (item security review, finding 7), so items are retired (ItemDef.Retired), never removed.
     /// Add new ids here when adding items; never take one out.
     /// </summary>
-    private static readonly int[] ShippedIds = [0, 1, 2, 8, 20, 21, 22, 23, 24, 25, 432, 567, 666, 999, 1337, 1338, 1515, 1700];
+    private static readonly int[] ShippedIds = [0, 1, 2, 8, 20, 21, 22, 23, 24, 25, 432, 567, 666, 999, 1337, 1338, 1515, 1700, 1701, 1702];
 
     [Fact]
     public void Catalog_KeepsEveryShippedId()
