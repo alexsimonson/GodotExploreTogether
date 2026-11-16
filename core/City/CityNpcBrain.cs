@@ -39,6 +39,8 @@ public sealed partial class CityNpcBrain
     public Person Person { get; }
     public float X { get; private set; }
     public float Z { get; private set; }
+    /// <summary>Height off the ground: only above 0 mid-way over a fence.</summary>
+    public float Y { get; private set; }
     public float Yaw { get; private set; }
     public bool Moving { get; private set; }
     /// <summary>The parcel they're in (once arrived), or -1 on the street or while walking out.</summary>
@@ -109,6 +111,11 @@ public sealed partial class CityNpcBrain
         if (IsDown) return;
         (_crowd, _doors) = (crowd, crowd?.Doors);
         if (Held) return;
+        if (Frozen)
+        {
+            Moving = false;
+            return;
+        }
         if (_act != Act.None)
         {
             React(seconds, time);
@@ -297,6 +304,11 @@ public sealed partial class CityNpcBrain
 
     private void Walk(float seconds, double time, CityCrowd? crowd)
     {
+        if (_hop is { } hop)
+        {
+            ContinueHop(hop, seconds, time);
+            return;
+        }
         var step = Speed * _pace * seconds;
         Moving = false;
         if (_route.Count == 0)
@@ -331,6 +343,22 @@ public sealed partial class CityNpcBrain
             Yaw = MathF.Atan2(-dx, -dz);
             var move = MathF.Min(step, dist);
             float nx = X + dx / dist * move, nz = Z + dz / dist * move;
+            // Off the routine (chasing, fleeing, searching), routes may cut across yards: never through a wall,
+            // and over a fence only with a jump (or not at all, for those who won't climb).
+            if (_act != Act.None && Obstacles != null)
+            {
+                var ahead = 0.45f; // the body's front, a little past the step
+                var o = Obstacles(X, Z, nx + dx / dist * ahead, nz + dz / dist * ahead);
+                if (o == CityNav.Obstacle.Wall || o == CityNav.Obstacle.Low && !CanHop)
+                {
+                    Moving = false;
+                    _route.Clear(); // replan around it
+                    _nextReplan = 0;
+                    _plannedTo = (float.NaN, float.NaN);
+                    break;
+                }
+                if (o == CityNav.Obstacle.Low && StartHop(dx / dist, dz / dist)) break;
+            }
             var blocker = crowd?.Check(this, X, Z, nx, nz) ?? CityCrowd.Blocker.None;
             if (blocker == CityCrowd.Blocker.None)
             {

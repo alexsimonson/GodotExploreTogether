@@ -83,6 +83,19 @@ public sealed partial class CityNpcBrain
     private readonly Queue<NpcIntent> _intents = new();
     private long _attackedBy;
 
+    private double _frozenUntil = -1;
+
+    /// <summary>Frozen by frost magic: can't move or act (but still sees, and remembers) until it wears off.</summary>
+    public bool Frozen => _clockSeconds < _frozenUntil;
+
+    /// <summary>Frost magic: frozen in place for <paramref name="seconds"/> (longer freezes don't shorten).</summary>
+    public void Freeze(float seconds)
+    {
+        if (IsDown) return;
+        _frozenUntil = Math.Max(_frozenUntil, _clockSeconds + seconds);
+        Moving = false;
+    }
+
     /// <summary>Held in a player's grip: doesn't move or act (the server moves them along).</summary>
     public bool Held { get; private set; }
     public Mood Mood { get; private set; }
@@ -120,7 +133,38 @@ public sealed partial class CityNpcBrain
     private bool Brave => Person.Has(NpcTraits.Brave);
     private bool Timid => Person.Has(NpcTraits.Timid);
     private bool Armed => HasGun || HasMeleeWeapon;
-    private bool CanHop => Person.Role is NpcRole.Police or NpcRole.Security || Brave;
+    /// <summary>Will climb a fence (police, security, and anyone not timid), when that's the shorter way.</summary>
+    private bool CanHop => Person.Role is NpcRole.Police or NpcRole.Security || !Timid;
+
+    /// <summary>A jump over a fence in progress: from, to, and how far along (0..1).</summary>
+    private sealed record Hop((float X, float Z) From, (float X, float Z) To) { public float T; }
+    private Hop? _hop;
+    public const float HopSeconds = 0.55f, HopLength = 1.3f, HopHeight = 0.75f;
+
+    /// <summary>A fence just ahead along (ux, uz): jump it, landing past it, if the landing is clear.</summary>
+    private bool StartHop(float ux, float uz)
+    {
+        var to = (X + ux * HopLength, Z + uz * HopLength);
+        if (Obstacles?.Invoke(to.Item1, to.Item2, to.Item1 + ux * 0.4f, to.Item2 + uz * 0.4f) == CityNav.Obstacle.Wall) return false;
+        _hop = new Hop((X, Z), to);
+        Yaw = MathF.Atan2(-ux, -uz);
+        Moving = true;
+        return true;
+    }
+
+    private void ContinueHop(Hop hop, float seconds, double time)
+    {
+        hop.T = MathF.Min(1, hop.T + seconds / HopSeconds);
+        X = hop.From.X + (hop.To.X - hop.From.X) * hop.T;
+        Z = hop.From.Z + (hop.To.Z - hop.From.Z) * hop.T;
+        Y = HopHeight * 4 * hop.T * (1 - hop.T);
+        if (hop.T < 1) return;
+        Y = 0;
+        _hop = null;
+        _nextReplan = 0; // look again from the other side
+        _plannedTo = (float.NaN, float.NaN);
+        _route.Clear();
+    }
 
     /// <summary>On duty to keep order right now: police (awake) and security at their post.</summary>
     private bool OnDuty => Person.Role == NpcRole.Police && !Asleep
@@ -487,6 +531,7 @@ public sealed partial class CityNpcBrain
 
     private void Begin(Act act, long target, string activity, float pace, double maxSeconds)
     {
+        if (_hop != null) { (X, Z, Y, _hop) = (_hop.To.X, _hop.To.Z, 0, null); }
         if (_act == Act.Holding && act != Act.Holding) Emit(new NpcIntent(NpcIntentKind.Release, _target));
         _act = act;
         _target = target;
@@ -571,6 +616,7 @@ public sealed partial class CityNpcBrain
     private void EndReaction(bool returnToRoutine = true)
     {
         if (_act == Act.None) return;
+        if (_hop != null) { (X, Z, Y, _hop) = (_hop.To.X, _hop.To.Z, 0, null); }
         _act = Act.None;
         _target = 0;
         _pace = 1;
@@ -856,7 +902,7 @@ public sealed partial class CityNpcBrain
         _nextReplan = _clockSeconds + 1.0;
         _route.Clear();
         _doorReady = false;
-        foreach (var p in CityNav.Route(_city, _paths, (X, Z), to, _lane, Obstacles, CanHop && _pace > 2))
+        foreach (var p in CityNav.Route(_city, _paths, (X, Z), to, _lane, Obstacles, CanHop && _act is Act.Arrest or Act.Attack or Act.Flee))
             _route.Enqueue(p);
         var target = _city.ParcelAt(to.X, to.Z);
         _routeEndsIn = target != null && target.Footprint.Contains(to.X, to.Z) ? target.Id : -1;

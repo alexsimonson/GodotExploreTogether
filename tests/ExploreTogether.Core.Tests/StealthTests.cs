@@ -125,6 +125,18 @@ public class BreachingTests
     }
 
     [Fact]
+    public void Strangling_TakesLongerOnTheTough_AndTheyWeakenAsItGoes()
+    {
+        Assert.Equal(3.5f, Breaching.StrangleSeconds(0, false), 3);
+        Assert.Equal(6.5f, Breaching.StrangleSeconds(1, false), 3);
+        Assert.True(Breaching.StrangleSeconds(0.5f, true) < Breaching.StrangleSeconds(0.5f, false));
+        var chance = Breaching.EscapeChancePerSecond(0.5f, false);
+        Assert.True(Breaching.EscapeWhileStrangled(chance, 0) > chance);      // desperate at first
+        Assert.True(Breaching.EscapeWhileStrangled(chance, 0.9f) < chance / 3); // fading
+        Assert.True(Breaching.EscapeWhileStrangled(chance, 1) > 0);
+    }
+
+    [Fact]
     public void FromBehind_IsOutsideTheirView()
     {
         // Facing -Z (yaw 0): someone at +Z is behind, someone at -Z in front.
@@ -424,6 +436,62 @@ public class ReactionTests
         Assert.False(victim.Held);
         Assert.True(victim.Mood >= Mood.Alarmed, $"{victim.Mood} ({victim.Activity})");
         Assert.True(victim.SuspicionOf(42).Level >= Stealth.Alarmed);
+    }
+
+    [Fact]
+    public void Frost_FreezesAResident_InPlace_UntilItWearsOff()
+    {
+        var w = Start(hour: 10);
+        w.Run(1);
+        var walker = w.Brains.First(b => b.Inside < 0 && !b.IsDown);
+        walker.Freeze(5);
+        var (x, z) = (walker.X, walker.Z);
+        w.Run(4.5);
+        Assert.True(walker.Frozen);
+        Assert.Equal((x, z), (walker.X, walker.Z));
+        Assert.False(walker.Moving);
+        w.Run(1);
+        Assert.False(walker.Frozen);
+        var moved = false;
+        for (var i = 0; i < 600 && !moved; i++)
+        {
+            w.Run(0.1);
+            moved = (walker.X, walker.Z) != (x, z);
+        }
+        Assert.True(moved, "they carry on once thawed");
+    }
+
+    [Fact]
+    public void Pursuers_JumpFences_ButNeverWalkThroughWalls()
+    {
+        var w = Start(hour: 10);
+        w.Run(1);
+        var cop = w.Brains.First(b => b.Person.Role == NpcRole.Police && b.Activity == "patrolling");
+        // A pretend fence: a line 3 m ahead (across their way to the player), low enough to jump.
+        var yaw = cop.Yaw;
+        var fx = cop.X - MathF.Sin(yaw) * 3;
+        var fz = cop.Z - MathF.Cos(yaw) * 3;
+        float Side(float x, float z) => (x - fx) * -MathF.Sin(yaw) + (z - fz) * -MathF.Cos(yaw);
+        cop.Obstacles = (ax, az, bx, bz) => Side(ax, az) * Side(bx, bz) < 0 ? CityNav.Obstacle.Low : CityNav.Obstacle.None;
+        var (px, pz) = (cop.X - MathF.Sin(yaw) * 8, cop.Z - MathF.Cos(yaw) * 8);
+        var hopped = false;
+        for (var i = 0; i < 120 && !hopped; i++)
+        {
+            w.Run(0.05, b => b == cop ? SeeingPlayer(b, px, pz, Conduct.Violent, -1) : null);
+            if (i % 4 == 0) cop.Perceive(SeeingPlayer(cop, px, pz, Conduct.Violent, -1), 0.2f, 10);
+            hopped = cop.Y > 0.3f;
+        }
+        Assert.True(hopped, "the officer jumps the fence");
+        w.Run(1, b => b == cop ? SeeingPlayer(b, px, pz, Conduct.Violent, -1) : null);
+        Assert.Equal(0, cop.Y);
+        Assert.True(Side(cop.X, cop.Z) > 0, "and lands on the far side");
+
+        // A wall: never crossed, by anyone.
+        cop.Obstacles = (ax, az, bx, bz) => Side(ax, az) * Side(bx, bz) < 0 ? CityNav.Obstacle.Wall : CityNav.Obstacle.None;
+        var side = MathF.Sign(Side(cop.X, cop.Z));
+        (px, pz) = (fx + MathF.Sin(yaw) * 6, fz + MathF.Cos(yaw) * 6);
+        w.Run(4, b => b == cop ? SeeingPlayer(b, px, pz, Conduct.Violent, -1) : null);
+        Assert.Equal(side, MathF.Sign(Side(cop.X, cop.Z)));
     }
 
     [Fact]

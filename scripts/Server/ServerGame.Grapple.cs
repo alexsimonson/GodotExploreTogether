@@ -15,8 +15,9 @@ namespace ExploreTogether.Server;
 /// Grappling, both ways (numbers in Core.City.Breaching):
 /// - F on a standing resident grabs them. They're pulled along in front of you; each second they may wriggle free
 ///   (tougher people more often; half as often when grabbed by surprise from behind, when they also can't cry out).
-///   Hold on for <see cref="Breaching.ChokeSeconds"/> and they pass out. F again lets go. Either way, once free they
-///   remember you.
+///   Hold the attack button to strangle them: a meter fills over <see cref="Breaching.StrangleSeconds"/> and then
+///   they're subdued (unconscious). Strangled, they can't cry out; they fight hard at first and weaken as it goes;
+///   ease off and they recover. F again lets go. Either way, once free (or awake) they remember you.
 /// - Police, security and brave residents grab players to arrest or detain them. Held, you can barely move; mash F to
 ///   struggle free, which counts as resisting (police then use force). Police holding you for
 ///   <see cref="Breaching.ArrestSeconds"/> arrest you: you're escorted out of the city, back to the hub.
@@ -43,6 +44,10 @@ public partial class ServerGame
                 if (s.HeldByNpc != null) Struggle(s, found.Instance);
                 else if (s.HoldingNpc != null || target == "") LetGoOfResident(s, escaped: false, notify: true);
                 else GrabResident(s, found.Instance, target);
+                break;
+            case "strangle":
+                s.Strangling = target == "1" && s.HoldingNpc != null;
+                if (!s.Strangling && s.StrangleProgress <= 0) _session.SendProgress(peer, "", 0);
                 break;
             case "struggle":
                 if (s.HeldByNpc != null) Struggle(s, found.Instance);
@@ -80,10 +85,11 @@ public partial class ServerGame
         s.HoldingSince = Now;
         s.HoldingSurprised = surprised;
         s.NextEscapeRoll = Now + 1;
+        (s.Strangling, s.StrangleProgress) = (false, 0);
         npc.Brain.GrabbedBy(s.Peer, me.X, me.Z, surprised);
         _session.SendGrabState(s.Peer, "holding", npc.NetName);
-        _session.SendNotice(s.Peer, surprised ? $"You grab {npc.NetName} from behind. Hold on (F to let go)..."
-                                              : $"You grab {npc.NetName}! They're struggling... (F to let go)");
+        _session.SendNotice(s.Peer, surprised ? $"You grab {npc.NetName} from behind. Hold left mouse to strangle, F to let go."
+                                              : $"You grab {npc.NetName}! They're struggling. Hold left mouse to strangle, F to let go.");
         GD.Print($"[server] '{s.Character!.Name}' grabs {npc.NetName} ({npc.Role}, grit {npc.Brain.Person.Grit:0.00})" +
                  (surprised ? " from behind" : ""));
     }
@@ -93,6 +99,8 @@ public partial class ServerGame
     {
         if (s.HoldingNpc is not { } name) return;
         s.HoldingNpc = null;
+        if (s.StrangleProgress > 0 && notify) _session.SendProgress(s.Peer, "", 0);
+        (s.Strangling, s.StrangleProgress) = (false, 0);
         if (notify) _session.SendGrabState(s.Peer, "", "");
         foreach (var city in _instances.Cities)
             if (city.Npcs.TryGetValue(name, out var npc) && npc.HeldBy == s.Peer)
@@ -138,23 +146,42 @@ public partial class ServerGame
         npc.Brain.MoveHeld(want.X, want.Z, yaw);
 
         var now = Now;
-        if (now - s.HoldingSince >= Breaching.ChokeSeconds)
+        var dt = (float)GetPhysicsProcessDeltaTime();
+        var grit = npc.Brain.Person.Grit;
+        if (s.Strangling)
+        {
+            s.StrangleProgress += dt / Breaching.StrangleSeconds(grit, s.HoldingSurprised);
+            s.LastViolentAt = now; // anyone who sees it sees an attack
+        }
+        else if (s.StrangleProgress > 0)
+            s.StrangleProgress = Mathf.Max(0, s.StrangleProgress - Breaching.StrangleRecoveryPerSecond * dt);
+        if (s.StrangleProgress >= 1)
         {
             s.HoldingNpc = null;
+            (s.Strangling, s.StrangleProgress) = (false, 0);
             npc.HeldBy = 0;
             npc.Brain.Attacked(s.Peer, p.X, p.Z); // they'll remember who it was
             npc.KnockOut(WakeSeconds);
             _session.SendGrabState(s.Peer, "", "");
+            _session.SendProgress(s.Peer, "", 0);
             _session.SendNotice(s.Peer, $"{npc.NetName} goes limp.");
-            GD.Print($"[server] '{s.Character!.Name}' chokes {npc.NetName} unconscious in city {city.Id}");
+            GD.Print($"[server] '{s.Character!.Name}' strangles {npc.NetName} unconscious in city {city.Id} " +
+                     $"(held {now - s.HoldingSince:0.0} s)");
             return;
+        }
+        if (s.StrangleProgress > 0 && now - s.LastStrangleSent >= 0.15)
+        {
+            s.LastStrangleSent = now;
+            _session.SendProgress(s.Peer, s.Strangling ? "Strangling" : "Easing off", -s.StrangleProgress);
         }
         if (now >= s.NextEscapeRoll)
         {
             s.NextEscapeRoll = now + 1;
-            var chance = Breaching.EscapeChancePerSecond(npc.Brain.Person.Grit, s.HoldingSurprised);
+            var chance = Breaching.EscapeChancePerSecond(grit, s.HoldingSurprised);
+            if (s.Strangling) chance = Breaching.EscapeWhileStrangled(chance, s.StrangleProgress);
+            if (npc.Brain.Frozen) chance = 0; // frozen stiff
             if (_combatRandom.NextDouble() < chance) LetGoOfResident(s, escaped: true, notify: true);
-            else if (!s.HoldingSurprised && _combatRandom.NextDouble() < 0.5)
+            else if (!s.HoldingSurprised && !s.Strangling && _combatRandom.NextDouble() < 0.5)
                 EmitNoise(city, new Noise(want.X, want.Z, Stealth.ShoutRadius, "shout", Severity.Crime, s.Peer));
         }
     }

@@ -45,6 +45,8 @@ public partial class CityNpc : Node3D
     [Export] public int NetWeapon { get; set; } = -1;
     /// <summary>In a player's grip.</summary>
     [Export] public bool NetHeld { get; set; }
+    /// <summary>Frozen by frost magic (an icy tint on clients).</summary>
+    [Export] public bool NetFrozen { get; set; }
 
     /// <summary>Dead or knocked out: on the ground, searchable and draggable.</summary>
     public bool IsDown => NetDead || NetUnconscious;
@@ -81,6 +83,9 @@ public partial class CityNpc : Node3D
     private double _speechLeft;
     private MeshInstance3D? _weaponMesh;
     private int _shownWeapon = -1;
+    private StandardMaterial3D? _torsoMaterial;
+    private Color _clothes;
+    private bool _shownFrozen;
 
     public override void _Ready()
     {
@@ -110,7 +115,9 @@ public partial class CityNpc : Node3D
 
         var (clothes, hat) = Look(Role, NetId);
         var torso = GetNode<MeshInstance3D>("Body/Torso");
-        torso.MaterialOverride = new StandardMaterial3D { AlbedoColor = clothes, Roughness = 0.85f };
+        _clothes = clothes;
+        _torsoMaterial = new StandardMaterial3D { AlbedoColor = clothes, Roughness = 0.85f };
+        torso.MaterialOverride = _torsoMaterial;
         var hatMesh = GetNode<MeshInstance3D>("Body/Hat");
         hatMesh.Visible = hat != null;
         if (hat is { } h) hatMesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = h, Roughness = 0.5f, Metallic = Role == NpcRole.Police ? 0.6f : 0 };
@@ -237,7 +244,7 @@ public partial class CityNpc : Node3D
             if (_hitbox.Prompt.StartsWith("Search")) MarkStanding(); // came round
             _fall = Mathf.Max(0f, _fall - dt); // get back up
             // A little bob while walking.
-            _walkPhase = NetMoving ? _walkPhase + dt * 9f : 0;
+            _walkPhase = NetMoving && !NetFrozen ? _walkPhase + dt * 9f : 0;
         }
         Pose(_fall);
         if (NetMoving && !IsDown) _body.Position += new Vector3(0, Mathf.Abs(Mathf.Sin(_walkPhase)) * 0.06f, 0);
@@ -252,7 +259,7 @@ public partial class CityNpc : Node3D
         };
         var text = NetDead ? $"{NetName}\n(dead)"
             : NetUnconscious ? $"{NetName}\n(unconscious)"
-            : $"{marker}{NetName}\n{Role.ToString().ToLowerInvariant()}, {NetActivity}" + (NetHealth < MaxHealth ? $"  ♥{NetHealth}" : "");
+            : $"{marker}{NetName}\n{Role.ToString().ToLowerInvariant()}, {(NetFrozen ? "frozen" : NetActivity)}" + (NetHealth < MaxHealth ? $"  ♥{NetHealth}" : "");
         if (_shownLabel != text)
         {
             _label.Text = _shownLabel = text;
@@ -267,6 +274,12 @@ public partial class CityNpc : Node3D
         }
         UpdateSpeech(dt);
         UpdateWeapon();
+        if (_torsoMaterial != null && _shownFrozen != (NetFrozen && !IsDown))
+        {
+            // Frozen: icy blue, like frozen dungeon enemies.
+            _shownFrozen = NetFrozen && !IsDown;
+            _torsoMaterial.AlbedoColor = _shownFrozen ? new Color(0.35f, 0.6f, 1f) : _clothes;
+        }
     }
 
     private void UpdateSpeech(float dt)

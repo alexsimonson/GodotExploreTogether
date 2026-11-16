@@ -9,8 +9,10 @@ namespace ExploreTogether.Core.City;
 /// - Kicking (K): loud. A locked door gives after 2 (cottage) to 6 (police station) kicks; an unlocked one at once.
 ///   It ends <see cref="CityDoors.DoorState.Broken"/>, forced open for good.
 /// - Shotgun slugs at the deadbolt (from close up): very loud, instant; the lock is destroyed, the door intact.
-/// - Grappling: a player holding a resident chokes them unconscious after <see cref="ChokeSeconds"/>, unless
-///   they break free first (each second, a chance from their grit). A resident holding a player arrests them
+/// - Grappling: a player can hold a resident as long as they don't wriggle free (each second, a chance from their
+///   grit). Strangling them (hold the attack button) fills a meter over <see cref="StrangleSeconds"/>: full, they're
+///   subdued (unconscious). They fight hardest at first and weaken as it goes; ease off and they get their breath
+///   back. A resident holding a player arrests them
 ///   (police) after <see cref="ArrestSeconds"/> unless the player struggles free (mashing the grab key).
 /// </summary>
 public static class Breaching
@@ -47,8 +49,23 @@ public static class Breaching
     public const float HoldDistance = 0.7f;
     /// <summary>How close you must be to grab someone (m).</summary>
     public const float GrabReach = 1.8f;
-    /// <summary>Holding a resident this long chokes them unconscious.</summary>
-    public const float ChokeSeconds = 4.5f;
+    /// <summary>
+    /// How long a strangle takes to subdue someone: 3.5 s for the feeblest to 6.5 s for the toughest, 15% quicker
+    /// when they were taken by surprise.
+    /// </summary>
+    public static float StrangleSeconds(float grit, bool surprised) =>
+        (3.5f + 3f * Math.Clamp(grit, 0, 1)) * (surprised ? 0.85f : 1f);
+
+    /// <summary>Easing off: the strangle meter drains this much per second (they get their breath back).</summary>
+    public const float StrangleRecoveryPerSecond = 0.15f;
+
+    /// <summary>
+    /// Their chance of wriggling free (per second) while being strangled: desperate at first (140% of
+    /// <see cref="EscapeChancePerSecond"/>), fading to almost nothing as they black out.
+    /// </summary>
+    public static float EscapeWhileStrangled(float chance, float progress) =>
+        chance * MathF.Max(0.1f, 1.4f - 1.3f * Math.Clamp(progress, 0, 1));
+
     /// <summary>Held by police this long: arrested.</summary>
     public const float ArrestSeconds = 5f;
 

@@ -8,6 +8,7 @@ What was built for [TODO.md](TODO.md) (items 0 to 4) and the follow-ups that cam
 |---|---|
 | C (hold) | Crouch: slow (2.4 m/s), quiet, harder to see |
 | F | Grab the resident you're looking at; F again lets go. When a resident holds you: mash F to break free |
+| Left mouse (hold, while holding someone) | Strangle them until they're subdued |
 | K | Kick the door you're looking at (from outside) |
 | L | Lock/unlock with a key or from inside. Without the key, with a lockpick: hold to pick (let go to stop) |
 | Left click (shotgun) | A slug through a door's deadbolt from within 6 m destroys the lock |
@@ -45,10 +46,13 @@ Watch → Confront (warning, about 9 s to comply) → Alarmed:
 - **Attack**: guns from a distance (they reload from what they carry; out of ammo, they use the gun as a club), melee up close, or fists. Hit chance falls with distance, darkness, and the target running. Damage to players: pistol 18, shotgun 30–45, sword 15, axe 14, bat 12, fists 6. If they lose the target for 12 s, they search for 20 s and then go back to their day.
 - **Dispatch**: each report sends the nearest free officer (two for violence). Repeats within 20 s and 20 m only update the description. The player hears "Someone called the police!"
 - Police kick in locked doors they need to get through.
+- **Chasing across yards**: off their routine, residents may cut straight across yards toward you, but every step is checked against the world. Walls and closed doors stop them, and they go round. They jump a fence (a 0.55 s hop, landing 1.3 m past it) when the straight line is the shorter way, unless they're timid. The timid go round through the gates.
+- **Frost magic** freezes residents for 5 s, as it does dungeon enemies. A frozen resident can't move or act, lets go of anyone they hold, and can't wriggle out of a player's grip. Clients show an icy tint and "frozen". Blood magic heals the caster for each resident it hits, as with enemies.
 
 ## Grappling (`Breaching`, `ServerGame.Grapple`)
 
-- **You grab a resident** (within 1.8 m): they're pulled along in front of you. Each second they may break free, with a chance of 5% + 30% × grit. That chance is halved if you grabbed them from behind while they were unaware, and then they can't shout either. Hold on for 4.5 s and they pass out. They remember you when they come round.
+- **You grab a resident** (within 1.8 m): they're pulled along in front of you. Each second they may break free, with a chance of 5% + 30% × grit. That chance is halved if you grabbed them from behind while they were unaware, and then they can't shout either.
+- **Strangling** (hold left mouse while holding someone): a meter fills over 3.5–6.5 s (by grit, 15% quicker on a surprised victim). When it's full they're subdued (unconscious, like a knockout). They can't cry out while strangled. Their escape chance starts at 140% of normal and fades to 10% as they black out. Ease off and the meter drains 15% a second. Witnesses see an attack. Victims remember you when they come round.
 - **A resident grabs you**: you can move at most 0.8 m/s (enforced by the server), and you're pulled back if you get more than 1.4 m from them. Each F press is worth 1 / (6 + 9 × their grit), so 6 to 15 presses break you free.
 
 ## Breaking in (`Breaching`, `CityDoors`, `ServerGame.Grapple`)
@@ -75,7 +79,7 @@ From [DOOR-BREACHING-PLAN.md](DOOR-BREACHING-PLAN.md), with the shotgun change a
 ## Dev and tests
 
 - Server `--dev-oblivious`: residents ignore players (used by older scenarios that test something else).
-- Clients: `--dev-breach`, `--dev-trespass`, `--dev-grab`, `--dev-struggle`, `--dev-shoot-air` (with `--dev-shoot-delay S`).
+- Clients: `--dev-breach`, `--dev-trespass`, `--dev-grab` (`--dev-strangle` to strangle once held), `--dev-struggle`, `--dev-shoot-air` (with `--dev-shoot-delay S`).
 - Smoke scenarios `breach` and `stealth`. Unit tests in `tests/.../StealthTests.cs`.
 
 ## Known limits and next ideas

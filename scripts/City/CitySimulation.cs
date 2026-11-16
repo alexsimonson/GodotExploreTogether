@@ -123,7 +123,8 @@ public partial class CitySimulation : Node
         var weapon = brain.WeaponOut ? node.Gear.EquippedWeapon?.Id ?? -1 : -1;
         if (node.NetWeapon != weapon) node.NetWeapon = weapon;
         if (node.NetHeld != brain.Held) node.NetHeld = brain.Held;
-        var position = new Vector3(brain.X, 0, brain.Z);
+        if (node.NetFrozen != brain.Frozen) node.NetFrozen = brain.Frozen;
+        var position = new Vector3(brain.X, brain.Y, brain.Z);
         node.NetPosition = position;
         node.Position = position;
         node.NetYaw = brain.Yaw;

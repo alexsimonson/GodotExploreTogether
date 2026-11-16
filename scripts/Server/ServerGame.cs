@@ -39,6 +39,10 @@ public sealed class PeerSession(long peer)
     public double LastKickAt { get; set; } = -1000;
     /// <summary>The resident held was grabbed by surprise (from behind, unseen); when they next try to wriggle free.</summary>
     public bool HoldingSurprised { get; set; }
+    /// <summary>Strangling the resident held (attack button held), and how far along, 0..1 (1: subdued).</summary>
+    public bool Strangling { get; set; }
+    public float StrangleProgress { get; set; }
+    public double LastStrangleSent { get; set; }
     public double NextEscapeRoll { get; set; }
     public double LastPulledAt { get; set; }
     /// <summary>Stealth: when this player last did something violent (attacked, fired) or broke into somewhere.</summary>

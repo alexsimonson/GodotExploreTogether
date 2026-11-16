@@ -10,7 +10,8 @@ namespace ExploreTogether.Client;
 
 /// <summary>
 /// Client side of stealth, breaking in and grappling:
-/// - Keys: C crouch (hold), F grab a resident / let go / struggle free when held, K kick the door looked at,
+/// - Keys: C crouch (hold), F grab a resident / let go / struggle free when held, left mouse (held) strangle the
+///   resident you're holding until they're subdued, K kick the door looked at,
 ///   L on a locked door without its key: hold to pick it (letting go cancels).
 /// - HUD (cities): an awareness line (Unseen, Noticed, Suspicious, Wanted) with the light where you stand (dark, dim,
 ///   lit, bright: the same numbers the residents see by), and a progress bar for picking locks and struggling.
@@ -63,6 +64,12 @@ public partial class ClientGame
     private bool HandleStealthInput(InputEvent @event)
     {
         if (_currentKind != InstanceKinds.City || _dungeonMenu.Visible || Input.MouseMode != Input.MouseModeEnum.Captured) return false;
+        // Holding someone: the attack button strangles while held down.
+        if (_grabState == "holding" && @event is InputEventMouseButton { ButtonIndex: MouseButton.Left } strangle)
+        {
+            _session.SendCityAction("strangle", strangle.Pressed ? "1" : "0");
+            return true;
+        }
         if (@event.IsActionPressed(InputSetup.Grab))
         {
             if (_grabState == "held") _session.SendCityAction("struggle", "");

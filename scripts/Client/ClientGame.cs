@@ -155,7 +155,7 @@ public partial class ClientGame : Node
 
     public override void _UnhandledInput(InputEvent @event)
     {
-        if (HandleCombatInput(@event) || HandleStealthInput(@event))
+        if (HandleStealthInput(@event) || HandleCombatInput(@event))
         {
             GetViewport().SetInputAsHandled();
             return;

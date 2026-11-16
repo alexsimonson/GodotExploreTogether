@@ -101,8 +101,10 @@ $Scenarios = [ordered]@{
             Kermit    = @('--dev-city', '--dev-doors', '--dev-check-city', '--dev-return-after', '18', '--dev-trade-keys',
                           '--dev-quit-after', '25')
             Blueberry = @('--dev-city', '--dev-weapon', 'Pistol', '--dev-fight', '--dev-quit-after', '40')
+            Tangerine = @('--dev-city', '--dev-weapon', 'Ice Wand', '--dev-aim', '--dev-fight', '--dev-quit-after', '30')
         }
         Checks = {
+            Expect server ' is frozen for 5 s' 'the ice wand freezes residents, like dungeon enemies'
             Expect Kermit 'city check: (\d+)/\1 doors, fences and walls match' 'every closed door blocks its doorway; walls and fences hold'
             Expect server "'Kermit' searches the body of" 'Kermit searches a body'
             Expect server "'Kermit' took Key from the body of" 'and takes the key it carried'
@@ -262,12 +264,12 @@ $Scenarios = [ordered]@{
     stealth = @{
         Port   = 7951
         # 10:00: workers at work, civilians out. Kermit walks into an occupied office or warehouse and stays (and
-        # struggles free if grabbed); Grape grabs a passer-by and holds on; Blueberry fires into the air (and is arrested for it).
+        # goes quietly if arrested); Grape grabs a passer-by and holds on; Blueberry fires into the air (and is arrested for it).
         Server = @('--dev-skip-proximity', '--dev-starter-kit', '--city-seed', '4', '--city-start-hour', '10', '--dev-quit-after', '100')
         Clients = [ordered]@{
-            Kermit    = @('--dev-city', '--dev-trespass', '--dev-struggle', '--dev-quit-after', '80')
+            Kermit    = @('--dev-city', '--dev-trespass', '--dev-quit-after', '80')
             Blueberry = @('--dev-city', '--dev-weapon', 'Pistol', '--dev-shoot-air', '--dev-shoot-delay', '4', '--dev-quit-after', '85')
-            Grape     = @('--dev-city', '--dev-grab', '--dev-quit-after', '90')
+            Grape     = @('--dev-city', '--dev-grab', '--dev-strangle', '--dev-quit-after', '90')
         }
         Checks = {
             Expect Kermit 'dev-trespass: walking into ' 'Kermit heads into an occupied building'
@@ -277,7 +279,7 @@ $Scenarios = [ordered]@{
             Expect server 'responding' 'police respond to a report'
             Expect server "noise in city 2: gunshot" "Blueberry's gunfire is heard across the city"
             Expect server "'Grape' grabs .*\((Civilian|Worker)" 'Grape grabs a resident'
-            Expect server "('Grape' chokes .* unconscious|breaks free from 'Grape')" 'they pass out or wriggle free'
+            Expect server "('Grape' strangles .* unconscious|breaks free from 'Grape')" 'Grape strangles them unconscious, or they wriggle free'
             Expect server "(fires .* at|hits|grabs) '(Kermit|Blueberry|Grape)'" 'residents fight back or grab a player'
             Expect server "arrests '(Kermit|Blueberry|Grape)'" 'the police arrest someone'
         }
@@ -292,7 +294,8 @@ function Quote([string]$arg) {
 }
 
 function Start-Godot([string]$name, [string[]]$userArgs, [string]$dir) {
-    $all = @('--headless', '--path', $Project, '--') + $userArgs
+    # --smoke-test marks the process so tools\dev-stop.cmd (run by dev-run) leaves it alone.
+    $all = @('--headless', '--path', $Project, '--') + $userArgs + @('--smoke-test')
     $argLine = ($all | ForEach-Object { Quote $_ }) -join ' '
     $p = Start-Process -FilePath $GodotConsole -ArgumentList $argLine -NoNewWindow -PassThru `
         -RedirectStandardOutput (Join-Path $dir "$name.log") -RedirectStandardError (Join-Path $dir "$name.err.log")

@@ -201,8 +201,20 @@ public partial class ServerGame
                 if (new Vector2(off.X, off.Z).Length() > CombatRules.MagicAreaRadius + Core.City.CityCrowd.NpcRadius || Mathf.Abs(off.Y) > 2f)
                     continue;
                 area.AlreadyHitNpcs.Add(npc);
-                if (_sessions.TryGetValue(area.OwnerPeer, out var caster))
-                    HitResident(caster, area.Instance, npc, area.Damage, $"magic ({area.Style})", knocksOut: false);
+                if (!_sessions.TryGetValue(area.OwnerPeer, out var caster)) continue;
+                HitResident(caster, area.Instance, npc, area.Damage, $"magic ({area.Style})", knocksOut: false);
+                // The same effects as on dungeon enemies: Frost freezes them; Blood heals the caster.
+                if (area.Style == MagicStyle.Frost && !npc.IsDown)
+                {
+                    npc.Brain.Freeze(CombatRules.FrostFreezeSeconds);
+                    NpcRelease(npc, "is frozen and loses hold of");
+                    GD.Print($"[server] {npc.NetName} is frozen for {CombatRules.FrostFreezeSeconds:0} s");
+                }
+                if (area.Style == MagicStyle.Blood)
+                {
+                    caster.Health.Heal(CombatRules.BloodHealPerHit);
+                    SyncHealth(caster);
+                }
             }
             foreach (var enemy in area.Instance.Enemies.Values.ToList())
             {

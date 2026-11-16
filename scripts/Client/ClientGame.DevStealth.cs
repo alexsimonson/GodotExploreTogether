@@ -16,12 +16,13 @@ namespace ExploreTogether.Client;
 ///   --dev-breach     walk to three locked doors: kick the first in, pick the second (needs lockpicks), and shoot the
 ///                    third's lock out with a pump shotgun (needs one, and slugs: --dev-starter-kit)
 ///   --dev-trespass   walk into a building where someone is (an office or warehouse at work time) and stay put
-///   --dev-grab       walk up behind a walking resident and grab them; hold on
+///   --dev-grab       walk up behind a walking resident and grab them; hold on (--dev-strangle: and strangle them)
 ///   --dev-struggle   when a resident holds us, mash F to break free
 /// </summary>
 public partial class ClientGame
 {
     private double _devStruggleTimer;
+    private bool _devStrangling;
 
     private void DevStealthStart(int instanceId)
     {
@@ -190,6 +191,12 @@ public partial class ClientGame
             if (!IsInstanceValid(me) || _currentInstanceId != instanceId) return;
             if (_grabState == "holding")
             {
+                if (CmdArgs.Has("dev-strangle") && !_devStrangling)
+                {
+                    _devStrangling = true;
+                    GD.Print("[client] dev-grab: strangling");
+                    _session.SendCityAction("strangle", "1");
+                }
                 me.DevWalkTarget = null;
                 await Wait(0.1);
                 continue;
