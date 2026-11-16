@@ -24,6 +24,10 @@ public partial class PlayerCharacter : CharacterBody3D
     [Export] public Color PlayerColor { get; set; } = PlayerLook.DefaultColor;
     /// <summary>Server-owned health, replicated for the HUD (own player) and others' view.</summary>
     [Export] public int NetHealth { get; set; } = 100;
+    /// <summary>Server-validated magic aim, replicated so other players see this player's ghost pentagram.</summary>
+    [Export] public bool AimActive { get; set; }
+    [Export] public Vector3 AimPoint { get; set; }
+    private Node3D? _aimGhost;
 
     private const float WalkSpeed = 5f;
     private const float SprintSpeed = 8f;
@@ -147,7 +151,10 @@ public partial class PlayerCharacter : CharacterBody3D
             input = new Vector2(0, -1);
             RotateY(0.8f * delta);
         }
-        if (DevChase && SolidNeighbours().OfType<PlayerCharacter>().FirstOrDefault() is { } target)
+        var chaseTarget = DevChaseEnemy
+            ? SolidNeighbours().OfType<Enemies.EnemyCharacter>().OrderBy(e => e.GlobalPosition.DistanceTo(GlobalPosition)).FirstOrDefault() as Node3D
+            : DevChase ? SolidNeighbours().OfType<PlayerCharacter>().FirstOrDefault() : null;
+        if (chaseTarget is { } target)
         {
             // Walk straight at another player (tests player-vs-player collision).
             LookAt(new Vector3(target.Position.X, Position.Y, target.Position.Z));
@@ -195,6 +202,7 @@ public partial class PlayerCharacter : CharacterBody3D
     private const float PersonalSpace = BodyRadius * 2f;
 
     private static readonly bool DevChase = CmdArgs.Has("dev-chase");
+    private static readonly bool DevChaseEnemy = CmdArgs.Has("dev-chase-enemy");
 
     /// <summary>Other players, and living enemies, in this instance: the bodies we keep out of horizontally.</summary>
     private IEnumerable<CharacterBody3D> SolidNeighbours()
@@ -249,8 +257,32 @@ public partial class PlayerCharacter : CharacterBody3D
         }
     }
 
+    /// <summary>Other players' magic ghosts, in their color (our own is drawn by ClientGame).</summary>
+    private void UpdateRemoteAimGhost(float delta)
+    {
+        if (!AimActive)
+        {
+            if (_aimGhost != null) _aimGhost.Visible = false;
+            return;
+        }
+        if (_aimGhost == null)
+        {
+            _aimGhost = Combat.MagicAim.CreatePentagram(PlayerColor);
+            _aimGhost.TopLevel = true; // positioned in the world, not relative to the player
+            AddChild(_aimGhost);
+            _aimGhost.GlobalPosition = AimPoint;
+            GD.Print($"[client] showing {DisplayName}'s aim ghost at {AimPoint.Snapped(Vector3.One * 0.1f)}");
+        }
+        _aimGhost.Visible = true;
+        var target = AimPoint + new Vector3(0, 0.03f, 0);
+        _aimGhost.GlobalPosition = _aimGhost.GlobalPosition.DistanceTo(target) > 3f
+            ? target
+            : _aimGhost.GlobalPosition.Lerp(target, 1f - Mathf.Exp(-20f * delta));
+    }
+
     private void SmoothRemote(float delta)
     {
+        UpdateRemoteAimGhost(delta);
         if (Position.DistanceTo(NetPosition) > RemoteSnapDistance)
             Position = NetPosition;
         else

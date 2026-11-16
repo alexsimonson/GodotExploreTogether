@@ -216,18 +216,21 @@ public sealed class GameDatabase : IDisposable
 
     // ------------------------------------------------------------- inventory
 
-    public List<(int Slot, int ItemId, int Count)> LoadInventory(long characterId)
+    public List<(int Slot, int ItemId, int Count, int? Data)> LoadInventory(long characterId)
     {
-        using var cmd = Command("SELECT slot, item_id, count FROM inventory_items WHERE character_id = $c ORDER BY slot;",
+        using var cmd = Command("SELECT slot, item_id, count, data FROM inventory_items WHERE character_id = $c ORDER BY slot;",
             ("$c", characterId));
         using var r = cmd.ExecuteReader();
-        var list = new List<(int, int, int)>();
-        while (r.Read()) list.Add((r.GetInt32(0), r.GetInt32(1), r.GetInt32(2)));
+        var list = new List<(int, int, int, int?)>();
+        while (r.Read()) list.Add((r.GetInt32(0), r.GetInt32(1), r.GetInt32(2), r.IsDBNull(3) ? null : r.GetInt32(3)));
         return list;
     }
 
+    public void SaveInventory(long characterId, IEnumerable<(int Slot, int ItemId, int Count)> slots) =>
+        SaveInventory(characterId, slots.Select(s => (s.Slot, s.ItemId, s.Count, (int?)null)));
+
     /// <summary>Replaces the character's saved inventory with these slots.</summary>
-    public void SaveInventory(long characterId, IEnumerable<(int Slot, int ItemId, int Count)> slots)
+    public void SaveInventory(long characterId, IEnumerable<(int Slot, int ItemId, int Count, int? Data)> slots)
     {
         using var tx = _connection.BeginTransaction();
         using (var del = Command("DELETE FROM inventory_items WHERE character_id = $c;", ("$c", characterId)))
@@ -235,10 +238,10 @@ public sealed class GameDatabase : IDisposable
             del.Transaction = tx;
             del.ExecuteNonQuery();
         }
-        foreach (var (slot, itemId, count) in slots)
+        foreach (var (slot, itemId, count, data) in slots)
         {
-            using var ins = Command("INSERT INTO inventory_items (character_id, slot, item_id, count) VALUES ($c, $s, $i, $n);",
-                ("$c", characterId), ("$s", slot), ("$i", itemId), ("$n", count));
+            using var ins = Command("INSERT INTO inventory_items (character_id, slot, item_id, count, data) VALUES ($c, $s, $i, $n, $d);",
+                ("$c", characterId), ("$s", slot), ("$i", itemId), ("$n", count), ("$d", data));
             ins.Transaction = tx;
             ins.ExecuteNonQuery();
         }
@@ -248,20 +251,26 @@ public sealed class GameDatabase : IDisposable
     // ------------------------------------------------------------- equipment
 
     /// <summary>Saved gear as an item id per slot (-1 = empty), like the original ExportGear.</summary>
-    public int[] LoadGear(long characterId, int slotCount)
+    public int[] LoadGear(long characterId, int slotCount) => LoadGearWithData(characterId, slotCount).Ids;
+
+    /// <summary>Saved gear: item id and item state per slot (-1 = empty / none).</summary>
+    public (int[] Ids, int[] Data) LoadGearWithData(long characterId, int slotCount)
     {
         var gear = Enumerable.Repeat(-1, slotCount).ToArray();
-        using var cmd = Command("SELECT slot, item_id FROM equipment_items WHERE character_id = $c;", ("$c", characterId));
+        var data = Enumerable.Repeat(-1, slotCount).ToArray();
+        using var cmd = Command("SELECT slot, item_id, data FROM equipment_items WHERE character_id = $c;", ("$c", characterId));
         using var r = cmd.ExecuteReader();
         while (r.Read())
         {
             var slot = r.GetInt32(0);
-            if (slot >= 0 && slot < slotCount) gear[slot] = r.GetInt32(1);
+            if (slot < 0 || slot >= slotCount) continue;
+            gear[slot] = r.GetInt32(1);
+            if (!r.IsDBNull(2)) data[slot] = r.GetInt32(2);
         }
-        return gear;
+        return (gear, data);
     }
 
-    public void SaveGear(long characterId, IReadOnlyList<int> gearItemIds)
+    public void SaveGear(long characterId, IReadOnlyList<int> gearItemIds, IReadOnlyList<int>? gearData = null)
     {
         using var tx = _connection.BeginTransaction();
         using (var del = Command("DELETE FROM equipment_items WHERE character_id = $c;", ("$c", characterId)))
@@ -272,8 +281,9 @@ public sealed class GameDatabase : IDisposable
         for (int slot = 0; slot < gearItemIds.Count; slot++)
         {
             if (gearItemIds[slot] < 0) continue;
-            using var ins = Command("INSERT INTO equipment_items (character_id, slot, item_id) VALUES ($c, $s, $i);",
-                ("$c", characterId), ("$s", slot), ("$i", gearItemIds[slot]));
+            var d = gearData != null && slot < gearData.Count && gearData[slot] >= 0 ? gearData[slot] : (int?)null;
+            using var ins = Command("INSERT INTO equipment_items (character_id, slot, item_id, data) VALUES ($c, $s, $i, $d);",
+                ("$c", characterId), ("$s", slot), ("$i", gearItemIds[slot]), ("$d", d));
             ins.Transaction = tx;
             ins.ExecuteNonQuery();
         }

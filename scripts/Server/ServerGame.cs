@@ -23,8 +23,6 @@ public sealed class PeerSession(long peer)
     public Gear? Gear { get; set; }
     /// <summary>Health while playing (full again whenever the player reaches the hub).</summary>
     public Core.Combat.Health Health { get; } = new(100);
-    /// <summary>This player's gun ammo (in the original it lived on the shared item asset).</summary>
-    public Core.Combat.GunAmmo Ammo { get; } = new();
     public double LastAttackAt { get; set; } = -1000;
     /// <summary>Instance the client was told to load and hasn't confirmed yet.</summary>
     public int? PendingInstanceId { get; set; }
@@ -272,7 +270,8 @@ public partial class ServerGame : Node
         s.Inventory = new Inventory();
         s.Inventory.Load(_db.LoadInventory(character.Id));
         s.Gear = new Gear();
-        s.Gear.ImportGear(_db.LoadGear(character.Id, Gear.SlotCount));
+        var (gearIds, gearData) = _db.LoadGearWithData(character.Id, Gear.SlotCount);
+        s.Gear.ImportGear(gearIds, gearData);
         s.PlayTimeCountedUntil = DateTime.UtcNow;
         SendToInstance(s, _instances.Hub);
     }
@@ -322,7 +321,6 @@ public partial class ServerGame : Node
 
         SendInventory(s);
         SyncHealth(s);
-        _session.SendAmmo(s.Peer, s.Ammo.magazineRounds, s.Ammo.bulletCount);
         if (instance.Kind == InstanceKinds.Dungeon)
         {
             if (instance.RunId is { } runId) _db.AddRunParticipant(runId, c.Id);
@@ -458,6 +456,7 @@ public partial class ServerGame : Node
     {
         var inv = new Inventory();
         foreach (var id in new[] { 1515, 1337, 567, 666, 8, 22 }) inv.AddItem(id); // Sword, Pistol, Ice/Blood Wand, Axe, Helmet
+        inv.AddItems(ItemCatalog.PistolRoundsId, 30);
         _db.SaveInventory(character.Id, inv.Occupied());
     }
 }

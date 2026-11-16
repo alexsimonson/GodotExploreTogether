@@ -3,7 +3,7 @@ using ExploreTogether.Core.Items;
 namespace ExploreTogether.Core.Dungeon;
 
 /// <summary>An item lying in the dungeon: which item, in which cell, and an offset from the cell center.</summary>
-public readonly record struct ItemPlacement(int ItemId, int NodeIndex, float OffsetX, float OffsetZ);
+public readonly record struct ItemPlacement(int ItemId, int NodeIndex, float OffsetX, float OffsetZ, int Count = 1);
 
 /// <summary>
 /// What the original Maze.FillMazeWithItems put into a new dungeon (the item part; enemies and
@@ -34,7 +34,8 @@ public static class DungeonContents
     private static ItemPlacement Place(int itemId, MazeLayout layout, Random random)
     {
         float Offset() => (float)(random.NextDouble() * 2 - 1) * MaxOffset;
-        return new ItemPlacement(itemId, RandomNodeIndex(layout.Nodes.Count, ItemPadding, random), Offset(), Offset());
+        return new ItemPlacement(itemId, RandomNodeIndex(layout.Nodes.Count, ItemPadding, random), Offset(), Offset(),
+            ItemCatalog.Get(itemId)?.LootCount ?? 1);
     }
 
     /// <summary>

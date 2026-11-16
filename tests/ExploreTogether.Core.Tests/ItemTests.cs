@@ -130,7 +130,7 @@ public class InventoryAndRunPersistenceTests : IDisposable
         var c = NewCharacter("Kermit");
         _db.SaveInventory(c, [(0, 1, 5), (3, 1515, 1)]);
         _db.SaveInventory(c, [(1, 22, 1)]);
-        Assert.Equal([(1, 22, 1)], _db.LoadInventory(c));
+        Assert.Equal([(1, 22, 1, (int?)null)], _db.LoadInventory(c));
     }
 
     [Fact]
@@ -164,6 +164,6 @@ public class InventoryAndRunPersistenceTests : IDisposable
         Assert.Equal("Kermit", db.GetCharacter(7)!.Name);
         Assert.Empty(db.LoadInventory(7));
         db.SaveInventory(7, [(0, 1, 3)]);
-        Assert.Equal([(0, 1, 3)], db.LoadInventory(7));
+        Assert.Equal([(0, 1, 3, (int?)null)], db.LoadInventory(7));
     }
 }

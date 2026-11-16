@@ -45,6 +45,7 @@ public partial class ServerGame
     {
         _session.AttackRequested += (peer, dir) => _pendingAttacks.Enqueue(new PendingAttack(peer, dir));
         _session.ReloadRequested += OnReload;
+        _session.AimReceived += OnAim;
         _instances.PlayerHitByEnemy += OnPlayerHitByEnemy;
         _instances.EnemyKilled += (instance, enemy) => GD.Print($"[server] {enemy.Name} killed in instance {instance.Id}");
     }
@@ -72,12 +73,13 @@ public partial class ServerGame
         switch (profile.Class)
         {
             case ItemClass.Gun:
-                if (!s.Ammo.TryFire())
+                // The rounds are in this particular gun (they go with it if it changes hands).
+                if (!GunRules.TryFire(s.Gear.WeaponSlot))
                 {
                     _session.SendNotice(s.Peer, "Out of ammo. Press R to reload.");
                     return;
                 }
-                _session.SendAmmo(s.Peer, s.Ammo.magazineRounds, s.Ammo.bulletCount);
+                SendAmmoState(s);
                 HitScan(s, found.Instance, space, origin, dir, profile, weapon!);
                 break;
 
@@ -122,14 +124,13 @@ public partial class ServerGame
     private void CastMagic(PeerSession s, ServerInstance instance, PhysicsDirectSpaceState3D space,
         Vector3 origin, Vector3 dir, ItemDef weapon)
     {
-        var hit = space.IntersectRay(PhysicsRayQueryParameters3D.Create(origin, origin + dir * CombatRules.MagicPlaceRange, collisionMask: 1));
-        if (hit.Count == 0) return; // nothing within range to place it on (the original kept the last spot)
+        if (Combat.MagicAim.FindPlacement(space, origin, dir) is not { } spot) return; // nowhere to place it
 
         var style = CombatRules.MagicStyleOf(weapon);
         var area = new MagicAreaEffect
         {
             Instance = instance,
-            Center = hit["position"].AsVector3(),
+            Center = spot,
             Style = style,
             Damage = CombatRules.RollMagicDamage(_combatRandom),
             OwnerPeer = s.Peer,
@@ -137,9 +138,29 @@ public partial class ServerGame
         };
         _magicAreas.Add(area);
         foreach (var peer in instance.Players.Keys)
-            _session.SendMagicArea(peer, area.Center, (int)style, CombatRules.MagicAreaLifetime);
+            _session.SendMagicArea(peer, area.Center, (int)style, CombatRules.MagicAreaLifetime, CasterColor(s));
         GD.Print($"[server] '{s.Character!.Name}' cast {weapon.Name} ({style}, {area.Damage} damage) at {area.Center.Snapped(Vector3.One * 0.1f)}");
     }
+
+    /// <summary>
+    /// A player's magic ghost moved (or they stopped aiming). Only accepted while they hold a wand and the
+    /// spot is within reach; it's then replicated to the others in the instance via the player node.
+    /// </summary>
+    private void OnAim(long peer, int instanceId, bool aiming, Vector3 position)
+    {
+        if (!_sessions.TryGetValue(peer, out var s) || _instances.FindPlayer(peer) is not { } found) return;
+        if (found.Instance.Id != instanceId) return; // late packet from a previous instance
+        var player = found.Player;
+        var head = player.GlobalPosition + new Vector3(0, 1.6f, 0);
+        var valid = aiming && s.Gear?.EquippedWeapon?.Class == ItemClass.Magic && position.IsFinite()
+                    && head.DistanceTo(position) <= CombatRules.MagicPlaceRange + 4f; // + the drop to the floor
+        player.AimActive = valid;
+        if (valid) player.AimPoint = position;
+    }
+
+    /// <summary>The caster's chosen character color (their pentagram is drawn in it).</summary>
+    private Color CasterColor(PeerSession s) =>
+        _instances.FindPlayer(s.Peer)?.Player.PlayerColor ?? ColorFromHex(s.Character?.ColorHex ?? "ffffff");
 
     private void TickMagicAreas()
     {
@@ -168,12 +189,27 @@ public partial class ServerGame
         }
     }
 
+    /// <summary>R: move rounds from the inventory into the equipped gun.</summary>
     private void OnReload(long peer)
     {
-        if (!_sessions.TryGetValue(peer, out var s) || s.Gear?.EquippedWeapon?.Class != ItemClass.Gun) return;
-        if (!s.Ammo.Reload())
-            _session.SendNotice(peer, s.Ammo.bulletCount == 0 ? "There's no ammo left." : "Already loaded.");
-        _session.SendAmmo(peer, s.Ammo.magazineRounds, s.Ammo.bulletCount);
+        if (!_sessions.TryGetValue(peer, out var s) || s.Inventory == null || s.Gear?.EquippedWeapon is not { Class: ItemClass.Gun } gun) return;
+        var full = GunRules.Loaded(s.Gear.WeaponSlot) >= (gun.MagazineSize ?? 0);
+        if (GunRules.Reload(s.Gear.WeaponSlot, gun, s.Inventory) == 0)
+        {
+            _session.SendNotice(peer, full ? "Already loaded." : $"No {ItemCatalog.NameOf(gun.AmmoItemId ?? -1)} to reload with.");
+            return;
+        }
+        SendInventory(s); // the rounds moved from the inventory into the gun (also sends the ammo state)
+        SaveInventory(s);
+    }
+
+    /// <summary>The equipped gun's loaded rounds and the matching rounds carried; (-1, -1) if no gun is equipped.</summary>
+    private void SendAmmoState(PeerSession s)
+    {
+        if (s.Gear?.EquippedWeapon is { Class: ItemClass.Gun } gun && s.Inventory != null)
+            _session.SendAmmo(s.Peer, GunRules.Loaded(s.Gear.WeaponSlot), GunRules.Reserve(s.Inventory, gun));
+        else
+            _session.SendAmmo(s.Peer, -1, -1);
     }
 
     // ------------------------------------------------------------ taking damage

@@ -88,7 +88,7 @@ public sealed class InstanceManager
         var instance = Create(InstanceKinds.Dungeon, layout, createdBy);
         // The original FillMazeWithItems: the Dungeon Pass plus 20 random items (seeded from the layout).
         foreach (var placement in DungeonContents.Generate(layout, seed ^ 0x5eed))
-            SpawnItem(instance, placement.ItemId, DungeonBuilder.ItemPosition(layout, placement));
+            SpawnItem(instance, placement.ItemId, DungeonBuilder.ItemPosition(layout, placement), placement.Count);
 
         // Enemies walk the navigation mesh baked from the maze.
         var started = DateTime.UtcNow;
@@ -191,12 +191,13 @@ public sealed class InstanceManager
     }
 
     /// <summary>Puts an item into the instance, visible to everyone inside.</summary>
-    public ItemPickup SpawnItem(ServerInstance instance, int itemId, Vector3 position, int count = 1)
+    public ItemPickup SpawnItem(ServerInstance instance, int itemId, Vector3 position, int count = 1, int? data = null)
     {
         var item = GD.Load<PackedScene>(InstanceFactory.ItemScenePath).Instantiate<ItemPickup>();
         item.Name = $"Item{instance.NextItemNumber++}";
         item.ItemId = itemId;
         item.Count = count;
+        item.Data = data;
         item.Position = position;
         instance.Nodes.Items.AddChild(item, forceReadableName: true);
         instance.Items[item.Name] = item;

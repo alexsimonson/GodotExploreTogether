@@ -125,18 +125,23 @@ public partial class InventoryScreen : CanvasLayer
         return panel;
     }
 
-    /// <summary>Shows the server's state: inventory as (slot, item, count) triples, gear as item id per slot (-1 = empty).</summary>
-    public void SetState(int[] inventoryTriples, int[] gear)
+    /// <summary>
+    /// Shows the server's state: inventory as (slot, item, count, data) quads, gear as item id and data per slot
+    /// (-1 = empty / none).
+    /// </summary>
+    public void SetState(int[] inventoryQuads, int[] gear, int[] gearData)
     {
         foreach (var s in _inventorySlots) s.SetItem(null, 0);
-        for (int i = 0; i + 2 < inventoryTriples.Length; i += 3)
+        for (int i = 0; i + 3 < inventoryQuads.Length; i += 4)
         {
-            var slot = inventoryTriples[i];
+            var slot = inventoryQuads[i];
             if (slot >= 0 && slot < _inventorySlots.Count)
-                _inventorySlots[slot].SetItem(inventoryTriples[i + 1], inventoryTriples[i + 2]);
+                _inventorySlots[slot].SetItem(inventoryQuads[i + 1], inventoryQuads[i + 2],
+                    inventoryQuads[i + 3] >= 0 ? inventoryQuads[i + 3] : null);
         }
         for (int i = 0; i < _gearSlots.Count; i++)
-            _gearSlots[i].SetItem(i < gear.Length && gear[i] >= 0 ? gear[i] : null, 0);
+            _gearSlots[i].SetItem(i < gear.Length && gear[i] >= 0 ? gear[i] : null, 0,
+                i < gearData.Length && gearData[i] >= 0 ? gearData[i] : null);
     }
 
     public void Toggle()

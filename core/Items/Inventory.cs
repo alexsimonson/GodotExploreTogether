@@ -6,6 +6,8 @@ public sealed class ItemSlot
     public int index;
     public int? itemId;
     public int stack_size;
+    /// <summary>Per-item state that travels with the item (for a gun: the rounds loaded). Null for stackables.</summary>
+    public int? data;
 }
 
 /// <summary>
@@ -28,8 +30,11 @@ public sealed class Inventory
             slots[i] = new ItemSlot { index = i, itemId = null, stack_size = 0 };
     }
 
-    /// <summary>Returns the slot index the item went into, or -1 if the inventory is full.</summary>
-    public int AddItem(int itemId)
+    /// <summary>
+    /// Returns the slot index the item went into, or -1 if the inventory is full. For non-stackable items,
+    /// data is that copy's state (e.g. rounds loaded); null means a fresh copy.
+    /// </summary>
+    public int AddItem(int itemId, int? data = null)
     {
         var def = ItemCatalog.Get(itemId);
         if (def == null) return -1;
@@ -47,6 +52,7 @@ public sealed class Inventory
         {
             slots[empty_slot_index].itemId = itemId;
             slots[empty_slot_index].stack_size = 1;
+            slots[empty_slot_index].data = def.Stack ? null : data ?? def.InitialData;
             return empty_slot_index;
         }
         return -1;
@@ -56,7 +62,7 @@ public sealed class Inventory
     /// Adds several of an item (e.g. picking up a dropped stack). Stackables go onto one stack;
     /// others take a slot each. Returns how many were added (fewer if the inventory filled up).
     /// </summary>
-    public int AddItems(int itemId, int count)
+    public int AddItems(int itemId, int count, int? data = null)
     {
         var def = ItemCatalog.Get(itemId);
         if (def == null || count <= 0) return 0;
@@ -68,7 +74,7 @@ public sealed class Inventory
             return count;
         }
         int added = 0;
-        while (added < count && AddItem(itemId) >= 0) added++;
+        while (added < count && AddItem(itemId, data) >= 0) added++;
         return added;
     }
 
@@ -78,6 +84,7 @@ public sealed class Inventory
         var removed = slots[index].itemId;
         slots[index].itemId = null;
         slots[index].stack_size = 0;
+        slots[index].data = null;
         return removed;
     }
 
@@ -97,18 +104,25 @@ public sealed class Inventory
 
     public bool Contains(int itemId) => FindItemInSlot(itemId) >= 0;
 
-    /// <summary>Occupied slots as (slot, item, count), e.g. for saving or sending to the client.</summary>
-    public IEnumerable<(int Slot, int ItemId, int Count)> Occupied() =>
-        slots.Where(s => s.itemId != null).Select(s => (s.index, s.itemId!.Value, s.stack_size));
+    /// <summary>Occupied slots as (slot, item, count, data), e.g. for saving or sending to the client.</summary>
+    public IEnumerable<(int Slot, int ItemId, int Count, int? Data)> Occupied() =>
+        slots.Where(s => s.itemId != null).Select(s => (s.index, s.itemId!.Value, s.stack_size, s.data));
 
     /// <summary>Restores saved slots (unknown items and out-of-range slots are skipped).</summary>
-    public void Load(IEnumerable<(int Slot, int ItemId, int Count)> saved)
+    public void Load(IEnumerable<(int Slot, int ItemId, int Count, int? Data)> saved)
     {
-        foreach (var (slot, itemId, count) in saved)
+        foreach (var (slot, itemId, count, data) in saved)
         {
-            if (slot < 0 || slot >= max_slots || ItemCatalog.Get(itemId) == null || count <= 0) continue;
+            if (slot < 0 || slot >= max_slots || ItemCatalog.Get(itemId) is not { } def || count <= 0) continue;
             slots[slot].itemId = itemId;
             slots[slot].stack_size = count;
+            slots[slot].data = def.Stack ? null : data ?? def.InitialData;
         }
     }
+
+    public void Load(IEnumerable<(int Slot, int ItemId, int Count)> saved) =>
+        Load(saved.Select(s => (s.Slot, s.ItemId, s.Count, (int?)null)));
+
+    /// <summary>How many of an item the inventory holds in total (across stacks).</summary>
+    public int CountOf(int itemId) => slots.Where(s => s.itemId == itemId).Sum(s => s.stack_size);
 }

@@ -83,38 +83,42 @@ public sealed class Health(int max = 100)
 }
 
 /// <summary>
-/// Port of Gun's ammo: a magazine (10) and a reserve (30). Firing needs a round in the magazine;
-/// reloading tops the magazine up from the reserve. In the original these numbers lived on the
-/// shared item asset (every player's pistol shared one magazine); here each player has their own.
+/// Port of Gun.Attack / Gun.Reload with the ammo moved where it belongs:
+/// - the rounds LOADED are part of that particular gun (ItemSlot.data), so they go with it when it changes
+///   hands, is dropped or saved (the original kept them on the shared item asset, so every pistol shared one);
+/// - the reserve is ammo ITEMS in the inventory (the original's bulletCount).
+/// Firing needs a loaded round; reloading tops the gun up from the ammo items, same arithmetic as the original.
 /// </summary>
-public sealed class GunAmmo
+public static class GunRules
 {
-    public int magazineSizeMax = 10;
-    public int magazineRounds = 10;
-    public int bulletCount = 30;
+    public static int Loaded(ItemSlot weapon) => weapon.data ?? 0;
 
-    public bool TryFire()
+    public static int Reserve(Inventory inventory, ItemDef gun) =>
+        gun.AmmoItemId is { } ammo ? inventory.CountOf(ammo) : 0;
+
+    public static bool TryFire(ItemSlot weapon)
     {
-        if (magazineRounds <= 0) return false; // "Out of ammo"
-        magazineRounds -= 1;
+        if ((weapon.data ?? 0) <= 0) return false; // "Out of ammo"
+        weapon.data -= 1;
         return true;
     }
 
-    /// <summary>Returns false if there was nothing to reload.</summary>
-    public bool Reload()
+    /// <summary>Moves rounds from the inventory into the gun. Returns how many were loaded (0 = nothing to do).</summary>
+    public static int Reload(ItemSlot weapon, ItemDef gun, Inventory inventory)
     {
-        int bulletsToFill = magazineSizeMax - magazineRounds;
-        if (bulletCount == 0 || bulletsToFill == 0) return false;
-        if (bulletCount < bulletsToFill)
+        if (gun.MagazineSize is not { } size || gun.AmmoItemId is not { } ammoId) return 0;
+        var needed = size - Loaded(weapon);
+        var loaded = 0;
+        for (int i = 0; i < inventory.slots.Length && loaded < needed; i++)
         {
-            magazineRounds += bulletCount;
-            bulletCount = 0;
+            var slot = inventory.slots[i];
+            if (slot.itemId != ammoId) continue;
+            var take = Math.Min(slot.stack_size, needed - loaded);
+            slot.stack_size -= take;
+            loaded += take;
+            if (slot.stack_size <= 0) inventory.RemoveItem(i);
         }
-        else
-        {
-            magazineRounds = magazineSizeMax;
-            bulletCount -= bulletsToFill;
-        }
-        return true;
+        weapon.data = Loaded(weapon) + loaded;
+        return loaded;
     }
 }

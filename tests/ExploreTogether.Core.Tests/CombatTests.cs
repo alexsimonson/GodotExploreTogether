@@ -24,22 +24,57 @@ public class HealthAndAmmoTests
         Assert.Equal(100, h.Current);
     }
 
+    private static readonly ItemDef Pistol = ItemCatalog.Get(1337)!;
+
     [Fact]
-    public void Gun_FiresTenThenNeedsReload_ReserveRunsOut()
+    public void Gun_StartsLoaded_FiresTen_ThenReloadsFromCarriedRounds()
     {
-        var ammo = new GunAmmo();
-        for (int i = 0; i < 10; i++) Assert.True(ammo.TryFire());
-        Assert.False(ammo.TryFire());           // "Out of ammo"
-        Assert.True(ammo.Reload());
-        Assert.Equal((10, 20), (ammo.magazineRounds, ammo.bulletCount));
-        ammo.TryFire(); ammo.TryFire();
-        ammo.Reload();
-        Assert.Equal((10, 18), (ammo.magazineRounds, ammo.bulletCount));
-        ammo.bulletCount = 1; ammo.magazineRounds = 0;
-        ammo.Reload();                           // partial reload with the last bullet
-        Assert.Equal((1, 0), (ammo.magazineRounds, ammo.bulletCount));
-        ammo.TryFire();
-        Assert.False(ammo.Reload());             // "There's no ammo left"
+        var inv = new Inventory();
+        var gear = new Gear();
+        inv.AddItem(1337);
+        Assert.Equal(10, inv.slots[0].data);                         // a fresh pistol comes loaded
+        SlotContainerLogic.Move(inv, gear, ItemContainer.Inventory, 0, ItemContainer.Gear, (int)EquipmentType.Weapon);
+        var weapon = gear.WeaponSlot;
+        for (int i = 0; i < 10; i++) Assert.True(GunRules.TryFire(weapon));
+        Assert.False(GunRules.TryFire(weapon));                      // "Out of ammo"
+
+        Assert.Equal(0, GunRules.Reload(weapon, Pistol, inv));       // no rounds carried
+        inv.AddItems(ItemCatalog.PistolRoundsId, 25);
+        Assert.Equal(10, GunRules.Reload(weapon, Pistol, inv));
+        Assert.Equal((10, 15), (GunRules.Loaded(weapon), GunRules.Reserve(inv, Pistol)));
+        GunRules.TryFire(weapon); GunRules.TryFire(weapon);
+        Assert.Equal(2, GunRules.Reload(weapon, Pistol, inv));        // tops up only what's missing
+        Assert.Equal(13, GunRules.Reserve(inv, Pistol));
+        Assert.Equal(0, GunRules.Reload(weapon, Pistol, inv));        // already full
+    }
+
+    [Fact]
+    public void Gun_PartialReload_UsesTheLastRounds_AndEmptiesTheStack()
+    {
+        var inv = new Inventory();
+        inv.AddItems(ItemCatalog.PistolRoundsId, 3);
+        var weapon = new ItemSlot { itemId = 1337, stack_size = 1, data = 0 };
+        Assert.Equal(3, GunRules.Reload(weapon, Pistol, inv));
+        Assert.Equal(3, GunRules.Loaded(weapon));
+        Assert.False(inv.Contains(ItemCatalog.PistolRoundsId));
+    }
+
+    [Fact]
+    public void LoadedRounds_TravelWithTheGun_ThroughMovesAndDrops()
+    {
+        var inv = new Inventory();
+        var gear = new Gear();
+        inv.AddItem(1337, data: 4);                                   // e.g. a pistol someone dropped with 4 rounds
+        SlotContainerLogic.Move(inv, gear, ItemContainer.Inventory, 0, ItemContainer.Gear, (int)EquipmentType.Weapon);
+        Assert.Equal(4, gear.WeaponSlot.data);
+        SlotContainerLogic.Move(inv, gear, ItemContainer.Gear, (int)EquipmentType.Weapon, ItemContainer.Inventory, 6);
+        Assert.Equal(4, inv.slots[6].data);
+        Assert.Equal((1337, 1, 4), SlotContainerLogic.Drop(inv, gear, ItemContainer.Inventory, 6));
+        Assert.Null(inv.slots[6].data);
+
+        var other = new Inventory();                                  // another player picks it up
+        other.AddItems(1337, 1, data: 4);
+        Assert.Equal(4, other.slots[0].data);
     }
 
     [Fact]
@@ -188,6 +223,42 @@ public class EnemyPlacementAndHardcoreTests
         Assert.Empty(db.LoadInventory(hc.Id));
         Assert.Equal(0, db.GetRunSummary(run).Participants);
         Assert.Single(db.ListCharacters(acct.Id));
+    }
+
+    [Fact]
+    public void GunState_IsSaved_ForInventoryAndGear()
+    {
+        using var db = GameDatabase.OpenInMemory();
+        var acct = db.CreateAccount("kermit", "h")!;
+        var c = db.CreateCharacter(acct.Id, "Kermit", "000000").Character!.Id;
+        db.SaveInventory(c, [(0, 1337, 1, (int?)3), (1, ItemCatalog.PistolRoundsId, 20, (int?)null)]);
+        var gearIds = Enumerable.Repeat(-1, Gear.SlotCount).ToArray();
+        var gearData = Enumerable.Repeat(-1, Gear.SlotCount).ToArray();
+        gearIds[(int)EquipmentType.Weapon] = 1337;
+        gearData[(int)EquipmentType.Weapon] = 7;
+        db.SaveGear(c, gearIds, gearData);
+
+        Assert.Equal([(0, 1337, 1, (int?)3), (1, ItemCatalog.PistolRoundsId, 20, (int?)null)], db.LoadInventory(c));
+        var (ids, data) = db.LoadGearWithData(c, Gear.SlotCount);
+        var gear = new Gear();
+        gear.ImportGear(ids, data);
+        Assert.Equal(7, gear.WeaponSlot.data);
+    }
+
+    [Fact]
+    public void RealSchema_V4Data_SurvivesUpgradeToV5_GunsLoadFull()
+    {
+        using var temp = new TempDatabase();
+        temp.CreateAtVersion(4, conn =>
+        {
+            Exec(conn, "INSERT INTO accounts (id, username, password_hash, created_at) VALUES (1, 'kermit', 'h', '2026-11-15T00:00:00.0000000Z');");
+            Exec(conn, "INSERT INTO characters (id, account_id, name, color, created_at) VALUES (7, 1, 'Kermit', '3cb043', '2026-11-15T00:00:00.0000000Z');");
+            Exec(conn, "INSERT INTO inventory_items (character_id, slot, item_id, count) VALUES (7, 0, 1337, 1);");
+        });
+        using var db = GameDatabase.Open(temp.Path);
+        var inv = new Inventory();
+        inv.Load(db.LoadInventory(7));
+        Assert.Equal(10, inv.slots[0].data); // a pistol saved before guns had state comes back loaded
     }
 
     [Fact]

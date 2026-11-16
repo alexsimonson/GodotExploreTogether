@@ -71,7 +71,8 @@ public partial class ItemSlotButton : PanelContainer
         SetItem(null, 0);
     }
 
-    public void SetItem(int? itemId, int count)
+    /// <param name="data">The item's state, e.g. a gun's loaded rounds (shown as "7/10").</param>
+    public void SetItem(int? itemId, int count, int? data = null)
     {
         _itemId = itemId;
         var def = itemId is { } id ? ItemCatalog.Get(id) : null;
@@ -88,7 +89,9 @@ public partial class ItemSlotButton : PanelContainer
         _name.Text = def.Name;
         _name.Modulate = Colors.White;
         _icon.Texture = IconCache.Get(def.Icon);
-        _count.Text = count > 0 ? count.ToString() : ""; // the original showed the stack size whenever it was > 0
+        _count.Text = def.MagazineSize is { } size && data is { } loaded
+            ? $"{loaded}/{size}"                             // a gun: rounds loaded
+            : count > 0 ? count.ToString() : "";             // the original showed the stack size whenever it was > 0
         TooltipText = string.IsNullOrEmpty(def.Description) ? def.Name : $"{def.Name}\n{def.Description}";
     }
 

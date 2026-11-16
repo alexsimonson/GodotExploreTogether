@@ -24,9 +24,12 @@ public partial class ClientGame
     private Label _healthLabel = null!;
     private Label _crosshair = null!;
     private ColorRect _hurtFlash = null!;
-    private MeshInstance3D? _aimMarker;
+    private Node3D? _aimMarker;
     private bool _aiming;
     private int _lastHealth = -1;
+    private double _aimSendTimer;
+    private bool _aimSentActive;
+    private Vector3 _aimSentPoint;
     private double _devFightTimer;
 
     private ItemDef? EquippedWeapon => _equippedWeaponId >= 0 ? ItemCatalog.Get(_equippedWeaponId) : null;
@@ -132,6 +135,7 @@ public partial class ClientGame
         if (_hurtFlash.Color.A > 0)
             _hurtFlash.Color = _hurtFlash.Color with { A = Mathf.Max(0, _hurtFlash.Color.A - (float)delta * 1.2f) };
 
+        if (CmdArgs.Has("dev-aim") && EquippedWeapon?.Class == ItemClass.Magic && !_aiming) SetAiming(true); // dev: hold the aim
         UpdateAimMarker();
         DevFight(delta);
     }
@@ -141,44 +145,54 @@ public partial class ClientGame
     private void SetAiming(bool aiming)
     {
         _aiming = aiming;
-        if (!aiming && _aimMarker != null) _aimMarker.Visible = false;
+        if (!aiming && _aimMarker != null && IsInstanceValid(_aimMarker)) _aimMarker.Visible = false;
+        if (!aiming) SendAimState(false, Vector3.Zero, force: true);
     }
 
+    private void FreeAimMarker()
+    {
+        if (_aimMarker != null && IsInstanceValid(_aimMarker)) _aimMarker.QueueFree();
+        _aimMarker = null;
+    }
+
+    /// <summary>The ghost pentagram where the area would land (same placement rule as the server's cast).</summary>
     private void UpdateAimMarker()
     {
         if (!_aiming || PlayerCharacter.Local is not { } me) return;
-        var cam = me.Camera;
-        var from = cam.GlobalPosition;
-        var hit = cam.GetWorld3D().DirectSpaceState.IntersectRay(
-            PhysicsRayQueryParameters3D.Create(from, from + AimDirection() * CombatRules.MagicPlaceRange, collisionMask: 1));
-        _aimMarker ??= MakeAreaDisc(new Color(1, 1, 1, 0.35f));
-        if (_aimMarker.GetParent() == null) _main.Instances.AddChild(_aimMarker);
-        _aimMarker.Visible = hit.Count > 0;
-        if (hit.Count > 0) _aimMarker.GlobalPosition = hit["position"].AsVector3() + new Vector3(0, 0.03f, 0);
-    }
-
-    private void ShowMagicArea(Vector3 position, int style, float lifetime)
-    {
-        var color = (MagicStyle)style == MagicStyle.Frost ? new Color(0.4f, 0.7f, 1f, 0.5f) : new Color(0.9f, 0.1f, 0.1f, 0.5f);
-        var disc = MakeAreaDisc(color);
-        _main.Instances.AddChild(disc);
-        disc.GlobalPosition = position + new Vector3(0, 0.04f, 0);
-        GetTree().CreateTimer(lifetime).Timeout += () => { if (IsInstanceValid(disc)) disc.QueueFree(); };
-    }
-
-    private static MeshInstance3D MakeAreaDisc(Color color) => new()
-    {
-        Mesh = new CylinderMesh
+        // The marker lives inside the current instance, which is freed when changing instances: recreate it then.
+        if (_aimMarker == null || !IsInstanceValid(_aimMarker) || !_aimMarker.IsInsideTree())
         {
-            TopRadius = CombatRules.MagicAreaRadius, BottomRadius = CombatRules.MagicAreaRadius, Height = 0.05f,
-            Material = new StandardMaterial3D
-            {
-                AlbedoColor = color,
-                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-            },
-        },
-    };
+            _aimMarker = Combat.MagicAim.CreatePentagram(me.PlayerColor); // the player's chosen color
+            _main.Instances.AddChild(_aimMarker);
+        }
+        var cam = me.Camera;
+        var spot = Combat.MagicAim.FindPlacement(cam.GetWorld3D().DirectSpaceState, cam.GlobalPosition, AimDirection());
+        _aimMarker.Visible = spot != null;
+        if (spot is { } p) _aimMarker.GlobalPosition = p + new Vector3(0, 0.03f, 0);
+        SendAimState(spot != null, spot ?? Vector3.Zero);
+    }
+
+    /// <summary>Tells the server where our ghost is (about 15 times a second while it moves), so others see it.</summary>
+    private void SendAimState(bool active, Vector3 point, bool force = false)
+    {
+        if (_currentInstanceId is not { } instanceId) return;
+        var changed = active != _aimSentActive || (active && point.DistanceTo(_aimSentPoint) > 0.05f);
+        if (!force && (!changed || Time.GetTicksMsec() / 1000.0 < _aimSendTimer)) return;
+        if (force && !changed) return;
+        _aimSendTimer = Time.GetTicksMsec() / 1000.0 + 1.0 / 15;
+        _aimSentActive = active;
+        _aimSentPoint = point;
+        _session.SendAim(instanceId, active, point);
+    }
+
+    /// <summary>A placed area: the caster's pentagram, in their character color.</summary>
+    private void ShowMagicArea(Vector3 position, int style, float lifetime, Color casterColor)
+    {
+        var pentagram = Combat.MagicAim.CreatePentagram(casterColor);
+        _main.Instances.AddChild(pentagram);
+        pentagram.GlobalPosition = position + new Vector3(0, 0.04f, 0);
+        GetTree().CreateTimer(lifetime).Timeout += () => { if (IsInstanceValid(pentagram)) pentagram.QueueFree(); };
+    }
 
     // ---- hardcore death ----
 
@@ -187,7 +201,7 @@ public partial class ClientGame
         GD.Print($"[client] {message}");
         ClearInstances();
         SetAiming(false);
-        _aimMarker = null;
+        FreeAimMarker();
         _inventory.Visible = false;
         _statusLabel.Visible = false;
         _weaponLabel.Visible = false;

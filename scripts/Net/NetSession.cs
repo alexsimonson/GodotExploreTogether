@@ -44,6 +44,7 @@ public partial class NetSession : Node
     public event Action<long, int, int, int, int>? MoveItemRequested;   // from container, from slot, to container, to slot
     public event Action<long, int, int>? DropItemRequested;             // container, slot
     public event Action<long, Vector3>? AttackRequested;                // aim direction (camera forward)
+    public event Action<long, int, bool, Vector3>? AimReceived;         // instance id, aiming?, ghost position
     public event Action<long>? ReloadRequested;
 
     // ---- Client-side events (the server called us) ----
@@ -53,10 +54,11 @@ public partial class NetSession : Node
     public event Action<int, string, int[]>? EnterInstanceReceived;      // instance id, kind, maze layout (dungeons)
     public event Action<List<DungeonSummary>>? DungeonMenuReceived;
     public event Action<string>? NoticeReceived;                         // short message for the HUD
-    public event Action<int[], int[]>? InventoryReceived;                // inventory (slot, item id, count) triples; gear item ids (-1 = empty)
+    /// <summary>inventory (slot, item id, count, data) quads (data -1 = none); gear item ids and gear data per slot (-1 = empty/none)</summary>
+    public event Action<int[], int[], int[]>? InventoryReceived;
     public event Action<DungeonStatus>? DungeonStatusReceived;
     public event Action<int, int>? AmmoReceived;                         // magazine, reserve
-    public event Action<Vector3, int, float>? MagicAreaReceived;         // position, magic style, lifetime
+    public event Action<Vector3, int, float, Color>? MagicAreaReceived;  // position, magic style, lifetime, caster's color
     public event Action<string>? CharacterLostReceived;                  // hardcore death: back to character select
 
     // =========================================================== client -> server
@@ -79,6 +81,16 @@ public partial class NetSession : Node
     public void SendAttack(Vector3 aimDirection) => RpcId(1, MethodName.Attack, aimDirection);
 
     public void SendReload() => RpcId(1, MethodName.Reload);
+
+    /// <summary>Where this player's magic ghost is (or that they stopped aiming), so others can see it.</summary>
+    public void SendAim(int instanceId, bool aiming, Vector3 position) =>
+        RpcId(1, MethodName.Aim, instanceId, aiming, position);
+
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.UnreliableOrdered)]
+    private void Aim(int instanceId, bool aiming, Vector3 position)
+    {
+        if (Main.IsServer) AimReceived?.Invoke(Multiplayer.GetRemoteSenderId(), instanceId, aiming, position);
+    }
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void Attack(Vector3 aimDirection)
@@ -184,13 +196,14 @@ public partial class NetSession : Node
 
     public void SendAmmo(long peer, int magazine, int reserve) => RpcId(peer, MethodName.Ammo, magazine, reserve);
 
-    public void SendMagicArea(long peer, Vector3 position, int style, float lifetime) =>
-        RpcId(peer, MethodName.MagicArea, position, style, lifetime);
+    public void SendMagicArea(long peer, Vector3 position, int style, float lifetime, Color color) =>
+        RpcId(peer, MethodName.MagicArea, position, style, lifetime, color);
 
     public void SendCharacterLost(long peer, string message) => RpcId(peer, MethodName.CharacterLost, message);
 
-    /// <summary>The player's whole inventory as (slot, item id, count) triples, plus gear item ids per slot.</summary>
-    public void SendInventory(long peer, int[] triples, int[] gear) => RpcId(peer, MethodName.Inventory, triples, gear);
+    /// <summary>The player's whole inventory as (slot, item id, count, data) quads, plus gear item ids and data per slot.</summary>
+    public void SendInventory(long peer, int[] quads, int[] gear, int[] gearData) =>
+        RpcId(peer, MethodName.Inventory, quads, gear, gearData);
 
     public void SendDungeonStatus(long peer, DungeonStatus status) =>
         RpcId(peer, MethodName.DungeonStatusUpdate, status.ExitOpen, status.PassHolder, status.Escaped, status.PlayersInside);
@@ -232,13 +245,14 @@ public partial class NetSession : Node
     private void Ammo(int magazine, int reserve) => AmmoReceived?.Invoke(magazine, reserve);
 
     [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
-    private void MagicArea(Vector3 position, int style, float lifetime) => MagicAreaReceived?.Invoke(position, style, lifetime);
+    private void MagicArea(Vector3 position, int style, float lifetime, Color color) =>
+        MagicAreaReceived?.Invoke(position, style, lifetime, color);
 
     [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void CharacterLost(string message) => CharacterLostReceived?.Invoke(message);
 
     [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
-    private void Inventory(int[] triples, int[] gear) => InventoryReceived?.Invoke(triples, gear);
+    private void Inventory(int[] quads, int[] gear, int[] gearData) => InventoryReceived?.Invoke(quads, gear, gearData);
 
     [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void DungeonStatusUpdate(bool exitOpen, string passHolder, string[] escaped, int playersInside) =>

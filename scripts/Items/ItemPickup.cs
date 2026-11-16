@@ -16,6 +16,8 @@ public partial class ItemPickup : Interactable
     [Export] public int ItemId { get; set; }
     /// <summary>How many (a dropped stack stays one pickup).</summary>
     [Export] public int Count { get; set; } = 1;
+    /// <summary>Server only: the item's state (e.g. a dropped gun's loaded rounds), handed to whoever picks it up.</summary>
+    public int? Data { get; set; }
 
     public MultiplayerSynchronizer Sync => GetNode<MultiplayerSynchronizer>("Sync");
 

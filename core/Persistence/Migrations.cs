@@ -101,6 +101,11 @@ public static class Migrations
         new(4, "hardcore characters", Sql: """
             ALTER TABLE characters ADD COLUMN hardcore INTEGER NOT NULL DEFAULT 0;
             """),
+
+        new(5, "per-item state (a gun's loaded rounds)", Sql: """
+            ALTER TABLE inventory_items ADD COLUMN data INTEGER;
+            ALTER TABLE equipment_items ADD COLUMN data INTEGER;
+            """),
     ];
 
     public static int LatestVersion => All.Count;

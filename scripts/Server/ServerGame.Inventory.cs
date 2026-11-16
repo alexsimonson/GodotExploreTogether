@@ -39,7 +39,7 @@ public partial class ServerGame
         // Like the original: it lands at the player's position (a little in front and above, so it's visible).
         var forward = -found.Player.Transform.Basis.Z;
         var position = found.Player.NetPosition + forward * 0.8f + new Vector3(0, 0.8f, 0);
-        _instances.SpawnItem(found.Instance, d.ItemId, position, d.Count);
+        _instances.SpawnItem(found.Instance, d.ItemId, position, d.Count, d.Data);
         SaveInventory(s);
         GD.Print($"[server] '{s.Character!.Name}' dropped {ItemCatalog.NameOf(d.ItemId)} x{d.Count} in instance {found.Instance.Id}");
 

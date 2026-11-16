@@ -130,11 +130,17 @@ Each phase ends with something runnable.
   - 5 per dungeon, placed like `FillMazeWithItems` (nodes in [10, count − 10)).
   - Placeholder look (the user chose this; the original model wasn't used).
 - ✅ Navigation: baked per dungeon on the server from the maze colliders (about 40 ms for 5×5). Enemies use `NavigationAgent3D`.
-- ✅ Vision: same rule as `VisionSystem` (90°×45° view, 10 m, eye at 1.7 m, walls block), but checked directly per player instead of with 1,500 rays per frame.
+- ✅ Vision: same rule as `VisionSystem` (90°×45° view, 10 m, eye at 1.7 m, walls block), but checked directly per player instead of with 1,500 rays per frame. A player is seen if their head, chest or feet is in view. (Checking only the chest made close players invisible: their chest fell below the view cone.)
 - ✅ Player combat, decided by the server (`ServerGame.Combat.cs`), from the original numbers:
   - Melee/Tool: 4 m, 20 damage + knockback. Tool also uses interactables, as in the original.
-  - Gun: 100 damage, magazine 10 + 30 reserve, R to reload. Ammo is per player; the original stored it on the shared item asset.
+  - Gun: 100 damage, magazine 10, R to reload.
+    - The **loaded rounds belong to that gun** (per-item state, database v5), so they go with it when it changes hands, is dropped or saved.
+    - **Reserve ammo is an item** ("Pistol Rounds", stackable, found as loot in stacks of 10).
+    - The original kept both numbers on the shared item asset.
   - Magic: hold right-click to aim, left-click to place a 5 s area within 10 m that rolls 0–49 damage once per enemy entering. Frost freezes for 5 s; Blood heals the caster 10 per hit.
+    - The ghost preview and placed area use the original pentagram model, solid, in the caster's character color.
+    - Other players see your aiming ghost: the client sends its spot about 15 times a second, the server checks it (wand equipped, within reach) and replicates it on the player node (`AimActive`, `AimPoint`).
+    - If nothing is hit within 10 m, the area drops to the floor below the 10 m point (the original showed no ghost then). Client and server share this rule (`MagicAim`).
   - Added short cooldowns (the original had none).
 - ✅ Health: 100, replicated, restored in the hub. HUD: health, weapon + ammo, crosshair, red flash when hurt.
 - ✅ Death:

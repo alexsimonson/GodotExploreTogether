@@ -196,37 +196,39 @@ public partial class ClientGame : Node
         _noticeTimeLeft = 4;
     }
 
-    private void OnInventory(int[] triples, int[] gear)
+    private void OnInventory(int[] quads, int[] gear, int[] gearData)
     {
-        _inventory.SetState(triples, gear);
+        _inventory.SetState(quads, gear, gearData);
         UpdateEquippedWeapon(gear);
         _weaponLabel.Visible = true;
 
         var names = new List<string>();
-        for (int i = 0; i + 2 < triples.Length; i += 3)
-            names.Add(triples[i + 2] > 1 ? $"{Core.Items.ItemCatalog.NameOf(triples[i + 1])} x{triples[i + 2]}"
-                                         : Core.Items.ItemCatalog.NameOf(triples[i + 1]));
+        for (int i = 0; i + 3 < quads.Length; i += 4)
+            names.Add(Core.Items.ItemCatalog.NameOf(quads[i + 1])
+                      + (quads[i + 2] > 1 ? $" x{quads[i + 2]}" : "")
+                      + (quads[i + 3] >= 0 ? $" ({quads[i + 3]} loaded)" : ""));
         var equipped = new List<string>();
         for (int i = 0; i < gear.Length; i++)
-            if (gear[i] >= 0) equipped.Add($"{(Core.Items.EquipmentType)i}={Core.Items.ItemCatalog.NameOf(gear[i])}");
+            if (gear[i] >= 0) equipped.Add($"{(Core.Items.EquipmentType)i}={Core.Items.ItemCatalog.NameOf(gear[i])}"
+                                           + (i < gearData.Length && gearData[i] >= 0 ? $" ({gearData[i]} loaded)" : ""));
         GD.Print($"[client] inventory ({names.Count} slots): {string.Join(", ", names)} | gear: {string.Join(", ", equipped)}");
-        DevInventoryActions(triples, gear);
+        DevInventoryActions(quads, gear);
     }
 
     /// <summary>
     /// --dev-equip: equip every item that fits an empty gear slot. --dev-drop NAME: drop the first stack of NAME ("*" = any).
     /// Each runs once per inventory update and stops when there's nothing left to do.
     /// </summary>
-    private void DevInventoryActions(int[] triples, int[] gear)
+    private void DevInventoryActions(int[] quads, int[] gear)
     {
         if (_currentKind != InstanceKinds.Hub) return;
         if (CmdArgs.Has("dev-equip"))
         {
-            for (int i = 0; i + 2 < triples.Length; i += 3)
+            for (int i = 0; i + 3 < quads.Length; i += 4)
             {
-                var def = Core.Items.ItemCatalog.Get(triples[i + 1]);
+                var def = Core.Items.ItemCatalog.Get(quads[i + 1]);
                 if (def?.Slot is not { } type || gear[(int)type] >= 0) continue;
-                _session.SendMoveItem((int)Core.Items.ItemContainer.Inventory, triples[i], (int)Core.Items.ItemContainer.Gear, (int)type);
+                _session.SendMoveItem((int)Core.Items.ItemContainer.Inventory, quads[i], (int)Core.Items.ItemContainer.Gear, (int)type);
                 return; // one move per update; the next update continues
             }
         }
@@ -236,20 +238,20 @@ public partial class ClientGame : Node
             var slot = (int)Core.Items.EquipmentType.Weapon;
             var current = gear[slot] >= 0 ? Core.Items.ItemCatalog.NameOf(gear[slot]) : "";
             if (current != weaponName)
-                for (int i = 0; i + 2 < triples.Length; i += 3)
-                    if (Core.Items.ItemCatalog.NameOf(triples[i + 1]) == weaponName)
+                for (int i = 0; i + 3 < quads.Length; i += 4)
+                    if (Core.Items.ItemCatalog.NameOf(quads[i + 1]) == weaponName)
                     {
-                        _session.SendMoveItem((int)Core.Items.ItemContainer.Inventory, triples[i], (int)Core.Items.ItemContainer.Gear, slot);
+                        _session.SendMoveItem((int)Core.Items.ItemContainer.Inventory, quads[i], (int)Core.Items.ItemContainer.Gear, slot);
                         return;
                     }
         }
         if (CmdArgs.Get("dev-drop") is { Length: > 0 } dropName && !_devDropDone)
         {
-            for (int i = 0; i + 2 < triples.Length; i += 3)
+            for (int i = 0; i + 3 < quads.Length; i += 4)
             {
-                if (dropName != "*" && Core.Items.ItemCatalog.NameOf(triples[i + 1]) != dropName) continue;
+                if (dropName != "*" && Core.Items.ItemCatalog.NameOf(quads[i + 1]) != dropName) continue;
                 _devDropDone = true;
-                _session.SendDropItem((int)Core.Items.ItemContainer.Inventory, triples[i]);
+                _session.SendDropItem((int)Core.Items.ItemContainer.Inventory, quads[i]);
                 return;
             }
         }

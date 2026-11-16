@@ -21,11 +21,17 @@ public sealed record ItemDef(
     ItemClass Class = ItemClass.Item,
     EquipmentType? Slot = null,
     WeaponStyle? Style = null,
-    int Damage = 0)
+    int Damage = 0,
+    int? MagazineSize = null,  // guns: rounds the weapon holds (loaded rounds travel with the weapon)
+    int? AmmoItemId = null,    // guns: which item reloads it
+    int LootCount = 1)         // how many make up one pickup when generated as loot
 {
     /// <summary>The original's valid_equipment_types: Equipment and every Weapon subclass.</summary>
     public bool IsEquipment => Class != ItemClass.Item;
     public bool IsWeapon => Slot == EquipmentType.Weapon;
+
+    /// <summary>Per-item state a fresh copy starts with: a gun comes loaded (the original's magazineRounds = 10).</summary>
+    public int? InitialData => MagazineSize;
 }
 
 /// <summary>
@@ -37,6 +43,8 @@ public static class ItemCatalog
 {
     /// <summary>The original exit key: "Allows you to pass to the next dungeon".</summary>
     public const int DungeonPassId = 999;
+
+    public const int PistolRoundsId = 1338;
 
     public static readonly IReadOnlyList<ItemDef> All =
     [
@@ -54,7 +62,11 @@ public static class ItemCatalog
         new(567, "Ice Wand", "WCasdc", false, "IceWand.png", ItemClass.Magic, EquipmentType.Weapon, WeaponStyle.Magic, 10),
         new(666, "Blood Wand", "asdf", false, "BloodWand.png", ItemClass.Magic, EquipmentType.Weapon, WeaponStyle.Magic, 0),
         new(DungeonPassId, "Dungeon Pass", "Allows you to pass to the next dungeon", false, "dungeonpass.png"),
-        new(1337, "Pistol", "A pistol as a gun", false, "BasicPistol.png", ItemClass.Gun, EquipmentType.Weapon, WeaponStyle.Gun, 10),
+        new(1337, "Pistol", "A pistol as a gun", false, "BasicPistol.png", ItemClass.Gun, EquipmentType.Weapon, WeaponStyle.Gun, 10,
+            MagazineSize: 10, AmmoItemId: PistolRoundsId),
+        // New (not in the original): the original Gun kept a bulletCount reserve on the shared asset;
+        // here reserve ammo is an item you carry. No icon yet.
+        new(PistolRoundsId, "Pistol Rounds", "Ammunition for the pistol", true, "", LootCount: 10),
         new(1515, "Sword", "Just a sword", false, "sword.png", ItemClass.Melee, EquipmentType.Weapon, WeaponStyle.Melee, 10),
     ];
 

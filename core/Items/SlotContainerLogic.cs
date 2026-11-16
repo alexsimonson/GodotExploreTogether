@@ -74,6 +74,7 @@ public static class SlotContainerLogic
     {
         (a.itemId, b.itemId) = (b.itemId, a.itemId);
         (a.stack_size, b.stack_size) = (b.stack_size, a.stack_size);
+        (a.data, b.data) = (b.data, a.data); // e.g. a gun's loaded rounds go with the gun
     }
 
     public static ItemSlot? Slot(Inventory inventory, Gear gear, ItemContainer container, int index) => container switch
@@ -88,13 +89,15 @@ public static class SlotContainerLogic
     /// caller to put into the world. (The original dropped a single item even for a stack, losing
     /// the rest; here the whole stack is returned.)
     /// </summary>
-    public static (int ItemId, int Count)? Drop(Inventory inventory, Gear gear, ItemContainer container, int index)
+    public static (int ItemId, int Count, int? Data)? Drop(Inventory inventory, Gear gear, ItemContainer container, int index)
     {
         var slot = Slot(inventory, gear, container, index);
         if (slot?.itemId is not { } id) return null;
         var count = Math.Max(1, slot.stack_size);
+        var data = slot.data;
         slot.itemId = null;
         slot.stack_size = 0;
-        return (id, count);
+        slot.data = null;
+        return (id, count, data);
     }
 }

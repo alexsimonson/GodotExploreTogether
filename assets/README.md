@@ -11,6 +11,9 @@ use it via the nested "Torch Particle" prefab.
 
 **Item icons** (`icons/`) come from `Assets/Resources/UI`, for the same reason: the original item assets reference them.
 
+**The pentagram** (`models/pentagram/pentagram.fbx`) comes from `Assets/Resources/Models/Pentagram` (made with the project's own
+`unbelievably_accurate_pentagram_*.py` Blender scripts). The original magic ghost prefab (`GhostPortalDefault`) uses it.
+
 ## Dungeon pieces (`dungeon_pieces/`, `scenes/dungeon/`)
 Generated from the Unity prefabs by `tools/import_unity_dungeon.py` (rerunnable; don't hand-edit the outputs):
 exact ProBuilder geometry and UVs (OBJ per piece and material), the original materials (walls brick, floor/ceiling

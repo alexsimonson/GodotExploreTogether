@@ -25,8 +25,11 @@ public sealed class Gear
     /// <summary>Port of ExportGear: item id per slot, -1 when empty.</summary>
     public int[] ExportGear() => slots.Select(s => s.itemId ?? -1).ToArray();
 
+    /// <summary>Each slot's item state (e.g. rounds loaded), -1 when none.</summary>
+    public int[] ExportGearData() => slots.Select(s => s.data ?? -1).ToArray();
+
     /// <summary>Port of ImportGear (unknown items and items that don't fit the slot are skipped).</summary>
-    public void ImportGear(IReadOnlyList<int> gearItemIds)
+    public void ImportGear(IReadOnlyList<int> gearItemIds, IReadOnlyList<int>? gearData = null)
     {
         for (int i = 0; i < Math.Min(gearItemIds.Count, SlotCount); i++)
         {
@@ -34,6 +37,10 @@ public sealed class Gear
             if (def == null || def.Slot != TypeOf(i)) continue;
             slots[i].itemId = def.Id;
             slots[i].stack_size = 1;
+            var saved = gearData != null && i < gearData.Count && gearData[i] >= 0 ? gearData[i] : (int?)null;
+            slots[i].data = saved ?? def.InitialData;
         }
     }
+
+    public ItemSlot WeaponSlot => slots[(int)EquipmentType.Weapon];
 }
