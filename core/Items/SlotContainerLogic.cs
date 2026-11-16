@@ -44,7 +44,7 @@ public static class SlotContainerLogic
         if (source == null || target == null || source.itemId == null) return false;
         if (ReferenceEquals(source, target)) return false;
 
-        return (from == ItemContainer.Gear, to == ItemContainer.Gear) switch
+        return (from is ItemContainer.Gear or ItemContainer.LootGear, to is ItemContainer.Gear or ItemContainer.LootGear) switch
         {
             (false, false) => SwapItem(source, target),
             (false, true) => EquipItem(source, target, Gear.TypeOf(toSlot)),

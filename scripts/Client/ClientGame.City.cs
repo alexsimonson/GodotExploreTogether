@@ -163,6 +163,58 @@ public partial class ClientGame
         }
     }
 
+    // ---- quick transfer (Ctrl + click) and quick equip (Alt + click) ----
+
+    /// <summary>A free slot in a container shown as quads: the stack the item merges onto, or the first empty slot; -1 if full.</summary>
+    private static int FreeSlotFor(int[] quads, int capacity, int itemId)
+    {
+        var used = Enumerable.Range(0, quads.Length / 4).ToDictionary(i => quads[i * 4], i => quads[i * 4 + 1]);
+        if (ItemCatalog.Get(itemId) is { Stack: true })
+            foreach (var (slot, item) in used)
+                if (item == itemId) return slot;
+        return Enumerable.Range(0, capacity).FirstOrDefault(i => !used.ContainsKey(i), -1);
+    }
+
+    private int ItemAt(ItemContainer c, int slot)
+    {
+        int[] quads = c switch
+        {
+            ItemContainer.Inventory => _lastInventoryQuads, ItemContainer.Loot => _lastLootQuads,
+            ItemContainer.Storage => _lastStorageQuads, ItemContainer.Supply => DebugSupply.Quads(), _ => [],
+        };
+        if (c == ItemContainer.Gear) return slot < _lastGear.Length ? _lastGear[slot] : -1;
+        if (c == ItemContainer.LootGear) return slot < _lastLootGear.Length ? _lastLootGear[slot] : -1;
+        for (var i = 0; i + 3 < quads.Length; i += 4) if (quads[i] == slot) return quads[i + 1];
+        return -1;
+    }
+
+    /// <summary>Ctrl + click: from the player to the open body or storage; from them (or the supply) into the inventory.</summary>
+    private void QuickTransfer(ItemContainer from, int slot)
+    {
+        var item = ItemAt(from, slot);
+        if (item < 0) return;
+        var (to, quads, capacity) = from is ItemContainer.Inventory or ItemContainer.Gear
+            ? _inventory.LootOpen ? (ItemContainer.Loot, _lastLootQuads, Inventory.DefaultMaxSlots)
+              : _inventory.StorageOpen ? (ItemContainer.Storage, _lastStorageQuads, Inventory.HubStorageSlots)
+              : (ItemContainer.Inventory, _lastInventoryQuads, Inventory.DefaultMaxSlots) // gear: unequip
+            : (ItemContainer.Inventory, _lastInventoryQuads, Inventory.DefaultMaxSlots);
+        if (from == to) return;
+        var target = FreeSlotFor(quads, capacity, item);
+        if (target >= 0) _session.SendMoveItem((int)from, slot, (int)to, target);
+    }
+
+    /// <summary>Alt + click: equip into the player's matching gear slot (from anywhere); on equipped gear, unequip.</summary>
+    private void QuickEquip(ItemContainer from, int slot)
+    {
+        if (from == ItemContainer.Gear)
+        {
+            QuickTransfer(from, slot);
+            return;
+        }
+        if (ItemCatalog.Get(ItemAt(from, slot)) is { Slot: { } type })
+            _session.SendMoveItem((int)from, slot, (int)ItemContainer.Gear, (int)type);
+    }
+
     // ---- dev automation: --dev-doors ----
 
     private bool _devDoorsStarted, _devDoorsTook;

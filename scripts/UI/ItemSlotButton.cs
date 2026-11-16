@@ -22,6 +22,10 @@ public partial class ItemSlotButton : PanelContainer
     public event Action<ItemContainer, int, ItemContainer, int>? ItemDropped;
     /// <summary>container, slot</summary>
     public event Action<ItemContainer, int>? DropToWorldRequested;
+    /// <summary>Ctrl + left-click: send the item to the other open container.</summary>
+    public event Action<ItemContainer, int>? QuickTransferRequested;
+    /// <summary>Alt + left-click: equip the item (into the player's matching gear slot).</summary>
+    public event Action<ItemContainer, int>? QuickEquipRequested;
 
     public ItemContainer Container { get; }
     public int Index { get; }
@@ -131,6 +135,13 @@ public partial class ItemSlotButton : PanelContainer
         if (@event is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Right, CtrlPressed: true } && _itemId != null)
         {
             DropToWorldRequested?.Invoke(Container, Index);
+            AcceptEvent();
+        }
+        else if (@event is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left } click && _itemId != null
+                 && (click.CtrlPressed || click.AltPressed))
+        {
+            if (click.AltPressed) QuickEquipRequested?.Invoke(Container, Index);
+            else QuickTransferRequested?.Invoke(Container, Index);
             AcceptEvent();
         }
     }

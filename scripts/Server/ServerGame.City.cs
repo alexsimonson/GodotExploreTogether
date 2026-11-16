@@ -254,11 +254,11 @@ public partial class ServerGame
             return;
         }
         var (loot, lootGear) = (npc.Inventory, npc.Gear);
-        var allowed = SlotContainerLogic.IsAllowedForLoot(s.Inventory!, s.Gear!, loot, from, fromSlot, to, toSlot, lootGear);
+        bool OnBody(ItemContainer c) => c is ItemContainer.Loot or ItemContainer.LootGear;
         var source = SlotContainerLogic.Slot(s.Inventory!, s.Gear!, from, fromSlot, loot: loot, lootGear: lootGear);
-        var (itemId, count) = (source?.itemId, source?.stack_size ?? 0);
-        if (to is ItemContainer.Loot or ItemContainer.LootGear) _session.SendNotice(s.Peer, "You can only take from a body.");
-        if (!allowed || itemId is not { } id
+        var target0 = SlotContainerLogic.Slot(s.Inventory!, s.Gear!, to, toSlot, loot: loot, lootGear: lootGear);
+        var (itemId, count, displaced) = (source?.itemId, source?.stack_size ?? 0, target0?.itemId);
+        if (itemId is not { } id
             || !SlotContainerLogic.Move(s.Inventory!, s.Gear!, from, fromSlot, to, toSlot, loot: loot, lootGear: lootGear))
         {
             SendInventory(s);
@@ -266,20 +266,35 @@ public partial class ServerGame
             return;
         }
 
-        var target = SlotContainerLogic.Slot(s.Inventory!, s.Gear!, to, toSlot)!;
+        // Log what crossed between player and body (either way, swaps included).
         var origin = $"from the body of {npc.NetName}";
         var events = new List<ItemEvent>();
-        if (target.uid == null && NeedsSerial(id))
+        void Took(ItemSlot slot)
         {
-            (var uid, var created) = RegisterNewItem(s, id, $"taken {origin}, city {city.Id}", city);
-            target.uid = uid;
-            events.Add(created);
+            if (slot.itemId is not { } took) return;
+            if (slot.uid == null && NeedsSerial(took))
+            {
+                (var uid, var created) = RegisterNewItem(s, took, $"taken {origin}, city {city.Id}", city);
+                slot.uid = uid;
+                events.Add(created);
+            }
+            events.Add(ItemEventFor(s, ItemActions.PickedUp, took, slot.stack_size, slot.uid, city, origin));
         }
-        events.Add(ItemEventFor(s, ItemActions.PickedUp, id, count, target.uid, city, origin));
+        void Left(ItemSlot slot)
+        {
+            if (slot.itemId is { } left)
+                events.Add(ItemEventFor(s, ItemActions.Dropped, left, slot.stack_size, slot.uid, city, $"left on the body of {npc.NetName}"));
+        }
+        var fromSide = SlotContainerLogic.Slot(s.Inventory!, s.Gear!, from, fromSlot, loot: loot, lootGear: lootGear)!;
+        var toSide = SlotContainerLogic.Slot(s.Inventory!, s.Gear!, to, toSlot, loot: loot, lootGear: lootGear)!;
+        if (OnBody(from) && !OnBody(to)) { Took(toSide); if (displaced != null) Left(fromSide); }
+        else if (!OnBody(from) && OnBody(to)) { Left(toSide); if (displaced != null) Took(fromSide); }
         SaveInventory(s, events.ToArray());
         SendInventory(s);
         SendLoot(s, npc);
-        GD.Print($"[server] '{s.Character!.Name}' took {ItemCatalog.NameOf(id)}{(count > 1 ? $" x{count}" : "")} {origin}");
+        var verb = OnBody(from) && !OnBody(to) ? "took" : !OnBody(from) && OnBody(to) ? "left" : "moved";
+        GD.Print($"[server] '{s.Character!.Name}' {verb} {ItemCatalog.NameOf(id)}{(count > 1 ? $" x{count}" : "")} " +
+                 (verb == "left" ? $"on the body of {npc.NetName}" : origin));
     }
 
     private ServerInstance CreateCity(string createdBy)

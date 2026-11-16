@@ -23,7 +23,7 @@ public partial class ClientGame
 {
     private const string HubStorageId = "hub_storage";
 
-    private int[] _lastInventoryQuads = [];
+    private int[] _lastInventoryQuads = [], _lastGear = [], _lastStorageQuads = [];
     private readonly int _devGatherTarget = CmdArgs.GetInt("dev-gather", 0);
     private bool _devGatherStoring;
     private bool _devGatherDone;
@@ -99,6 +99,7 @@ public partial class ClientGame
             Enumerable.Range(0, count).Select(i => ItemCatalog.NameOf(quads[i * 4 + 1]) + (quads[i * 4 + 2] > 1 ? $" x{quads[i * 4 + 2]}" : ""))));
 
         // Open it, unless this is the answer to a request made from too far away (then just keep it up to date).
+        _lastStorageQuads = quads;
         if (_inventory.StorageOpen || !NearStorage()) _inventory.UpdateStorage(quads);
         else _inventory.ShowStorage(quads);
         DevGatherStore(quads);

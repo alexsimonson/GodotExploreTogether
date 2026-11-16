@@ -24,6 +24,8 @@ public partial class InventoryScreen : CanvasLayer
     public event Action<ItemContainer, int>? DropRequested;
     /// <summary>The loot panel's "Take all" button.</summary>
     public event Action? TakeAllRequested;
+    public event Action<ItemContainer, int>? QuickTransferRequested;
+    public event Action<ItemContainer, int>? QuickEquipRequested;
 
 
 
@@ -126,15 +128,16 @@ public partial class InventoryScreen : CanvasLayer
     {
         var row = new HBoxContainer();
         row.AddThemeConstantOverride("separation", 16);
-        var gear = GearPanel("Equipment", ItemContainer.LootGear, _lootGearSlots);
-        _lootGearTitle = TitleOf(gear);
-        row.AddChild(gear);
+        // Mirrors the player's side: inventory next to the player's inventory, equipment on the outside.
         var inventory = SlotGridPanel("Inventory", ItemContainer.Loot, Inventory.DefaultMaxSlots, _lootSlots);
         _lootInventoryTitle = TitleOf(inventory);
         var takeAll = new Button { Text = "Take all" };
         takeAll.Pressed += () => TakeAllRequested?.Invoke();
         ((VBoxContainer)inventory.GetChild(0).GetChild(0)).AddChild(takeAll);
         row.AddChild(inventory);
+        var gear = GearPanel("Equipment", ItemContainer.LootGear, _lootGearSlots);
+        _lootGearTitle = TitleOf(gear);
+        row.AddChild(gear);
         return row;
     }
 
@@ -168,6 +171,8 @@ public partial class InventoryScreen : CanvasLayer
         var slot = new ItemSlotButton(container, index);
         slot.ItemDropped += (fc, fs, tc, ts) => MoveRequested?.Invoke(fc, fs, tc, ts);
         slot.DropToWorldRequested += (c, s) => DropRequested?.Invoke(c, s);
+        slot.QuickTransferRequested += (c, s) => QuickTransferRequested?.Invoke(c, s);
+        slot.QuickEquipRequested += (c, s) => QuickEquipRequested?.Invoke(c, s);
         return slot;
     }
 
@@ -289,12 +294,12 @@ public partial class InventoryScreen : CanvasLayer
     }
 
     private void UpdateHint() => _hint.Text = _lootPanel.Visible
-        ? "Drag items from them to take them  ·  Tab to close"
+        ? "Drag between you and them  ·  Ctrl + click: move across  ·  Alt + click: equip  ·  Tab to close"
         : _supplyPanel.Visible
         ? "Drag an item out to take a copy  ·  Drag one of yours onto the supply to delete it  ·  Tab to close"
         : _storagePanel.Visible
-        ? "Drag between inventory and storage  ·  Ctrl + right-click to drop  ·  Tab to close"
-        : "Drag to move or equip  ·  Ctrl + right-click to drop  ·  Tab to close";
+        ? "Drag between inventory and storage  ·  Ctrl + click: move across  ·  Alt + click: equip  ·  Ctrl + right-click to drop  ·  Tab to close"
+        : "Drag to move or equip  ·  Alt + click: equip / unequip  ·  Ctrl + right-click to drop  ·  Tab to close";
 
     private void FitToScreen()
     {

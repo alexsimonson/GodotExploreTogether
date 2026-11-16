@@ -105,6 +105,8 @@ public partial class ClientGame : Node
         _inventory.MoveRequested += (fc, fs, tc, ts) => _session.SendMoveItem((int)fc, fs, (int)tc, ts);
         _inventory.DropRequested += (c, slot) => _session.SendDropItem((int)c, slot);
         _inventory.TakeAllRequested += TakeAllLoot;
+        _inventory.QuickTransferRequested += QuickTransfer;
+        _inventory.QuickEquipRequested += QuickEquip;
 
         _dungeonMenu = new DungeonMenu { Name = "DungeonMenu", Visible = false };
         AddChild(_dungeonMenu);
@@ -226,6 +228,7 @@ public partial class ClientGame : Node
     private void OnInventory(int[] quads, int[] gear, int[] gearData)
     {
         _lastInventoryQuads = quads;
+        _lastGear = gear;
         _inventory.SetState(quads, gear, gearData);
         UpdateEquippedWeapon(gear);
         _weaponLabel.Visible = true;
