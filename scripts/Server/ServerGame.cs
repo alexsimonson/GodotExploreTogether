@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using ExploreTogether.Core;
 using ExploreTogether.Core.Persistence;
+using ExploreTogether.Dungeon;
 using ExploreTogether.Net;
 using Godot;
 
@@ -15,6 +16,7 @@ public sealed class PeerSession(long peer)
     public long Peer { get; } = peer;
     public AccountRecord? Account { get; set; }
     public CharacterRecord? Character { get; set; }
+    /// <summary>Instance the client was told to load and hasn't confirmed yet.</summary>
     public int? PendingInstanceId { get; set; }
     /// <summary>True while a password hash is being computed for this peer.</summary>
     public bool AuthInProgress { get; set; }
@@ -25,18 +27,28 @@ public sealed class PeerSession(long peer)
 /// <summary>
 /// Server-only root. Listens for clients and runs the session flow:
 ///   connect -> Login/Register -> character list -> Create/SelectCharacter
-///   -> EnterInstance -> client builds it -> InstanceReady -> player spawned.
+///   -> EnterInstance(hub) -> client builds it -> InstanceReady -> player spawned
+///   hub: Interact(dungeon_entrance) -> dungeon menu -> CreateDungeon/JoinDungeon -> EnterInstance(dungeon)
+///   dungeon: Interact(dungeon_entrance) -> back to the hub
 /// Owns the database; character progress is saved on disconnect, every AutosaveSeconds, and at shutdown.
 /// </summary>
 public partial class ServerGame : Node
 {
     private const int MaxClients = 64;
     private const double AutosaveSeconds = 15;
+    private const string DungeonEntranceId = "dungeon_entrance";
+
+    /// <summary>Where players reappear in the hub after a dungeon: in front of the entrance, facing away from it.</summary>
+    private static readonly SavedPosition HubReturnPoint = new(0f, 0.5f, 16f, 0f);
 
     private NetSession _session = null!;
     private InstanceManager _instances = null!;
     private GameDatabase _db = null!;
     private readonly Dictionary<long, PeerSession> _sessions = new();
+
+    // Dev/test switches.
+    private static readonly bool DevSkipProximity = CmdArgs.Has("dev-skip-proximity");
+    private static readonly TimeSpan EmptyDungeonTimeout = TimeSpan.FromSeconds(CmdArgs.GetFloat("dungeon-empty-timeout", 60));
 
     public override void _Ready()
     {
@@ -85,10 +97,24 @@ public partial class ServerGame : Node
         _session.CreateCharacterRequested += OnCreateCharacter;
         _session.SelectCharacterRequested += OnSelectCharacter;
         _session.InstanceReadyReceived += OnInstanceReady;
+        _session.InteractRequested += OnInteract;
+        _session.CreateDungeonRequested += OnCreateDungeon;
+        _session.JoinDungeonRequested += OnJoinDungeon;
+        _session.PlayerTransformReceived += (peer, instanceId, position, yaw) =>
+        {
+            // Ignore movement for an instance the player has already left.
+            if (_instances.FindPlayer(peer) is { } f && f.Instance.Id == instanceId)
+                f.Player.ApplySubmittedTransform(position, yaw);
+        };
 
         var autosave = new Timer { WaitTime = AutosaveSeconds, Autostart = true };
         autosave.Timeout += SaveAll;
         AddChild(autosave);
+
+        var cleanup = new Timer { WaitTime = 1, Autostart = true };
+        cleanup.Timeout += () => _instances.CloseEmptyDungeons(EmptyDungeonTimeout,
+            _sessions.Values.Where(s => s.PendingInstanceId != null).Select(s => s.PendingInstanceId!.Value).ToHashSet());
+        AddChild(cleanup);
 
         GD.Print($"[server] listening on port {port}");
     }
@@ -228,9 +254,24 @@ public partial class ServerGame : Node
 
         s.Character = character;
         s.PlayTimeCountedUntil = DateTime.UtcNow;
-        var target = _instances.Hub;
+        SendToInstance(s, _instances.Hub);
+    }
+
+    // ------------------------------------------------------------- instances
+
+    /// <summary>Removes the player from where they are and tells their client to load the target.</summary>
+    private async void SendToInstance(PeerSession s, ServerInstance target)
+    {
+        _instances.RemovePeer(s.Peer);
         s.PendingInstanceId = target.Id;
-        _session.SendEnterInstance(peer, target.Id, target.Kind);
+
+        // Replication sends the resulting despawns on the next network frames. Wait for them to go
+        // out first, so the client clears the old instance's players before it tears the instance down.
+        for (var i = 0; i < 2; i++)
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        if (!_sessions.ContainsKey(s.Peer) || s.PendingInstanceId != target.Id) return;
+
+        _session.SendEnterInstance(s.Peer, target.Id, target.Kind, target.LayoutData);
     }
 
     private void OnInstanceReady(long peer, int instanceId)
@@ -242,12 +283,80 @@ public partial class ServerGame : Node
         }
         s.PendingInstanceId = null;
         var instance = _instances.Get(instanceId);
-        if (instance == null) return;
+        if (instance == null)
+        {
+            // Closed while the client was loading; fall back to the hub.
+            _session.SendNotice(peer, "That dungeon has closed.");
+            SendToInstance(s, _instances.Hub);
+            return;
+        }
 
         var c = s.Character;
         var saved = instance == _instances.Hub ? c.HubPosition : null;
         _instances.AddPlayer(instance, peer, c.Name, ColorFromHex(c.ColorHex),
             saved is { } p ? new Vector3(p.X, p.Y, p.Z) : null, saved?.Yaw ?? 0f);
+    }
+
+    private void OnInteract(long peer, string interactionId)
+    {
+        if (!_sessions.TryGetValue(peer, out var s) || !IsNear(s, interactionId, out var instance)) return;
+
+        if (interactionId != DungeonEntranceId) return;
+        if (instance == _instances.Hub)
+        {
+            _session.SendDungeonMenu(peer, _instances.Dungeons.Select(d => new DungeonSummary(
+                d.Id, d.CreatedBy, d.Layout!.Width, d.Layout.Height, d.Layout.Length,
+                d.Players.Values.Select(p => p.DisplayName).ToArray())));
+        }
+        else
+        {
+            GD.Print($"[server] '{s.Character!.Name}' returns to the hub from instance {instance.Id}");
+            SendToInstance(s, _instances.Hub);
+        }
+    }
+
+    private void OnCreateDungeon(long peer, int width, int height, int length)
+    {
+        if (!_sessions.TryGetValue(peer, out var s) || !IsNear(s, DungeonEntranceId, out var instance)
+            || instance != _instances.Hub) return;
+
+        LeaveHubViaEntrance(s);
+        var dungeon = _instances.CreateDungeon(width, height, length, s.Character!.Name);
+        SendToInstance(s, dungeon);
+    }
+
+    private void OnJoinDungeon(long peer, int instanceId)
+    {
+        if (!_sessions.TryGetValue(peer, out var s) || !IsNear(s, DungeonEntranceId, out var instance)
+            || instance != _instances.Hub) return;
+
+        var dungeon = _instances.Get(instanceId);
+        if (dungeon == null || dungeon.Kind != InstanceKinds.Dungeon)
+        {
+            _session.SendNotice(peer, "That dungeon no longer exists.");
+            return;
+        }
+        LeaveHubViaEntrance(s);
+        SendToInstance(s, dungeon);
+    }
+
+    /// <summary>Saves progress with the hub position set to the return point, so a later login doesn't start inside the entrance.</summary>
+    private void LeaveHubViaEntrance(PeerSession s) => Save(s, HubReturnPoint);
+
+    /// <summary>True if the peer is spawned in an instance with that interactable, within reach.</summary>
+    private bool IsNear(PeerSession s, string interactionId, out ServerInstance instance)
+    {
+        instance = null!;
+        if (s.Character == null || _instances.FindPlayer(s.Peer) is not { } found) return false;
+        instance = found.Instance;
+        var target = InstanceFactory.FindInteractable(found.Instance.Nodes.Level, interactionId);
+        if (target == null) return false;
+        if (DevSkipProximity) return true;
+
+        var distance = found.Player.NetPosition.DistanceTo(target.GlobalPosition);
+        if (distance <= Interactable.ServerMaxDistance) return true;
+        GD.Print($"[server] rejected '{interactionId}' from peer {s.Peer}: {distance:0.0} m away");
+        return false;
     }
 
     // ---------------------------------------------------------------- saving
@@ -256,7 +365,7 @@ public partial class ServerGame : Node
     {
         GD.Print($"[server] peer {peer} disconnected");
         if (_sessions.Remove(peer, out var s)) Save(s);
-        _instances.RemovePeer(peer);
+        _instances.RemovePeer(peer, stillConnected: false);
     }
 
     private void SaveAll()
@@ -264,7 +373,8 @@ public partial class ServerGame : Node
         foreach (var s in _sessions.Values) Save(s);
     }
 
-    private void Save(PeerSession s)
+    /// <param name="hubPositionOverride">Hub position to store instead of the current one.</param>
+    private void Save(PeerSession s, SavedPosition? hubPositionOverride = null)
     {
         if (s.Character == null) return;
 
@@ -272,8 +382,8 @@ public partial class ServerGame : Node
         var playDelta = (now - s.PlayTimeCountedUntil).TotalSeconds;
         s.PlayTimeCountedUntil = now;
 
-        SavedPosition? hubPos = null;
-        if (_instances.FindPlayer(s.Peer) is { } found && found.Instance == _instances.Hub)
+        var hubPos = hubPositionOverride;
+        if (hubPos == null && _instances.FindPlayer(s.Peer) is { } found && found.Instance == _instances.Hub)
         {
             var pos = found.Player.NetPosition;
             hubPos = new SavedPosition(pos.X, pos.Y, pos.Z, found.Player.NetYaw);

@@ -1,7 +1,9 @@
 using System.Collections.Generic;
 using System.Linq;
 using ExploreTogether.Core;
+using ExploreTogether.Dungeon;
 using ExploreTogether.Net;
+using ExploreTogether.Player;
 using ExploreTogether.UI;
 using Godot;
 
@@ -14,6 +16,11 @@ namespace ExploreTogether.Client;
 /// Dev auto-login (--user NAME [--password P] [--character NAME] [--color C]):
 /// registers the account if it doesn't exist (otherwise logs in), creates the character
 /// if missing, and plays it, with no clicks needed.
+///
+/// Dev dungeon automation (needs the server's --dev-skip-proximity):
+///   --dev-dungeon new[:WxHxLEN] | join:NAME   on reaching the hub, start a dungeon / join the one NAME started
+///   --dev-check-walls               in a dungeon, verify the built walls match the maze layout
+///   --dev-return-after SECONDS      in a dungeon, go back to the hub after this long
 /// </summary>
 public partial class ClientGame : Node
 {
@@ -22,6 +29,11 @@ public partial class ClientGame : Node
     private LoginMenu _loginMenu = null!;
     private CharacterMenu _characterMenu = null!;
     private Label _debugLabel = null!;
+    private Label _promptLabel = null!;
+    private Label _noticeLabel = null!;
+    private DungeonMenu _dungeonMenu = null!;
+    private Interactable? _focused;
+    private double _noticeTimeLeft;
 
     private LoginMenu.AuthAction _pendingAction;
     private string _username = "";
@@ -31,6 +43,9 @@ public partial class ClientGame : Node
     // Dev auto-login state.
     private readonly bool _devAuto = CmdArgs.Has("user");
     private bool _devCreateAttempted;
+    private readonly string _devDungeon = CmdArgs.Get("dev-dungeon");
+    private bool _devDungeonDone;
+    private readonly float _devReturnAfter = CmdArgs.GetFloat("dev-return-after", 0);
 
     public override void _Ready()
     {
@@ -63,6 +78,13 @@ public partial class ClientGame : Node
         _session.CharacterListReceived += OnCharacterList;
         _session.CharacterResultReceived += (ok, message) => _characterMenu.SetBusy(false, ok ? "" : message);
         _session.EnterInstanceReceived += OnEnterInstance;
+        _session.DungeonMenuReceived += OnDungeonMenu;
+        _session.NoticeReceived += ShowNotice;
+
+        _dungeonMenu = new DungeonMenu { Name = "DungeonMenu", Visible = false };
+        AddChild(_dungeonMenu);
+        _dungeonMenu.CreateRequested += (w, h, len) => _session.SendCreateDungeon(w, h, len);
+        _dungeonMenu.JoinRequested += id => _session.SendJoinDungeon(id);
 
         var hud = new CanvasLayer { Name = "DebugHud" };
         AddChild(hud);
@@ -70,6 +92,9 @@ public partial class ClientGame : Node
         _debugLabel.AddThemeColorOverride("font_outline_color", Colors.Black);
         _debugLabel.AddThemeConstantOverride("outline_size", 6);
         hud.AddChild(_debugLabel);
+
+        _promptLabel = HudLabel(hud, Control.LayoutPreset.CenterBottom, new Vector2(0, -90));
+        _noticeLabel = HudLabel(hud, Control.LayoutPreset.CenterTop, new Vector2(0, 40));
 
         if (_devAuto)
         {
@@ -87,6 +112,65 @@ public partial class ClientGame : Node
             MaterialDebug.Toggle(_main.Instances);
             UpdateDebugLabel();
         }
+        else if (@event.IsActionPressed(InputSetup.Interact) && _focused != null && !_dungeonMenu.Visible)
+        {
+            _session.SendInteract(_focused.InteractionId);
+        }
+    }
+
+    public override void _Process(double delta)
+    {
+        if (_noticeTimeLeft > 0 && (_noticeTimeLeft -= delta) <= 0)
+            _noticeLabel.Visible = false;
+    }
+
+    public override void _PhysicsProcess(double delta) => UpdateFocus();
+
+    /// <summary>Looks along the local camera for an interactable within reach and shows its prompt.</summary>
+    private void UpdateFocus()
+    {
+        _focused = null;
+        var player = PlayerCharacter.Local;
+        if (player != null && Input.MouseMode == Input.MouseModeEnum.Captured && !_dungeonMenu.Visible)
+        {
+            var camera = player.Camera;
+            var from = camera.GlobalPosition;
+            var to = from - camera.GlobalBasis.Z * Interactable.ReachDistance;
+            var query = PhysicsRayQueryParameters3D.Create(from, to, exclude: [player.GetRid()]);
+            var hit = camera.GetWorld3D().DirectSpaceState.IntersectRay(query);
+            if (hit.Count > 0 && hit["collider"].AsGodotObject() is Interactable target)
+                _focused = target;
+        }
+        _promptLabel.Visible = _focused != null;
+        if (_focused != null) _promptLabel.Text = $"[E] {_focused.Prompt}";
+    }
+
+    private void ShowNotice(string message)
+    {
+        GD.Print($"[client] notice: {message}");
+        _noticeLabel.Text = message;
+        _noticeLabel.Visible = true;
+        _noticeTimeLeft = 4;
+    }
+
+    private void OnDungeonMenu(List<DungeonSummary> dungeons)
+    {
+        GD.Print($"[client] dungeon menu: {dungeons.Count} running");
+        if (DevDungeonStep(dungeons)) return;
+        _dungeonMenu.Open(dungeons);
+    }
+
+    private static Label HudLabel(CanvasLayer hud, Control.LayoutPreset preset, Vector2 offset)
+    {
+        var label = new Label { Visible = false, HorizontalAlignment = HorizontalAlignment.Center };
+        label.AddThemeColorOverride("font_outline_color", Colors.Black);
+        label.AddThemeConstantOverride("outline_size", 8);
+        label.AddThemeFontSizeOverride("font_size", 22);
+        hud.AddChild(label);
+        label.SetAnchorsAndOffsetsPreset(preset);
+        label.GrowHorizontal = Control.GrowDirection.Both;
+        label.Position += offset;
+        return label;
     }
 
     // ------------------------------------------------------------------ auth
@@ -178,17 +262,86 @@ public partial class ClientGame : Node
 
     // ------------------------------------------------------------- instances
 
-    private void OnEnterInstance(int instanceId, string kind)
+    private void OnEnterInstance(int instanceId, string kind, int[] layoutData)
     {
         ClearInstances();
-        InstanceFactory.Build(_main.Instances, instanceId, kind, isServer: false);
+        _dungeonMenu.Visible = false;
+        InstanceFactory.Build(_main.Instances, instanceId, kind, layoutData, isServer: false);
         _currentInstanceId = instanceId;
         MaterialDebug.Apply(_main.Instances);
         UpdateDebugLabel();
         _loginMenu.Visible = false;
         _characterMenu.Visible = false;
-        GD.Print($"[client] entered instance {instanceId} ({kind})");
+        GD.Print($"[client] entered instance {instanceId} ({kind})" +
+                 (kind == InstanceKinds.Dungeon ? $", {(layoutData.Length - 5) / 7} cells" : ""));
         _session.SendInstanceReady(instanceId);
+        DevAfterEnter(kind, instanceId, layoutData);
+    }
+
+    // ----------------------------------------------------- dev automation
+
+    private void DevAfterEnter(string kind, int instanceId, int[] layoutData)
+    {
+        // --dev-screenshot PATH: save what the camera sees a few seconds after entering a dungeon, then quit.
+        if (kind == InstanceKinds.Dungeon && CmdArgs.Has("dev-screenshot"))
+        {
+            GetTree().CreateTimer(CmdArgs.GetFloat("dev-screenshot-delay", 3)).Timeout += () =>
+            {
+                var path = CmdArgs.Get("dev-screenshot");
+                var err = GetViewport().GetTexture().GetImage().SavePng(path);
+                GD.Print($"[client] screenshot {path}: {err}");
+                GetTree().Quit();
+            };
+        }
+        if (kind == InstanceKinds.Dungeon && CmdArgs.Has("dev-check-walls"))
+        {
+            // Wait a moment so the new physics bodies are registered.
+            GetTree().CreateTimer(0.5).Timeout += () =>
+            {
+                if (PlayerCharacter.Local is not { } p) return;
+                var (count, failures) = DungeonChecks.VerifyWalls(Core.Dungeon.MazeLayout.Import(layoutData), p.GetWorld3D());
+                GD.Print($"[client] wall check: {count - failures.Count}/{count} sides match the maze layout");
+                foreach (var f in failures) GD.Print($"[client]   {f}");
+            };
+        }
+        if (kind == InstanceKinds.Hub && _devDungeon != "" && !_devDungeonDone)
+            GetTree().CreateTimer(1.0).Timeout += () => _session.SendInteract("dungeon_entrance");
+        if (kind == InstanceKinds.Dungeon && _devReturnAfter > 0)
+            GetTree().CreateTimer(_devReturnAfter).Timeout += () =>
+            {
+                if (_currentInstanceId == instanceId) _session.SendInteract("dungeon_entrance");
+            };
+    }
+
+    /// <summary>Handles the dungeon menu automatically for --dev-dungeon. Returns true if handled.</summary>
+    private bool DevDungeonStep(List<DungeonSummary> dungeons)
+    {
+        if (_devDungeon == "" || _devDungeonDone) return false;
+        if (_devDungeon == "new" || _devDungeon.StartsWith("new:"))
+        {
+            // new  or  new:WIDTHxHEIGHTxLENGTH  (default: the original 5x5, length 400)
+            int w = 5, h = 5, len = 400;
+            var parts = _devDungeon.Length > 4 ? _devDungeon[4..].Split('x') : [];
+            if (parts.Length == 3) { int.TryParse(parts[0], out w); int.TryParse(parts[1], out h); int.TryParse(parts[2], out len); }
+            _devDungeonDone = true;
+            _session.SendCreateDungeon(w, h, len);
+            return true;
+        }
+        if (_devDungeon.StartsWith("join:"))
+        {
+            var owner = _devDungeon["join:".Length..];
+            var target = dungeons.FirstOrDefault(d => string.Equals(d.CreatedBy, owner, System.StringComparison.OrdinalIgnoreCase));
+            if (target == null)
+            {
+                // Not started yet; ask again shortly.
+                GetTree().CreateTimer(1.0).Timeout += () => _session.SendInteract("dungeon_entrance");
+                return true;
+            }
+            _devDungeonDone = true;
+            _session.SendJoinDungeon(target.Id);
+            return true;
+        }
+        return false;
     }
 
     private void ResetToLogin(string status)
@@ -200,6 +353,7 @@ public partial class ClientGame : Node
         Input.MouseMode = Input.MouseModeEnum.Visible;
         UpdateDebugLabel();
         _characterMenu.Visible = false;
+        _dungeonMenu.Visible = false;
         _loginMenu.Visible = true;
         _loginMenu.SetBusy(false, status);
     }

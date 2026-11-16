@@ -1,3 +1,4 @@
+using ExploreTogether.Net;
 using Godot;
 
 namespace ExploreTogether.Player;
@@ -7,7 +8,7 @@ namespace ExploreTogether.Player;
 ///
 /// Networking: the server is the only replication authority. The owning client
 /// simulates its own movement locally and sends its transform to the server
-/// (SubmitTransform). The server checks the sender, applies it, and replicates
+/// (NetSession.SendPlayerTransform). The server checks the sender, applies it, and replicates
 /// NetPosition/NetYaw to the other peers in the instance through the "Sync"
 /// MultiplayerSynchronizer. Remote copies smooth toward those values. The owner
 /// ignores them, so its own movement never snaps back.
@@ -38,6 +39,11 @@ public partial class PlayerCharacter : CharacterBody3D
     private static readonly bool DevLog = CmdArgs.Has("dev-log");
     private double _devLogTimer;
 
+    /// <summary>This client's own player, if spawned.</summary>
+    public static PlayerCharacter? Local { get; private set; }
+
+    public Camera3D Camera => GetNode<Camera3D>("Head/Camera");
+
     public long OwnerPeerId => long.Parse(Name);
     public bool IsLocal { get; private set; }
     public MultiplayerSynchronizer Sync => GetNode<MultiplayerSynchronizer>("Sync");
@@ -56,7 +62,9 @@ public partial class PlayerCharacter : CharacterBody3D
 
         if (IsLocal)
         {
-            GetNode<Camera3D>("Head/Camera").Current = true;
+            Local = this;
+            Camera.Current = true;
+            ApplyDevCamera();
             // First person: don't render our own body or name.
             GetNode<Node3D>("Body").Visible = false;
             GetNode<Node3D>("NameTag").Visible = false;
@@ -69,6 +77,25 @@ public partial class PlayerCharacter : CharacterBody3D
 
         if (!Main.IsServer)
             GD.Print($"[client] {(IsLocal ? "local" : "remote")} player {Name} ('{DisplayName}', #{PlayerColor.ToHtml(false)}) spawned at {NetPosition}");
+    }
+
+    /// <summary>--dev-camera YAW,PITCH (degrees): point the view, for scripted screenshots.</summary>
+    private void ApplyDevCamera()
+    {
+        var parts = CmdArgs.Get("dev-camera").Split(',');
+        if (parts.Length != 2
+            || !float.TryParse(parts[0], System.Globalization.CultureInfo.InvariantCulture, out var yaw)
+            || !float.TryParse(parts[1], System.Globalization.CultureInfo.InvariantCulture, out var pitch)) return;
+        Rotation = new Vector3(0, Mathf.DegToRad(yaw), 0);
+        _pitch = Mathf.DegToRad(pitch);
+        _head.Rotation = new Vector3(_pitch, 0, 0);
+    }
+
+    public override void _ExitTree()
+    {
+        if (Local == this) Local = null;
+        if (!Main.IsServer && !IsLocal)
+            GD.Print($"[client] remote player {Name} ('{DisplayName}') despawned");
     }
 
     public override void _UnhandledInput(InputEvent @event)
@@ -138,7 +165,7 @@ public partial class PlayerCharacter : CharacterBody3D
         {
             _lastSentPosition = Position;
             _lastSentYaw = Rotation.Y;
-            RpcId(1, MethodName.SubmitTransform, Position, Rotation.Y);
+            GetNode<NetSession>("/root/Main/Session").SendPlayerTransform(InstanceFactory.InstanceIdOf(this), Position, Rotation.Y);
         }
     }
 
@@ -152,10 +179,9 @@ public partial class PlayerCharacter : CharacterBody3D
         Rotation = new Vector3(0, Mathf.LerpAngle(Rotation.Y, NetYaw, 1f - Mathf.Exp(-RemoteSmoothing * delta)), 0);
     }
 
-    [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.UnreliableOrdered)]
-    private void SubmitTransform(Vector3 position, float yaw)
+    /// <summary>Server: applies the owner's submitted transform (see NetSession.SendPlayerTransform).</summary>
+    public void ApplySubmittedTransform(Vector3 position, float yaw)
     {
-        if (!Main.IsServer || Multiplayer.GetRemoteSenderId() != OwnerPeerId) return;
         // Movement validation (speed checks, etc.) belongs here later.
         NetPosition = position;
         NetYaw = yaw;

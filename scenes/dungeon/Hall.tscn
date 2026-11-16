@@ -1,0 +1,42 @@
+[gd_scene format=3]
+
+[ext_resource type="Mesh" path="res://assets/dungeon_pieces/Hall_brick.obj" id="mesh_brick"]
+[ext_resource type="Material" path="res://assets/materials/brick.tres" id="mat_brick"]
+[ext_resource type="Mesh" path="res://assets/dungeon_pieces/Hall_hardwood.obj" id="mesh_hardwood"]
+[ext_resource type="Material" path="res://assets/materials/hardwood.tres" id="mat_hardwood"]
+
+[sub_resource type="ConvexPolygonShape3D" id="shape_0"]
+points = PackedVector3Array(-2.5, 1, -2.5, -2.5, 1, -1.5, -2.5, 4, -2.5, -2.5, 4, -1.5, 2.5, 1, -2.5, 2.5, 1, -1.5, 2.5, 4, -2.5, 2.5, 4, -1.5)
+
+[sub_resource type="ConvexPolygonShape3D" id="shape_1"]
+points = PackedVector3Array(-2.5, 1, 1.5, -2.5, 1, 2.5, -2.5, 4, 1.5, -2.5, 4, 2.5, 2.5, 1, 1.5, 2.5, 1, 2.5, 2.5, 4, 1.5, 2.5, 4, 2.5)
+
+[sub_resource type="ConvexPolygonShape3D" id="shape_2"]
+points = PackedVector3Array(-2.5, 0, -2.5, -2.5, 0, 2.5, -2.5, 1, -2.5, -2.5, 1, 2.5, 2.5, 0, -2.5, 2.5, 0, 2.5, 2.5, 1, -2.5, 2.5, 1, 2.5)
+
+[sub_resource type="ConvexPolygonShape3D" id="shape_3"]
+points = PackedVector3Array(-2.5, 4, -2.5, -2.5, 4, 2.5, -2.5, 5, -2.5, -2.5, 5, 2.5, 2.5, 4, -2.5, 2.5, 4, 2.5, 2.5, 5, -2.5, 2.5, 5, 2.5)
+
+[node name="Hall" type="Node3D"]
+
+[node name="Brick" type="MeshInstance3D" parent="."]
+mesh = ExtResource("mesh_brick")
+material_override = ExtResource("mat_brick")
+
+[node name="Hardwood" type="MeshInstance3D" parent="."]
+mesh = ExtResource("mesh_hardwood")
+material_override = ExtResource("mat_hardwood")
+
+[node name="Body" type="StaticBody3D" parent="."]
+
+[node name="Wall1_0" type="CollisionShape3D" parent="Body"]
+shape = SubResource("shape_0")
+
+[node name="Wall2_1" type="CollisionShape3D" parent="Body"]
+shape = SubResource("shape_1")
+
+[node name="Floor_2" type="CollisionShape3D" parent="Body"]
+shape = SubResource("shape_2")
+
+[node name="Ceiling_3" type="CollisionShape3D" parent="Body"]
+shape = SubResource("shape_3")

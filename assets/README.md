@@ -1,9 +1,22 @@
 # Assets
 
-All textures come from the original Unity project's dungeon art (made by a friend), at
+All textures come from the original Unity project's dungeon art (the image assets were made by a friend; the dungeon prefabs are the project owner's own), at
 `_reference/ExploreTogether/Assets/Resources/Prefabs/Dungeon`. Only use art from there.
 The folder layout and file names under `textures/dungeon/` match the original.
 The exceptions are `rockbottom.png` and `roof_wood.png`, converted from `.gif` because Godot can't import GIFs.
+
+**Exception to the "Dungeon folder only" rule:** the torch (`models/torch/`: `torch.fbx`, `torch.png`, `torch_puff.png`)
+comes from `Assets/Resources/Models/Torch`. It's included because the original dungeon prefabs (T and X junctions)
+use it via the nested "Torch Particle" prefab.
+
+## Dungeon pieces (`dungeon_pieces/`, `scenes/dungeon/`)
+Generated from the Unity prefabs by `tools/import_unity_dungeon.py` (rerunnable; don't hand-edit the outputs):
+exact ProBuilder geometry and UVs (OBJ per piece and material), the original materials (walls brick, floor/ceiling
+hardwood, dead-end floor chess, pillars rock), collision (convex, or concave for L-shaped walls), and torch placements.
+Look changes made in Godot (`MATERIAL_OVERRIDES` in the script): straight halls keep brick walls; every other piece's walls are rock.
+The torch scene (`scenes/props/Torch.tscn`) is hand-built from the Unity "Torch Particle" prefab: the same light color/range,
+and fire particles with the original lifetime, speed, cone, 2x2 sheet and color-over-lifetime gradient.
+The emission radius is reduced (Unity's 1 m cone base would spill into the walls). Flicker was added.
 
 ## Materials (`materials/`)
 Converted from the Unity materials: roughness = 1 − Unity smoothness. Godot's height map scale isn't the same unit as Unity's
@@ -13,7 +26,7 @@ Converted from the Unity materials: roughness = 1 − Unity smoothness. Godot's 
 |---|---|---|---|
 | `brick` | `Materials/completethewall.mat` | color, normal, height | Dungeon walls (every piece) |
 | `hardwood` | `Materials/hardwood.mat` | color, normal (0.5), height | Dungeon floor/ceiling (every piece) |
-| `chess` | `Materials/chess.mat` | color, normal (0.5), metallic | C-Junction (dead end) |
+| `chess` | `Materials/chess.mat` | color, normal (0.5), metallic | C-Junction (dead end) floor |
 | `rock` | `grass_rock/Materials/Rock.mat` | color, normal, height | Not used by the Unity pieces |
 | `dirt` | `grass_rock/Materials/Dirt_Texture.mat` | color | Not used by the Unity pieces |
 | `rockbottom` | `Materials/rockbottom.mat` | color | Not used by the Unity pieces |

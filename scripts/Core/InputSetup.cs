@@ -11,6 +11,7 @@ public static class InputSetup
     public const string MoveRight = "move_right";
     public const string Jump = "jump";
     public const string Sprint = "sprint";
+    public const string Interact = "interact";
 
     public static void EnsureActions()
     {
@@ -20,6 +21,7 @@ public static class InputSetup
         Add(MoveRight, Key.D);
         Add(Jump, Key.Space);
         Add(Sprint, Key.Shift);
+        Add(Interact, Key.E);
     }
 
     private static void Add(string action, Key key)

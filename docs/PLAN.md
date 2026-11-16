@@ -48,11 +48,11 @@ An `InstanceManager` on the server creates, tracks and shuts down instances, and
 ### Dungeon generation (preserved)
 The original `Maze.cs` algorithm is kept as-is: the recursive backtracker over a `max_width × max_height` grid, stopping at `max_dungeon_length`, then choosing corner/hall/T/X/C pieces from neighbor counts. Only these change:
 - **Unity types:** `Vector3`, `ScriptableObject` and `Random.Range` become Godot/C# equivalents. `Random.Range(int a, int b)` already excludes `b`, which matches `System.Random.Next(a, b)`.
-- **Coordinates:** both engines are Y-up and use the X/Z plane, so the grid positions carry over unchanged. Two things differ:
-  - Godot's "forward" is −Z where Unity's is +Z. This only matters for which way "north" faces the camera.
-  - **A positive Y rotation turns the opposite way** (Unity: clockwise seen from above; Godot: counter-clockwise). Piece rotations like `rotation_degrees = 90` must be negated when placing them.
-  - The piece meshes are checked once on import, so their open sides line up.
-- **Sending it to clients:** the server generates the maze and sends the resulting node list (positions and links) to clients joining the instance. This is small (about 1,000 nodes at most) and needs no changes to the generation logic, not even a seed. Clients then build the pieces locally.
+- **Coordinates:** both engines are Y-up and use the X/Z plane, so grid positions carry over unchanged (x → X, z → Z; north = +Z, east = +X).
+  - **Rotations also carry over unchanged.** (An earlier version of this plan wrongly said to negate them.) A +90° Y rotation sends +Z to +X in both engines. Unity draws that as clockwise from above and Godot as counter-clockwise, but the coordinate transform is identical. Negation would only be needed if an axis were flipped.
+  - Proven twice: `MazePiecesTests` checks every placement's openings against its neighbors, and the in-engine wall check (`--dev-check-walls`) raycasts every cell side of the built geometry.
+- **Seeded:** `UnityEngine.Random` → a seeded `System.Random`, so any dungeon can be rebuilt from (seed, width, height, length). The server logs the seed.
+- **Sending it to clients:** the server generates the maze and sends the node list in the original `ExportMaze` shape (position and neighbor indices per node) when a client joins. Clients rebuild the pieces locally.
 
 ### Accounts and persistence
 - SQLite file on the server, accessed with `Microsoft.Data.Sqlite`.
@@ -96,10 +96,16 @@ Each phase ends with something runnable.
 - ⚠️ **Before hosting publicly:** ENet traffic is unencrypted, so passwords cross the network in plain text. Enable ENet's DTLS (or move login to Steam auth) first.
 
 ### Phase 3 — Instances and dungeons
-- `InstanceManager` with separate worlds and per-instance network filtering.
-- Port `Maze.cs` as described above, plus the dungeon piece scenes using the old textures.
-- Hub → dungeon flow: a player creates a dungeon instance, others join it (including mid-run), and the maze layout is sent on join.
-- **Done when:** two separate groups run two different dungeons on one server at the same time, and neither group can see or affect the other.
+- ✅ `InstanceManager`: each instance has its own world. Player visibility is per instance and is revoked both ways on leaving. Movement is tagged with the instance id, so stale packets are dropped. Empty dungeons close after 60 s (`--dungeon-empty-timeout`).
+- ✅ Faithful port of `Maze.cs` (`core/Dungeon/Maze.cs`) and of the piece/rotation selection (`MazePieces`). Original settings by default: 5×5, length 400.
+- ✅ Dungeon pieces reconstructed from the Unity prefabs (`tools/import_unity_dungeon.py`): exact ProBuilder geometry with pillars, the original materials, collision, and the torches (1 in the T, 4 in the X) as a Godot `Torch.tscn` (light + fire particles + model).
+  - The pieces' floor is 1 m thick, so the dungeon is lowered 1 m and its floor surface is at y = 0.
+  - Lessons: Godot's `.tscn` `Transform3D(...)` text is **row-major** (verified in-engine). Unity mirrors FBX models on X at import and Godot doesn't, so the torch model is mirrored back.
+- ✅ Interaction system (port of `IInteraction`): look and press E. The client raycasts; the server checks the player is within 5 m.
+- ✅ Hub ↔ dungeon flow through the `DungeonEntrance`: the hub's entrance opens a menu to join a running dungeon (mid-run is fine) or start one (width/height/length). The entrance at node 0 leads back to the hub, which you re-enter in front of its entrance.
+- ✅ Players have their own physics layer ("players"), separate from "world".
+- ✅ **Done:** four headless clients, with two groups in two separate dungeons, one player joining mid-run and returning to the hub, and one staying in the hub. Each client saw exactly the players in its own instance. The wall check passed on every side of 5×5, 12×9 and 30×30 (900-cell) dungeons. The proximity check was verified for both allow and reject. 60 unit tests.
+- Not yet: navigation baking (needed for enemies in phase 5), key/exit (phase 4).
 
 ### Phase 4 — Key and exit (first full loop)
 - Interaction system (port of `IInteraction`): look at an object, press E, and the client sends a request to the server.
