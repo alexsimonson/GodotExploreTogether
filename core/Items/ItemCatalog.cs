@@ -24,7 +24,8 @@ public sealed record ItemDef(
     int Damage = 0,
     int? MagazineSize = null,  // guns: rounds the weapon holds (loaded rounds travel with the weapon)
     int? AmmoItemId = null,    // guns: which item reloads it
-    int LootCount = 1)         // how many make up one pickup when generated as loot
+    int LootCount = 1,         // how many make up one pickup when generated as loot
+    bool Retired = false)      // no longer generated as loot, but still loads from saves (never delete an id)
 {
     /// <summary>The original's valid_equipment_types: Equipment and every Weapon subclass.</summary>
     public bool IsEquipment => Class != ItemClass.Item;
@@ -38,6 +39,10 @@ public sealed record ItemDef(
 /// The item bank, from the original Assets/Resources/Items/*.asset files: same ids, names, descriptions,
 /// stack flags, classes, equipment types, weapon styles and damage (Weapon's default of 10 where the asset
 /// didn't override it), and icons (Assets/Resources/UI).
+///
+/// <para><b>Never remove an id from this list.</b> Loading skips unknown ids and the next save rewrites the
+/// character's rows without them, so removing an id deletes every saved copy. To take an item out of the
+/// game, set <c>Retired: true</c> instead. <c>ItemTests.Catalog_KeepsEveryShippedId</c> guards this.</para>
 /// </summary>
 public static class ItemCatalog
 {
@@ -76,11 +81,11 @@ public static class ItemCatalog
 
     public static string NameOf(int id) => Get(id)?.Name ?? $"Unknown item {id}";
 
-    /// <summary>Port of Manager.GenerateItem: a random item from the bank, never the Dungeon Pass.</summary>
+    /// <summary>Port of Manager.GenerateItem: a random item from the bank, never the Dungeon Pass or a retired item.</summary>
     public static ItemDef GenerateItem(Random random)
     {
         ItemDef? generated = null;
-        while (generated == null || generated.Id == DungeonPassId)
+        while (generated == null || generated.Id == DungeonPassId || generated.Retired)
             generated = All[random.Next(0, All.Count)];
         return generated;
     }

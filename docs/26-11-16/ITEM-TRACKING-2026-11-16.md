@@ -25,7 +25,7 @@ Now it runs:
 SaveItems(character, inventory, gear, events)   ← one transaction: gear + inventory + item log
 ```
 - If any write fails, nothing is saved, and the database keeps the previous consistent state.
-- Every place that saves a character's items uses it: moves, equips, drops, pickups, reloads, the 15 s autosave, and the disconnect save.
+- Every place that saves a character's items uses it: drops, pickups, reloads, the 15 s autosave, and the disconnect save. (Moves and equips were saved here too at first; since the rate-limit fix they're written by the next save, with their events.)
 - **Rule for future features:** anything that moves items between containers (hub storage, trading, crafting) must write all affected rows through one `SaveItems`-style transaction.
 
 ## Finding 8: item tracking
@@ -148,12 +148,12 @@ Kermit had 17 inventory rows; the other 2 were Health Kit stacks, which aren't t
 | Finding | Status | When |
 |---|---|---|
 | 1. Client-reported position is trusted (teleport looting) | Open | Before public hosting |
-| 2. No rate limiting; each request writes to the database | Open | Before public hosting |
+| 2. No rate limiting; each request writes to the database | ✅ Fixed (2026-11-16, later) | — |
 | 3. Two-transaction save | ✅ Fixed | — |
 | 4. Dungeon Pass griefing | Open (design) | If it becomes a problem |
-| 5. Godot server relay on | Open | Before public hosting |
+| 5. Godot server relay on | ✅ Fixed (2026-11-16, later) | — |
 | 6. Spent ammo can roll back up to 15 s | Open (minor) | With finding 2 |
-| 7. Removing an item from the catalog deletes it from saves | Open | Before real player data matters |
+| 7. Removing an item from the catalog deletes it from saves | ✅ Fixed (2026-11-16, later): `Retired` flag + guard test | — |
 | 8. No way to detect or trace a dupe | ✅ Fixed | — |
 
 ## Testing

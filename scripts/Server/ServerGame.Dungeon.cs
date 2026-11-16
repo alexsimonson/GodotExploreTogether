@@ -171,6 +171,7 @@ public partial class ServerGame
         if (s.Inventory == null || s.Gear == null || s.Character == null) return;
         _db.SaveItems(s.Character.Id,
             s.Inventory.Occupied().Where(o => o.ItemId != ItemCatalog.DungeonPassId),
-            s.Gear.Occupied(), events);
+            s.Gear.Occupied(), s.PendingItemEvents.Concat(events).ToList());
+        s.PendingItemEvents.Clear(); // only once the save succeeded (SaveItems throws otherwise)
     }
 }

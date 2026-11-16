@@ -29,16 +29,17 @@ public partial class ServerGame
         if (!changed) return;
 
         // Log equipment changes (rearranging within one container isn't worth logging).
-        var events = new List<ItemEvent>();
         if (from != to)
         {
             var (movedAction, displacedAction) = to == ItemContainer.Gear
                 ? (ItemActions.Equipped, ItemActions.Unequipped)
                 : (ItemActions.Unequipped, ItemActions.Equipped);
-            if (moved is { } m) events.Add(ItemEventFor(s, movedAction, m.ItemId, m.Count, m.Uid));
-            if (displaced is { } d) events.Add(ItemEventFor(s, displacedAction, d.ItemId, d.Count, d.Uid));
+            if (moved is { } m) s.PendingItemEvents.Add(ItemEventFor(s, movedAction, m.ItemId, m.Count, m.Uid));
+            if (displaced is { } d) s.PendingItemEvents.Add(ItemEventFor(s, displacedAction, d.ItemId, d.Count, d.Uid));
         }
-        SaveInventory(s, events.ToArray());
+        // Not saved now: a move only rearranges what the character already owns, so losing it in a crash
+        // costs nothing, and saving every drag let a spamming client stall the server (security review,
+        // finding 2). The next save (pickup, drop, reload, the 15 s autosave, disconnect) writes it and its events.
         if (s.Gear.EquippedWeapon?.Id != weaponBefore)
             GD.Print($"[server] '{s.Character!.Name}' weapon: {s.Gear.EquippedWeapon?.Name ?? "none"}");
     }

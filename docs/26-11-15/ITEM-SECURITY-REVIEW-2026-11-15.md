@@ -9,7 +9,7 @@ A review of the item and inventory code for duplication ("duping") and other abu
 - **One real duplication window exists**, but it needs a server crash at the wrong moment: inventory and gear are saved in two separate transactions. It matters most once storage or trading exists.
 - **There's no rate limiting.** Every inventory request writes to the database on the game thread, so one client spamming requests can stall the server for everyone.
 
-For a co-op game among friends, none of this is urgent. Items 1 and 2 below should be fixed before public hosting. Item 3 has since been fixed.
+For a co-op game among friends, none of this is urgent. Items 1 and 2 below should be fixed before public hosting. Items 2, 3, 5, 7 and 8 have since been fixed; item 6 is reduced.
 
 ## Findings
 
@@ -32,7 +32,15 @@ Ranked by how much they would matter on a public server.
   - Clamp drop positions to near the player's last accepted position.
   - This also strengthens every existing check, since they all measure from that position.
 
-### 2. No rate limiting; each request writes to the database (medium, before public hosting)
+### 2. No rate limiting; each request writes to the database — ✅ fixed 2026-11-16
+
+**Fixed:**
+- Every client request goes through a per-peer, per-request token bucket (`core/Net/RequestRateLimiter.cs`, limits in `scripts/Server/ServerGame.Limits.cs`). Requests over the limit are ignored. A peer with more than 200 ignored requests within 10 s is disconnected. `NetSession.Accept()` applies the filter to every client-to-server RPC by name, so a new RPC is covered automatically (it's unlimited until it gets an entry in `RequestLimits`).
+- Moving items between slots no longer saves. The move's equip/unequip events wait in `PeerSession.PendingItemEvents` and are written in the same transaction as the next save (pickup, drop, reload, autosave, disconnect), so the log still matches the saved state. A hardcore death writes them before the destroyed events.
+- Unit tests: `RateLimiterTests` (7). The smoke test passes with no limit hit in normal play, including `--dev-solve`'s burst of interactions.
+- Still open: a move request still answers with the full inventory (under 500 bytes, now at most 10 a second).
+
+The original finding:
 - **What:**
   - `MoveItem`, `DropItem`, `Interact` and `Reload` accept requests as fast as they arrive.
   - Every inventory change rewrites the character's inventory and gear rows, synchronously, on the main thread. That thread also runs physics and enemies for every dungeon.
@@ -67,17 +75,25 @@ The original finding:
   - Let anyone open the exit while the holder is within reach, or return the pass to its spawn spot if it's dropped out of bounds.
   - Fixing finding 1 removes the unreachable case.
 
-### 5. Godot's server relay is on (low)
+### 5. Godot's server relay is on — ✅ fixed 2026-11-16
+
+**Fixed:** the server sets `SceneMultiplayer.ServerRelay = false` at startup (`ServerGame.Limits.cs`).
+
+The original finding:
 - **What:** Godot's `SceneMultiplayer.ServerRelay` defaults to true. That lets clients send RPCs to each other through the server. The game never needs it.
 - **Current state:** client-to-client messages are harmless today. Server-only RPCs check `Main.IsServer`, and client-side RPCs are `Authority` mode, so relayed ones from another client are rejected. But relay is still a path for spam, and a future RPC could forget the check.
 - **Fix:** set `ServerRelay = false` on the server's multiplayer API at startup.
 
-### 6. Spent ammo can roll back up to 15 s (low)
+### 6. Spent ammo can roll back up to 15 s (low; unchanged, and slot moves now behave the same way)
 - **What:** firing decrements the gun's loaded rounds in memory without saving; the next save is up to 15 s later.
 - **Abuse:** after a server crash, players get those rounds back. It's a small loss for the player, not a profit, unless ammo becomes valuable.
 - **Fix:** none needed now; finding 2's dirty-flag approach covers it consistently.
 
-### 7. Removing an item from the catalog deletes it from saves (data safety, not abuse)
+### 7. Removing an item from the catalog deletes it from saves — ✅ fixed 2026-11-16
+
+**Fixed:** `ItemDef.Retired` marks an item that's out of the game: it still loads from saves, but `GenerateItem` never picks it. `ItemCatalogTests.Catalog_KeepsEveryShippedId` fails if any shipped id is removed from the catalog.
+
+The original finding:
 - **What:** loading skips unknown item ids, and the next save rewrites the rows without them.
 - **Fix:** never remove ids. Mark them retired instead: they stay loadable but don't drop as loot. Alternatively, keep unknown rows untouched when saving.
 
@@ -147,7 +163,7 @@ No. There are three common ways to define items, and this is the first:
 3. **A catalog version check at login.** The server sends a hash of its catalog, and a mismatched client is told to update. This turns "wrong names on screen" into a clear message.
 
 ## Recommended order
-1. **Before public hosting:** movement validation (finding 1), rate limits (finding 2), turn off server relay (finding 5), and the DTLS encryption already noted in `PLAN.md`.
+1. **Before public hosting:** movement validation (finding 1) and the DTLS encryption already noted in `PLAN.md`. (Rate limits and turning off the relay are done.)
 2. **With hub storage:** save storage in the same transaction as inventory and gear (`SaveItems`, finding 3), and save on change only where it matters (finding 2).
-3. **When items gain value:** retire item ids instead of deleting them (finding 7). The event log and per-copy serials (finding 8) are done; add new actions to the log as features arrive (use, trade, storage).
+3. **When items gain value:** the retire-don't-delete rule (finding 7) is in place. The event log and per-copy serials (finding 8) are done; add new actions to the log as features arrive (use, trade, storage).
 4. **When adding the next few item behaviors:** move to optional parts (composition).

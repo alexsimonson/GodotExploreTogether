@@ -47,6 +47,16 @@ public partial class NetSession : Node
     public event Action<long, int, bool, Vector3>? AimReceived;         // instance id, aiming?, ghost position
     public event Action<long>? ReloadRequested;
 
+    /// <summary>
+    /// Server only: decides whether a request from a client is handled (rate limiting). Called with the sender's
+    /// peer id and the RPC's name. Unset = everything is handled.
+    /// </summary>
+    public Func<long, string, bool>? RequestFilter { get; set; }
+
+    /// <summary>True on the server if the incoming request (named after the calling RPC method) passes the filter.</summary>
+    private bool Accept([System.Runtime.CompilerServices.CallerMemberName] string kind = "") =>
+        Main.IsServer && (RequestFilter?.Invoke(Multiplayer.GetRemoteSenderId(), kind) ?? true);
+
     // ---- Client-side events (the server called us) ----
     public event Action<bool, string, string>? AuthResultReceived;       // ok, code, message
     public event Action<List<CharacterSummary>>? CharacterListReceived;
@@ -89,19 +99,19 @@ public partial class NetSession : Node
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.UnreliableOrdered)]
     private void Aim(int instanceId, bool aiming, Vector3 position)
     {
-        if (Main.IsServer) AimReceived?.Invoke(Multiplayer.GetRemoteSenderId(), instanceId, aiming, position);
+        if (Accept()) AimReceived?.Invoke(Multiplayer.GetRemoteSenderId(), instanceId, aiming, position);
     }
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void Attack(Vector3 aimDirection)
     {
-        if (Main.IsServer) AttackRequested?.Invoke(Multiplayer.GetRemoteSenderId(), aimDirection);
+        if (Accept()) AttackRequested?.Invoke(Multiplayer.GetRemoteSenderId(), aimDirection);
     }
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void Reload()
     {
-        if (Main.IsServer) ReloadRequested?.Invoke(Multiplayer.GetRemoteSenderId());
+        if (Accept()) ReloadRequested?.Invoke(Multiplayer.GetRemoteSenderId());
     }
 
     /// <summary>Ctrl + right-click: drop a slot's contents into the world.</summary>
@@ -110,13 +120,13 @@ public partial class NetSession : Node
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void MoveItem(int fromContainer, int fromSlot, int toContainer, int toSlot)
     {
-        if (Main.IsServer) MoveItemRequested?.Invoke(Multiplayer.GetRemoteSenderId(), fromContainer, fromSlot, toContainer, toSlot);
+        if (Accept()) MoveItemRequested?.Invoke(Multiplayer.GetRemoteSenderId(), fromContainer, fromSlot, toContainer, toSlot);
     }
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void DropItem(int container, int slot)
     {
-        if (Main.IsServer) DropItemRequested?.Invoke(Multiplayer.GetRemoteSenderId(), container, slot);
+        if (Accept()) DropItemRequested?.Invoke(Multiplayer.GetRemoteSenderId(), container, slot);
     }
 
     /// <summary>
@@ -130,55 +140,55 @@ public partial class NetSession : Node
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.UnreliableOrdered)]
     private void PlayerTransform(int instanceId, Vector3 position, float yaw)
     {
-        if (Main.IsServer) PlayerTransformReceived?.Invoke(Multiplayer.GetRemoteSenderId(), instanceId, position, yaw);
+        if (Accept()) PlayerTransformReceived?.Invoke(Multiplayer.GetRemoteSenderId(), instanceId, position, yaw);
     }
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void Interact(string interactionId)
     {
-        if (Main.IsServer) InteractRequested?.Invoke(Multiplayer.GetRemoteSenderId(), interactionId);
+        if (Accept()) InteractRequested?.Invoke(Multiplayer.GetRemoteSenderId(), interactionId);
     }
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void CreateDungeon(int width, int height, int length)
     {
-        if (Main.IsServer) CreateDungeonRequested?.Invoke(Multiplayer.GetRemoteSenderId(), width, height, length);
+        if (Accept()) CreateDungeonRequested?.Invoke(Multiplayer.GetRemoteSenderId(), width, height, length);
     }
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void JoinDungeon(int instanceId)
     {
-        if (Main.IsServer) JoinDungeonRequested?.Invoke(Multiplayer.GetRemoteSenderId(), instanceId);
+        if (Accept()) JoinDungeonRequested?.Invoke(Multiplayer.GetRemoteSenderId(), instanceId);
     }
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void Login(string user, string password)
     {
-        if (Main.IsServer) LoginRequested?.Invoke(Multiplayer.GetRemoteSenderId(), user, password);
+        if (Accept()) LoginRequested?.Invoke(Multiplayer.GetRemoteSenderId(), user, password);
     }
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void Register(string user, string password)
     {
-        if (Main.IsServer) RegisterRequested?.Invoke(Multiplayer.GetRemoteSenderId(), user, password);
+        if (Accept()) RegisterRequested?.Invoke(Multiplayer.GetRemoteSenderId(), user, password);
     }
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void CreateCharacter(string name, Color color, bool hardcore)
     {
-        if (Main.IsServer) CreateCharacterRequested?.Invoke(Multiplayer.GetRemoteSenderId(), name, color, hardcore);
+        if (Accept()) CreateCharacterRequested?.Invoke(Multiplayer.GetRemoteSenderId(), name, color, hardcore);
     }
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void SelectCharacter(long characterId)
     {
-        if (Main.IsServer) SelectCharacterRequested?.Invoke(Multiplayer.GetRemoteSenderId(), characterId);
+        if (Accept()) SelectCharacterRequested?.Invoke(Multiplayer.GetRemoteSenderId(), characterId);
     }
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void InstanceReady(int instanceId)
     {
-        if (Main.IsServer) InstanceReadyReceived?.Invoke(Multiplayer.GetRemoteSenderId(), instanceId);
+        if (Accept()) InstanceReadyReceived?.Invoke(Multiplayer.GetRemoteSenderId(), instanceId);
     }
 
     // =========================================================== server -> client

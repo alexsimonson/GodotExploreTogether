@@ -21,6 +21,11 @@ public sealed class PeerSession(long peer)
     public Inventory? Inventory { get; set; }
     /// <summary>The character's equipment (12 slots), loaded with the inventory.</summary>
     public Gear? Gear { get; set; }
+    /// <summary>
+    /// Item events for changes not saved yet (slot moves are saved with the next save, not immediately).
+    /// They're written in the same transaction as that save, so the log always matches the saved items.
+    /// </summary>
+    public List<ItemEvent> PendingItemEvents { get; } = new();
     /// <summary>Health while playing (full again whenever the player reaches the hub).</summary>
     public Core.Combat.Health Health { get; } = new(100);
     public double LastAttackAt { get; set; } = -1000;
@@ -95,6 +100,7 @@ public partial class ServerGame : Node
             return;
         }
         Multiplayer.MultiplayerPeer = peer;
+        SetUpRequestLimits();
         Multiplayer.PeerConnected += id =>
         {
             _sessions[id] = new PeerSession(id);

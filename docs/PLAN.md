@@ -7,7 +7,7 @@ A rewrite of the Unity ExploreTogether project (reference copy at `E:\claude\_re
 | Topic | Decision |
 |---|---|
 | Engine | Godot 4.7.2 .NET build, at `E:\Godot Install\Godot_v4.7.2-stable_mono_win64` |
-| Language | C# (.NET 8 SDK) |
+| Language | C# (.NET 10 SDK, targeting net10.0) |
 | Network model | **One dedicated server** that all players connect to. No player hosts. |
 | Instances | One server runs many dungeon instances at once, fully separate from each other |
 | Core loop | Log in → pick character → enter a dungeon instance with your group → find the key → everyone reaches the exit |
@@ -41,7 +41,7 @@ Each instance (the hub, or one group's dungeon run) is a separate subtree on the
 
 The alternative is putting each instance at a different spot in one shared world, e.g. 10 km apart. It's simpler at first, but every system then has to avoid accidentally seeing other instances, and far-away coordinates lose floating-point precision. I recommend separate worlds; it's a contained decision if you'd rather do it the other way.
 
-Instances live at matching node paths on server and client (e.g. `/root/Game/Instances/<id>/...`), which Godot's replication needs.
+Instances live at matching node paths on server and client (e.g. `/root/Main/Instances/<id>/...`), which Godot's replication needs.
 
 An `InstanceManager` on the server creates, tracks and shuts down instances, and moves players between them. An empty dungeon instance is closed after a timeout.
 
@@ -156,9 +156,10 @@ Each phase ends with something runnable.
 
 ### Later (not ordered)
 - Steam login/friends/invites.
+- Before public hosting: server-side movement validation and DTLS (security review findings 1 and the phase 2 warning). Rate limits, relay off and retired item ids are done (`docs/26-11-15/ITEM-SECURITY-REVIEW-2026-11-15.md`).
 - Hub features: storage, skills, crafting/resources, wave survival mode.
 - Inventory/gear UI polish. Art overhaul.
-- Deploying the server somewhere other than this PC (a Linux VPS, etc.).
+- Deploying the server somewhere other than this PC (a Linux VPS, etc.). First step: a Linux dev server on a spare PC with Docker, see `docs/DEV_SERVER_SETUP.md`.
 - Exports for Linux/macOS clients.
 
 ## Web export: deferred

@@ -77,10 +77,12 @@ public partial class ServerGame
     /// <summary>Logs everything a character carried as destroyed (hardcore death), before the character is deleted.</summary>
     private void LogItemsDestroyed(PeerSession s, ServerInstance instance, string reason)
     {
-        var events = (s.Inventory?.Occupied() ?? []).Concat(s.Gear?.Occupied() ?? [])
+        // Unsaved equip/unequip events first, so the history leading up to the death is complete.
+        var events = s.PendingItemEvents.Concat((s.Inventory?.Occupied() ?? []).Concat(s.Gear?.Occupied() ?? [])
             .Where(r => r.ItemId != ItemCatalog.DungeonPassId)
-            .Select(r => ItemEventFor(s, ItemActions.Destroyed, r.ItemId, r.Count, r.Uid, instance, reason))
+            .Select(r => ItemEventFor(s, ItemActions.Destroyed, r.ItemId, r.Count, r.Uid, instance, reason)))
             .ToList();
+        s.PendingItemEvents.Clear();
         if (events.Count > 0) _db.LogItemEvents(events);
     }
 

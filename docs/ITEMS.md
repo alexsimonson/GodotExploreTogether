@@ -26,6 +26,7 @@ Every kind of item is an `ItemDef` record:
 | `Damage` | Ported from the assets, but **not used** (see below) |
 | `MagazineSize`, `AmmoItemId` | Guns only: how many rounds it holds, and which item reloads it |
 | `LootCount` | How many make one pickup when generated as loot (Pistol Rounds: 10) |
+| `Retired` | Taken out of the game: no longer generated as loot, but saved copies still load. **Use this instead of deleting an id.** |
 
 `ItemCatalog` holds the 17 definitions with `Get(id)` and `NameOf(id)`, plus `GenerateItem(random)` for loot. It lives in `core/`, so the server, the client and the unit tests all compile the same list. Two named ids are used in code: `DungeonPassId` (999) and `PistolRoundsId` (1338).
 
@@ -59,7 +60,7 @@ Schema in [core/Persistence/Migrations.cs](../core/Persistence/Migrations.cs):
 - `item_serials (uid, item_id, created_at, origin)`: every non-stackable copy ever issued
 - `item_events (at, character_id, character_name, action, item_id, count, uid, instance_id, run_id, detail)`: an append-only history (created, registered, picked_up, dropped, equipped, unequipped, loaded, destroyed). It isn't tied to characters by foreign key, so it outlives a deleted character.
 
-The server loads items when a character is selected and saves at checkpoints. Each save rewrites all of a character's inventory and gear rows, plus the events describing the change, in **one transaction** (`GameDatabase.SaveItems`). The Dungeon Pass is never saved or tracked. Item definitions are not in the database; only ids are.
+The server loads items when a character is selected and saves at checkpoints: pickups, drops, reloads, the 15 s autosave and disconnecting. Moving items between slots (including equipping) is **not** saved immediately; its events wait on the session (`PeerSession.PendingItemEvents`) and go into the next save. Each save rewrites all of a character's inventory and gear rows, plus the events describing the change, in **one transaction** (`GameDatabase.SaveItems`). The Dungeon Pass is never saved or tracked. Item definitions are not in the database; only ids are.
 
 Duplicates are detected in three ways:
 - an audit of the whole database at server startup;
@@ -113,8 +114,8 @@ The server is authoritative: clients ask to move, drop or pick up, and the serve
 5. **Loot is uniform over everything.** Every new item changes the odds of every other one. The placeholder "Default Item" can drop, and so can Log and Pistol Rounds. Rarity weights, per-source loot tables (dungeon, tree, enemy), or a "not loot" flag are needed before the catalog grows much.
 6. **One integer of per-copy state.** Enough for ammo. Durability plus ammo, enchantments or a custom name would need more than one value: a second column, or a small serialized field.
 7. **No per-item world models.** Everything on the floor looks like the same loot object, apart from the pass.
-8. **Removing an item from the catalog deletes it from saves.** On load, unknown ids are skipped, and the next save rewrites the rows without them. That's fine while data isn't precious; later, keep retired ids in the catalog (marked retired) rather than deleting them.
-9. **No validation test for the catalog itself.** A duplicate id crashes at startup, which is loud, but nothing checks that icons exist or that `AmmoItemId` points at a real stackable item.
+8. ✅ **Removing an item from the catalog would delete it from saves** (on load, unknown ids are skipped, and the next save rewrites the rows without them). Fixed by policy plus a guard: items are marked `Retired` instead of deleted, and `ItemCatalogTests.Catalog_KeepsEveryShippedId` fails if a shipped id disappears.
+9. **Only a partial validation test for the catalog.** `ItemCatalogTests` checks unique ids and that no shipped id was removed, but nothing checks that icons exist or that `AmmoItemId` points at a real stackable item.
 
 ### Code list or data files?
 Keeping definitions in C# is a good fit for now:
@@ -132,7 +133,7 @@ In rough order, each small:
 5. Add a use action when the first consumable is needed (limit 3).
 
 ## Adding an item: checklist
-1. Pick an id not used in `ItemCatalog.All` (and never used before, if saves exist).
+1. Pick an id not used in `ItemCatalog.All` (and never used before, if saves exist). Add it to `ShippedIds` in `ItemCatalogTests`.
 2. Add the `ItemDef` line: name, description, stackable, icon file, and class/slot if it's equipment.
 3. Put the icon in `assets/icons/`, then re-import (`<godot>_console.exe --headless --path . --import`).
 4. If it should be a weapon with new behavior, or a consumable, see the limits above.

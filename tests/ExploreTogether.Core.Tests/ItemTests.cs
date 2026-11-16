@@ -199,3 +199,48 @@ public class InventoryAndRunPersistenceTests : IDisposable
         Assert.Equal([new SlotRecord(0, 1, 3)], db.LoadInventory(7));
     }
 }
+
+public class ItemCatalogTests
+{
+    /// <summary>
+    /// Every id the game has shipped. Removing an id from the catalog deletes every saved copy of it on the
+    /// next save (item security review, finding 7), so items are retired (ItemDef.Retired), never removed.
+    /// Add new ids here when adding items; never take one out.
+    /// </summary>
+    private static readonly int[] ShippedIds = [0, 1, 2, 8, 20, 21, 22, 23, 24, 25, 432, 567, 666, 999, 1337, 1338, 1515];
+
+    [Fact]
+    public void Catalog_KeepsEveryShippedId()
+    {
+        var missing = ShippedIds.Where(id => ItemCatalog.Get(id) == null).ToList();
+        Assert.True(missing.Count == 0,
+            $"Item id(s) {string.Join(", ", missing)} were removed from ItemCatalog. Mark them Retired instead.");
+    }
+
+    [Fact]
+    public void Catalog_IdsAreUnique() =>
+        Assert.Equal(ItemCatalog.All.Count, ItemCatalog.All.Select(i => i.Id).Distinct().Count());
+
+    [Fact]
+    public void GenerateItem_NeverReturnsThePassOrARetiredItem()
+    {
+        var random = new Random(7);
+        for (var i = 0; i < 2000; i++)
+        {
+            var item = ItemCatalog.GenerateItem(random);
+            Assert.NotEqual(ItemCatalog.DungeonPassId, item.Id);
+            Assert.False(item.Retired);
+        }
+    }
+
+    [Fact]
+    public void RetiredItem_StillLoadsFromASave()
+    {
+        // Retiring keeps the definition, so loading (which skips only unknown ids) keeps the copy.
+        var retired = ItemCatalog.All.First(i => !i.Stack) with { Retired = true };
+        Assert.True(retired.Retired);
+        var inv = new Inventory();
+        inv.Load([new SlotRecord(3, retired.Id, 1)]);
+        Assert.Equal(retired.Id, inv.slots[3].itemId);
+    }
+}
