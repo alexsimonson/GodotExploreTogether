@@ -22,6 +22,7 @@ public partial class ServerGame
         ["Attack"] = new(10, 10),           // weapons have their own, shorter cooldowns
         ["Reload"] = new(5, 5),
         ["Interact"] = new(10, 40),
+        ["LockDoor"] = new(5, 10),
         ["MoveItem"] = new(10, 20),
         ["DropItem"] = new(10, 20),
         ["InstanceReady"] = new(2, 5),

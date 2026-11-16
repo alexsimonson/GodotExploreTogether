@@ -240,7 +240,7 @@ public partial class PlayerCharacter : CharacterBody3D
                 if (!e.IsDead) yield return (e, BodyRadius + Enemies.EnemyCharacter.Radius);
         if (instance?.GetNodeOrNull("Npcs") is { } npcs)
             foreach (var n in npcs.GetChildren().OfType<City.CityNpc>())
-                yield return (n, BodyRadius + Core.City.CityCrowd.NpcRadius);
+                if (!n.NetDead) yield return (n, BodyRadius + Core.City.CityCrowd.NpcRadius);
     }
 
     /// <summary>Horizontal offset from another body and whether we overlap it vertically.</summary>

@@ -15,6 +15,8 @@
               and walls match the layout; its 40 residents and its clock reach the clients; both return to the hub,
               and the empty city is closed.
     crowd   - a player runs at walking city residents: it is stopped at arm's length, never inside them.
+    doors   - a player searches a body, takes what it carried, and uses its key on the door it fits (lock, unlock,
+              open, close) and fails on a door without its key; another player shoots a resident dead.
     gather  - one player chops the hub's trees with an axe and puts the logs into the hub storage; another
               starts a dungeon, which must get its trees (and still bake navigation around them).
   Every scenario also checks: no engine/script errors, remote players never fly off vertically,
@@ -81,6 +83,27 @@ $Scenarios = [ordered]@{
         Checks = {
             Expect Kermit 'closest resident so far: 0\.[67]\d m' 'Kermit runs at a resident and is stopped at arm''s length'
             ExpectNot Kermit 'closest resident so far: 0\.[0-5]\d m' 'Kermit never walks into a resident'
+        }
+    }
+    doors = @{
+        Port   = 7947
+        Server = @('--dev-skip-proximity', '--dev-starter-kit', '--city-seed', '4', '--city-start-hour', '9', '--dev-kill-npcs', '2',
+                   '--dev-quit-after', '50')
+        Clients = [ordered]@{
+            Kermit    = @('--dev-city', '--dev-doors', '--dev-check-city', '--dev-quit-after', '25')
+            Blueberry = @('--dev-city', '--dev-weapon', 'Pistol', '--dev-fight', '--dev-quit-after', '40')
+        }
+        Checks = {
+            Expect Kermit 'city check: (\d+)/\1 doors, fences and walls match' 'every closed door blocks its doorway; walls and fences hold'
+            Expect server "'Kermit' searches the body of" 'Kermit searches a body'
+            Expect server "'Kermit' took Key from the body of" 'and takes the key it carried'
+            Expect server "'Kermit' took Coin x\d+ from the body of" 'and the rest (stacks too)'
+            Expect server "door \d+ locked by 'Kermit' \(with a key\)" 'the key locks its door'
+            Expect server "door \d+ unlocked by 'Kermit' \(with a key\)" 'and unlocks it'
+            Expect server "door \d+ opened by 'Kermit'" 'Kermit opens the door'
+            Expect server "door \d+ closed by 'Kermit'" 'and closes it'
+            Expect Kermit "notice: You don't have the key to this door." "a door won't lock or unlock without its key"
+            Expect server "'Blueberry' hit .* with Pistol .*killed in city" 'Blueberry shoots a resident dead'
         }
     }
     coop = @{

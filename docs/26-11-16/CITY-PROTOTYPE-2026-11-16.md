@@ -172,11 +172,36 @@ Each one ends with something runnable and a screenshot. Trespass detection is pu
        - Residents walk around a player standing in their way.
        - The no-trespass rule still holds with sidestepping.
      - Smoke scenario `crowd` (`--dev-chase-npc`): a player running at residents is stopped at 0.73–0.74 m.
-5. **Trespass detection (players):**
+5. ✅ **Doors, keys, resident inventories and loot** (added on request):
+   - **Doors** (`core/City/CityDoors`, `scripts/City/CityDoor`): one per building, in the doorway. Open or closed, locked or unlocked.
+     - They swing one way only: inward, hinged on the left as seen from the street.
+     - E opens or closes. L locks or unlocks: from outside only with the key, from inside freely (a thumb-turn, so nobody gets locked in). Open doors can't be locked.
+     - The server owns the state and sends every door on arrival, then each change. Collision follows the panel: a closed door blocks players and bullets.
+   - **Keys** (item 1700): the item's data is the lock code. Each resident carries keys to their home and workplace; guards to their guardhouse.
+   - **Residents use doors:** they open their way in and out (unlocking with their own key), close behind them, and lock up:
+     - when they're the last one out who belongs there,
+     - at night when they come home,
+     - at bedtime.
+     - Someone who unlocked a door from inside to get out locks it again behind them.
+     - Locked out without a key, they turn back. They avoid locked shops.
+     - Doors start locked where nobody is inside. Tests: at 03:00 every door is shut and every occupied home locked; empty shops are locked at 21:00; a household without keys stays out.
+   - **Resident inventories** (`core/City/NpcLoadout`), using the player's `Inventory` and `Gear`. The Unity NPCs only had a weapon slot; this uses the player's system as asked.
+     - Keys, a shirt and pants, some coins, sometimes a health kit; warehouse workers carry an axe.
+     - Guards wear a helmet and carry a sword, or about 30% of the time a pistol with spare rounds.
+   - **Residents can be hurt and killed:** a hitbox on the enemies' physics layer, so melee, guns and magic hit them, with 100 health. A body lies where it fell, and E searches it.
+   - **Loot panel:** next to the inventory, titled "Body of …", with "Take all".
+     - Take-only (`SlotContainerLogic.IsAllowedForLoot`): into empty slots or onto the same stack, never putting anything into a body.
+     - Taken items are registered like dungeon pickups: a serial for non-stackables, a `picked_up` event "from the body of …", saved at once.
+   - Dev:
+     - Server: `--dev-kill-npcs N` (bodies to search).
+     - Client: `--dev-doors` (search, take all, lock, unlock, open and close with the key, try a door without its key), `--dev-fight` also works in the city (shoots visible residents), `--dev-open-nearest-door`.
+   - Smoke scenario `doors` covers the whole flow, plus the city check that every closed door blocks its doorway.
+   - Deferred to the NPC depth phase: residents reacting to violence, guards responding, and any law or ownership consequences.
+6. **Trespass detection (players):**
    - The server tracks which parcel each player is on and flags trespass, using the access rule above. Players have no home yet, so only shops are allowed.
    - HUD indicator and log line.
    - Smoke scenario: a headless client walks into a yard and is flagged, then walks back to the street and the flag clears.
-6. **Seen trespassing:**
+7. **Seen trespassing:**
    - The people who belong on a parcel (`CityPopulation.PeopleOf`) and guards check vision (`EnemyBrain`'s rule) and report who saw the player.
    - Smoke scenario: a guard sees a player in a yard.
 

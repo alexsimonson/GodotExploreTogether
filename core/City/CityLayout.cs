@@ -67,6 +67,15 @@ public sealed class Parcel
         _ => -MathF.PI / 2,
     };
 
+    /// <summary>A world point in the building's local coordinates (the inverse of <see cref="ToWorld"/>); z &lt; 0 is inside the front wall.</summary>
+    public (float X, float Z) ToLocal(float x, float z)
+    {
+        var (ox, oz) = MazePieces.Vector(Front);
+        var (ax, az) = (oz, -ox);
+        float dx = x - Origin.X, dz = z - Origin.Z;
+        return (dx * ax + dz * az, dx * ox + dz * oz);
+    }
+
     /// <summary>A point in the building's local coordinates (see <see cref="BuildingVariant"/>) in world space.</summary>
     public (float X, float Z) ToWorld(float localX, float localZ)
     {

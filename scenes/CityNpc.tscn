@@ -1,6 +1,11 @@
 [gd_scene format=3]
 
 [ext_resource type="Script" path="res://scripts/City/CityNpc.cs" id="1_npc"]
+[ext_resource type="Script" path="res://scripts/Dungeon/Interactable.cs" id="2_interactable"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_hitbox"]
+radius = 0.35
+height = 1.8
 
 [sub_resource type="CapsuleMesh" id="CapsuleMesh_torso"]
 radius = 0.28
@@ -51,6 +56,12 @@ properties/5/replication_mode = 0
 properties/6/path = NodePath(".:NetId")
 properties/6/spawn = true
 properties/6/replication_mode = 0
+properties/7/path = NodePath(".:NetHealth")
+properties/7/spawn = true
+properties/7/replication_mode = 2
+properties/8/path = NodePath(".:NetDead")
+properties/8/spawn = true
+properties/8/replication_mode = 2
 
 [node name="CityNpc" type="Node3D"]
 script = ExtResource("1_npc")
@@ -76,6 +87,15 @@ mesh = SubResource("SphereMesh_eye")
 [node name="Hat" type="MeshInstance3D" parent="Body"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.75, 0)
 mesh = SubResource("CylinderMesh_hat")
+
+[node name="Hitbox" type="StaticBody3D" parent="."]
+collision_layer = 8
+collision_mask = 0
+script = ExtResource("2_interactable")
+
+[node name="Shape" type="CollisionShape3D" parent="Hitbox"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
+shape = SubResource("CapsuleShape3D_hitbox")
 
 [node name="Label" type="Label3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.15, 0)

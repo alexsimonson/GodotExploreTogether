@@ -39,6 +39,7 @@ public partial class NetSession : Node
     public event Action<long, long>? SelectCharacterRequested;          // character id
     public event Action<long, int>? InstanceReadyReceived;              // instance id
     public event Action<long, string>? InteractRequested;               // interaction id
+    public event Action<long, string>? LockDoorRequested;               // a door's interaction id
     public event Action<long, int, int, int>? CreateDungeonRequested;   // width, height, length
     public event Action<long, int>? JoinDungeonRequested;               // instance id
     public event Action<long, int, Vector3, float>? PlayerTransformReceived; // instance id, position, yaw
@@ -71,6 +72,8 @@ public partial class NetSession : Node
     public event Action<int[]>? StorageReceived;
     public event Action<DungeonStatus>? DungeonStatusReceived;
     public event Action<float, float>? CityClockReceived;                // hour of day, game hours per real second
+    public event Action<int[]>? DoorStatesReceived;                      // (parcel, open, locked) triples
+    public event Action<string, int[]>? LootReceived;                    // whose body, (slot, item, count, data) quads
     public event Action<int, int>? AmmoReceived;                         // magazine, reserve
     public event Action<Vector3, int, float, Color>? MagicAreaReceived;  // position, magic style, lifetime, caster's color
     public event Action<string>? CharacterLostReceived;                  // hardcore death: back to character select
@@ -84,6 +87,7 @@ public partial class NetSession : Node
     public void SendSelectCharacter(long characterId) => RpcId(1, MethodName.SelectCharacter, characterId);
     public void SendInstanceReady(int instanceId) => RpcId(1, MethodName.InstanceReady, instanceId);
     public void SendInteract(string interactionId) => RpcId(1, MethodName.Interact, interactionId);
+    public void SendLockDoor(string interactionId) => RpcId(1, MethodName.LockDoor, interactionId);
     public void SendCreateDungeon(int width, int height, int length) => RpcId(1, MethodName.CreateDungeon, width, height, length);
     public void SendJoinDungeon(int instanceId) => RpcId(1, MethodName.JoinDungeon, instanceId);
 
@@ -151,6 +155,12 @@ public partial class NetSession : Node
     private void Interact(string interactionId)
     {
         if (Accept()) InteractRequested?.Invoke(Multiplayer.GetRemoteSenderId(), interactionId);
+    }
+
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void LockDoor(string interactionId)
+    {
+        if (Accept()) LockDoorRequested?.Invoke(Multiplayer.GetRemoteSenderId(), interactionId);
     }
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
@@ -224,6 +234,10 @@ public partial class NetSession : Node
     public void SendCityClock(long peer, float hour, float hoursPerSecond) =>
         RpcId(peer, MethodName.CityClock, hour, hoursPerSecond);
 
+    public void SendDoorStates(long peer, int[] triples) => RpcId(peer, MethodName.DoorStates, triples);
+
+    public void SendLoot(long peer, string title, int[] quads) => RpcId(peer, MethodName.Loot, title, quads);
+
     public void SendDungeonStatus(long peer, DungeonStatus status) =>
         RpcId(peer, MethodName.DungeonStatusUpdate, status.ExitOpen, status.PassHolder, status.Escaped, status.PlayersInside);
 
@@ -278,6 +292,12 @@ public partial class NetSession : Node
 
     [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void CityClock(float hour, float hoursPerSecond) => CityClockReceived?.Invoke(hour, hoursPerSecond);
+
+    [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void DoorStates(int[] triples) => DoorStatesReceived?.Invoke(triples);
+
+    [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void Loot(string title, int[] quads) => LootReceived?.Invoke(title, quads);
 
     [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void DungeonStatusUpdate(bool exitOpen, string passHolder, string[] escaped, int playersInside) =>

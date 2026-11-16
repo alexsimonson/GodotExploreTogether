@@ -96,11 +96,14 @@ public partial class ClientGame : Node
         _session.InventoryReceived += OnInventory;
         _session.DungeonStatusReceived += OnDungeonStatus;
         _session.CityClockReceived += OnCityClock;
+        _session.DoorStatesReceived += OnDoorStates;
+        _session.LootReceived += OnLoot;
 
         _inventory = new InventoryScreen { Name = "Inventory", Visible = false };
         AddChild(_inventory);
         _inventory.MoveRequested += (fc, fs, tc, ts) => _session.SendMoveItem((int)fc, fs, (int)tc, ts);
         _inventory.DropRequested += (c, slot) => _session.SendDropItem((int)c, slot);
+        _inventory.TakeAllRequested += TakeAllLoot;
 
         _dungeonMenu = new DungeonMenu { Name = "DungeonMenu", Visible = false };
         AddChild(_dungeonMenu);
@@ -160,7 +163,12 @@ public partial class ClientGame : Node
         }
         else if (@event.IsActionPressed(InputSetup.Interact) && _focused != null && !_dungeonMenu.Visible)
         {
+            NoteInteraction(_focused.InteractionId);
             _session.SendInteract(_focused.InteractionId);
+        }
+        else if (@event.IsActionPressed(InputSetup.LockDoor) && _focused is City.CityDoor door && !_dungeonMenu.Visible)
+        {
+            _session.SendLockDoor(door.InteractionId);
         }
         else if (@event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Tab }
                  && _currentInstanceId != null && !_dungeonMenu.Visible)
@@ -192,7 +200,8 @@ public partial class ClientGame : Node
             var to = from - camera.GlobalBasis.Z * Interactable.ReachDistance;
             var query = PhysicsRayQueryParameters3D.Create(from, to, exclude: [player.GetRid()]);
             var hit = camera.GetWorld3D().DirectSpaceState.IntersectRay(query);
-            if (hit.Count > 0 && hit["collider"].AsGodotObject() is Interactable target)
+            // (A living resident's body is an interactable with no id yet: nothing to do with them for now.)
+            if (hit.Count > 0 && hit["collider"].AsGodotObject() is Interactable { InteractionId.Length: > 0 } target)
                 _focused = target;
         }
         _promptLabel.Visible = _focused != null;
@@ -400,6 +409,8 @@ public partial class ClientGame : Node
     {
         ClearInstances();
         _cityHour = -1; // until the city's clock arrives
+        if (kind == InstanceKinds.City) _cityLayoutData = layoutData;
+        _inventory.CloseLoot();
         _dungeonMenu.Visible = false;
         _inventory.Visible = false;
         _statusLabel.Visible = false;
@@ -442,12 +453,27 @@ public partial class ClientGame : Node
             GetTree().CreateTimer(0.5).Timeout += () =>
             {
                 if (PlayerCharacter.Local is not { } p) return;
-                var (count, failures) = City.CityChecks.Verify(Core.City.CityLayout.Import(layoutData, City.CityCatalog.Catalog), p.GetWorld3D());
+                var (count, failures) = City.CityChecks.Verify(Core.City.CityLayout.Import(layoutData, City.CityCatalog.Catalog), p.GetWorld3D(),
+                    _main.Instances.GetNode($"{InstanceFactory.NodeName(instanceId)}/Level"));
                 GD.Print($"[client] city check: {count - failures.Count}/{count} doors, fences and walls match the layout");
                 foreach (var f in failures) GD.Print($"[client]   {f}");
             };
             GetTree().CreateTimer(3.0).Timeout += () => { if (_currentInstanceId == instanceId) DevReportNpcs(instanceId); };
         }
+        if (kind == InstanceKinds.City && CmdArgs.Has("dev-open-nearest-door"))
+            GetTree().CreateTimer(1.0).Timeout += () =>
+            {
+                // Dev (screenshots): open the nearest unlocked door.
+                if (PlayerCharacter.Local is not { } me || _currentInstanceId != instanceId) return;
+                var door = _main.Instances.GetNode($"{InstanceFactory.NodeName(instanceId)}/Level").GetChildren()
+                    .OfType<City.CityDoor>().Where(d => !d.IsLocked)
+                    .MinBy(d => d.GlobalPosition.DistanceTo(me.GlobalPosition));
+                if (door == null) return;
+                _session.SendInteract(door.InteractionId);
+                me.LookAt(new Vector3(door.GlobalPosition.X, me.GlobalPosition.Y, door.GlobalPosition.Z));
+            };
+        if (kind == InstanceKinds.City && CmdArgs.Has("dev-doors"))
+            GetTree().CreateTimer(2.5).Timeout += () => { if (_currentInstanceId == instanceId) DevDoorsStart(instanceId); };
         if (kind == InstanceKinds.Hub && CmdArgs.Has("dev-city") && !_devCityDone)
         {
             _devCityDone = true;

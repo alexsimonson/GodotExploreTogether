@@ -12,6 +12,7 @@ namespace ExploreTogether.UI;
 /// - Inventory: a scrolling 4-column grid of 100x100 slots with 10 px spacing (InventoryScrollView prefab);
 /// - Storage (only while the hub's storage chest is open): the same kind of grid, next to the inventory
 ///   (port of the HUD's storage InventoryUI, which the original showed together with the player's inventory).
+/// - Loot (new, only while searching a body): what the dead person carried and wore, take-only, with "Take all".
 /// Drags and drops are forwarded as requests; the screen redraws from the state the server sends.
 /// </summary>
 public partial class InventoryScreen : CanvasLayer
@@ -19,6 +20,10 @@ public partial class InventoryScreen : CanvasLayer
     /// <summary>from container, from slot, to container, to slot</summary>
     public event Action<ItemContainer, int, ItemContainer, int>? MoveRequested;
     public event Action<ItemContainer, int>? DropRequested;
+    /// <summary>The loot panel's "Take all" button.</summary>
+    public event Action? TakeAllRequested;
+
+    public const int LootSlots = Inventory.DefaultMaxSlots + Gear.SlotCount;
 
     // Original EquipmentScrollView anchored positions (Unity UI: center origin, y up) per Equipment.Type.
     private static readonly Dictionary<EquipmentType, Vector2> UnityGearPositions = new()
@@ -33,12 +38,18 @@ public partial class InventoryScreen : CanvasLayer
     private readonly List<ItemSlotButton> _inventorySlots = new();
     private readonly List<ItemSlotButton> _gearSlots = new();
     private readonly List<ItemSlotButton> _storageSlots = new();
+    private readonly List<ItemSlotButton> _lootSlots = new();
     private Control _root = null!;
     private Control _storagePanel = null!;
+    private Control _lootPanel = null!;
+    private Label _lootTitle = null!;
     private Label _hint = null!;
 
     /// <summary>True while the storage panel is showing.</summary>
     public bool StorageOpen => Visible && _storagePanel.Visible;
+
+    /// <summary>True while the loot panel is showing.</summary>
+    public bool LootOpen => Visible && _lootPanel.Visible;
 
     public override void _Ready()
     {
@@ -56,6 +67,9 @@ public partial class InventoryScreen : CanvasLayer
         _storagePanel = BuildStoragePanel();
         _storagePanel.Visible = false;
         panels.AddChild(_storagePanel);
+        _lootPanel = BuildLootPanel();
+        _lootPanel.Visible = false;
+        panels.AddChild(_lootPanel);
 
         _hint = new Label { HorizontalAlignment = HorizontalAlignment.Center };
         _hint.AddThemeColorOverride("font_outline_color", Colors.Black);
@@ -92,6 +106,17 @@ public partial class InventoryScreen : CanvasLayer
 
     private Control BuildStoragePanel() =>
         SlotGridPanel("Storage", ItemContainer.Storage, Inventory.HubStorageSlots, _storageSlots);
+
+    private Control BuildLootPanel()
+    {
+        var panel = SlotGridPanel("Body", ItemContainer.Loot, LootSlots, _lootSlots);
+        var content = (VBoxContainer)panel.GetChild(0).GetChild(0);
+        _lootTitle = (Label)content.GetChild(0);
+        var takeAll = new Button { Text = "Take all" };
+        takeAll.Pressed += () => TakeAllRequested?.Invoke();
+        content.AddChild(takeAll);
+        return panel;
+    }
 
     /// <summary>A titled, scrolling 4-column grid of slots (the original InventoryScrollView).</summary>
     private Control SlotGridPanel(string title, ItemContainer container, int count, List<ItemSlotButton> into)
@@ -171,10 +196,34 @@ public partial class InventoryScreen : CanvasLayer
         UpdateHint();
     }
 
+    /// <summary>Shows a body's loot (title: whose it is), opening the screen if needed.</summary>
+    public void ShowLoot(string title, int[] lootQuads)
+    {
+        _lootTitle.Text = title;
+        Fill(_lootSlots, lootQuads);
+        if (_lootPanel.Visible && Visible) return;
+        _lootPanel.Visible = true;
+        UpdateHint();
+        if (!Visible) Toggle();
+    }
+
+    public void UpdateLoot(int[] lootQuads) => Fill(_lootSlots, lootQuads);
+
+    public void CloseLoot()
+    {
+        if (!_lootPanel.Visible) return;
+        _lootPanel.Visible = false;
+        UpdateHint();
+    }
+
     public void Toggle()
     {
         Visible = !Visible;
-        if (!Visible) CloseStorage();
+        if (!Visible)
+        {
+            CloseStorage();
+            CloseLoot();
+        }
         Input.MouseMode = Visible ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
     }
 
@@ -189,7 +238,9 @@ public partial class InventoryScreen : CanvasLayer
         }
     }
 
-    private void UpdateHint() => _hint.Text = _storagePanel.Visible
+    private void UpdateHint() => _hint.Text = _lootPanel.Visible
+        ? "Drag items from the body to take them  ·  Tab to close"
+        : _storagePanel.Visible
         ? "Drag between inventory and storage  ·  Ctrl + right-click to drop  ·  Tab to close"
         : "Drag to move or equip  ·  Ctrl + right-click to drop  ·  Tab to close";
 

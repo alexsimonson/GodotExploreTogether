@@ -20,6 +20,11 @@ public partial class ServerGame
 
         var weaponBefore = s.Gear.EquippedWeapon?.Id;
         var (from, to) = ((ItemContainer)fromContainer, (ItemContainer)toContainer);
+        if (from == ItemContainer.Loot || to == ItemContainer.Loot)
+        {
+            TakeFromBody(s, from, fromSlot, to, toSlot);
+            return;
+        }
         var usesStorage = from == ItemContainer.Storage || to == ItemContainer.Storage;
         // What's in both slots before the move, for the log (a move into an occupied slot swaps the two).
         var moved = SlotSnapshot(s, from, fromSlot);
@@ -56,6 +61,7 @@ public partial class ServerGame
     {
         if (!_sessions.TryGetValue(peer, out var s) || s.Inventory == null || s.Gear == null || !IsContainer(container)) return;
         if (_instances.FindPlayer(peer) is not { } found) return; // must be standing somewhere to drop
+        if (container == (int)ItemContainer.Loot) return; // take it first; bodies are take-only
         var fromStorage = container == (int)ItemContainer.Storage;
         if (fromStorage && !CanUseStorage(s))
         {
@@ -81,7 +87,8 @@ public partial class ServerGame
             BroadcastDungeonStatus(found.Instance);
     }
 
-    private static bool IsContainer(int c) => c is (int)ItemContainer.Inventory or (int)ItemContainer.Gear or (int)ItemContainer.Storage;
+    private static bool IsContainer(int c) =>
+        c is (int)ItemContainer.Inventory or (int)ItemContainer.Gear or (int)ItemContainer.Storage or (int)ItemContainer.Loot;
 
     private static (int ItemId, int Count, long? Uid)? SlotSnapshot(PeerSession s, ItemContainer container, int index) =>
         SlotContainerLogic.Slot(s.Inventory!, s.Gear!, container, index, s.Storage) is { itemId: { } id } slot

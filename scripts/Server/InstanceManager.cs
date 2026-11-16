@@ -28,6 +28,8 @@ public sealed class ServerInstance
     public CitySimulation? Simulation { get; set; }
     /// <summary>City residents, by node name.</summary>
     public Dictionary<string, CityNpc> Npcs { get; } = new();
+    /// <summary>Cities only: every building's front door.</summary>
+    public CityDoors? Doors { get; set; }
     public int[] LayoutData { get; init; } = [];
     public string CreatedBy { get; init; } = "";
     public DateTime CreatedAt { get; } = DateTime.UtcNow;
@@ -175,6 +177,8 @@ public sealed class InstanceManager
         instance.Simulation = simulation;
 
         var paths = new CityPaths(city);
+        var doors = new CityDoors(city);
+        instance.Doors = doors;
         var scene = GD.Load<PackedScene>(InstanceFactory.NpcScenePath);
         foreach (var person in population.People)
         {
@@ -184,10 +188,21 @@ public sealed class InstanceManager
             npc.NetName = person.Name;
             npc.NetRole = (int)person.Role;
             npc.NetId = person.Id;
+            npc.Brain = brain;
+            (npc.Inventory, npc.Gear) = NpcLoadout.Generate(person, city, doors, city.Seed);
+            brain.HasKeyTo = parcel => doors.HasKey(npc.Inventory, parcel); // their real keys (a body has none)
             simulation.Add(brain, npc); // sets the position before the node enters the tree (and is spawned)
             instance.Nodes.Npcs.AddChild(npc, forceReadableName: true);
             instance.Npcs[npc.Name] = npc;
         }
+
+        // The server's door nodes follow the state too (closed doors stop bullets).
+        doors.Changed += parcel =>
+        {
+            if (instance.Nodes.Level.GetNodeOrNull<CityDoor>($"Door{parcel}") is { } node)
+                node.SetState(doors.IsOpen(parcel), doors.IsLocked(parcel), animate: false);
+        };
+        simulation.SetUpDoors(city, doors);
         var roles = population.People.GroupBy(p => p.Role).OrderBy(g => g.Key).Select(g => $"{g.Count()} {g.Key.ToString().ToLowerInvariant()}s");
         GD.Print($"[server] city {instance.Id}: {population.People.Count} people ({string.Join(", ", roles)}), " +
                  $"clock {CityClock.Format(clock.HourOfDay)}, {dayMinutes:0.#} min per day; {simulation.Summary()}");

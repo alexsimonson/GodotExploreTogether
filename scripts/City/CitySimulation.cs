@@ -33,6 +33,9 @@ public partial class CitySimulation : Node
     public void Init(string label, CityClock clock, CityPopulation population, Func<IEnumerable<Vector3>> players) =>
         (_label, Clock, Population, _players) = (label, clock, population, players);
 
+    /// <summary>Gives the residents the city's doors (after everyone is added: doors start locked where nobody is inside).</summary>
+    public void SetUpDoors(CityLayout city, CityDoors doors) => _crowd.SetUpDoors(city, doors, Clock.Time);
+
     public void Add(CityNpcBrain brain, CityNpc node)
     {
         _npcs.Add((brain, node));
@@ -70,6 +73,7 @@ public partial class CitySimulation : Node
 
     private static void Apply(CityNpcBrain brain, CityNpc node)
     {
+        if (node.NetDead) return;
         var position = new Vector3(brain.X, 0, brain.Z);
         node.NetPosition = position;
         node.Position = position;

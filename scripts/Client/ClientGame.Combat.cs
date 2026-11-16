@@ -32,6 +32,22 @@ public partial class ClientGame
     private Vector3 _aimSentPoint;
     private double _devFightTimer;
 
+    /// <summary>Dev: the nearest living city resident within 120 m with nothing in between.</summary>
+    private static Node3D? DevVisibleResident(PlayerCharacter me, Node? container)
+    {
+        var space = me.GetWorld3D().DirectSpaceState;
+        var head = me.GlobalPosition + new Vector3(0, 1.6f, 0);
+        return container?.GetNodeOrNull("Npcs")?.GetChildren().OfType<City.CityNpc>()
+            .Where(n => !n.NetDead && n.GlobalPosition.DistanceTo(me.GlobalPosition) < 120)
+            .OrderBy(n => n.GlobalPosition.DistanceTo(me.GlobalPosition))
+            .FirstOrDefault(n =>
+            {
+                var hit = space.IntersectRay(PhysicsRayQueryParameters3D.Create(head, n.GlobalPosition + Vector3.Up, collisionMask: 1 | 8,
+                    exclude: [me.GetRid()]));
+                return hit.Count > 0 && hit["collider"].AsGodotObject() is Node c && c.GetParent() == n;
+            });
+    }
+
     private ItemDef? EquippedWeapon => _equippedWeaponId >= 0 ? ItemCatalog.Get(_equippedWeaponId) : null;
 
     private void SetUpCombatClient(CanvasLayer hud)
@@ -215,14 +231,17 @@ public partial class ClientGame
 
     private void DevFight(double delta)
     {
-        if (!CmdArgs.Has("dev-fight") || _currentKind != InstanceKinds.Dungeon || PlayerCharacter.Local is not { } me) return;
+        if (!CmdArgs.Has("dev-fight") || _currentKind is not (InstanceKinds.Dungeon or InstanceKinds.City)
+            || PlayerCharacter.Local is not { } me) return;
         if ((_devFightTimer -= delta) > 0) return;
         _devFightTimer = 0.3;
 
         if (EquippedWeapon?.Class == ItemClass.Gun && _magazine == 0) { _session.SendReload(); return; }
         var container = _main.Instances.GetNodeOrNull(InstanceFactory.NodeName(_currentInstanceId!.Value));
-        var target = container?.GetNodeOrNull("Enemies")?.GetChildren().OfType<EnemyCharacter>()
-            .Where(e => !e.IsDead).OrderBy(e => e.GlobalPosition.DistanceTo(me.GlobalPosition)).FirstOrDefault();
+        Node3D? target = _currentKind == InstanceKinds.City
+            ? DevVisibleResident(me, container)
+            : container?.GetNodeOrNull("Enemies")?.GetChildren().OfType<EnemyCharacter>()
+                .Where(e => !e.IsDead).OrderBy(e => e.GlobalPosition.DistanceTo(me.GlobalPosition)).FirstOrDefault();
         if (target == null) return;
 
         // Aim from the head: at the enemy's chest, or at its feet for magic (the area lands on the floor).

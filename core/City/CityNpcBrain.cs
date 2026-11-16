@@ -41,6 +41,13 @@ public sealed class CityNpcBrain
     /// <summary>What they're doing, for logs and name tags ("working", "shopping", ...).</summary>
     public string Activity { get; private set; } = "";
     public float Speed { get; }
+    /// <summary>Killed: stands (lies) still from now on.</summary>
+    public bool Dead { get; private set; }
+    /// <summary>
+    /// Whether they carry a key to a parcel's door (parcel id). The server checks the resident's real inventory;
+    /// by default (tests) they have keys to their home and workplace.
+    /// </summary>
+    public Func<int, bool>? HasKeyTo { get; set; }
 
     private readonly CityLayout _city;
     private readonly CityPaths _paths;
@@ -53,7 +60,18 @@ public sealed class CityNpcBrain
 
     private Goal _goal;
     private bool _hasGoal;
-    private readonly Queue<(float X, float Z)> _route = new();
+    /// <summary>A point to walk to; <see cref="Door"/> >= 0 means the leg to it passes through that parcel's door.</summary>
+    private readonly record struct Waypoint(float X, float Z, int Door = -1, bool Entering = false)
+    {
+        public static implicit operator Waypoint((float X, float Z) p) => new(p.X, p.Z);
+        public void Deconstruct(out float x, out float z) => (x, z) = (X, Z);
+    }
+
+    private readonly Queue<Waypoint> _route = new();
+    private CityDoors? _doors;      // this step's doors (from the crowd), if the city has any
+    private CityCrowd? _crowd;
+    private bool _doorReady;        // the door on the leg being walked has been opened
+    private bool _relock;           // they unlocked it from inside to get out: lock it again behind them
     private int _routeEndsIn = -1;     // parcel the current route ends inside, or -1
     private string _routeLabel = "";   // activity once the route is done
     private double _dwellUntil;        // game time when the current stop is over
@@ -76,6 +94,8 @@ public sealed class CityNpcBrain
     /// <param name="crowd">The others to keep out of (see <see cref="CityCrowd"/>); null walks through everyone.</param>
     public void Update(float seconds, double time, CityCrowd? crowd = null)
     {
+        if (Dead) return;
+        (_crowd, _doors) = (crowd, crowd?.Doors);
         var goal = DesiredGoal((float)(time % 24));
         if (!_hasGoal || goal != _goal)
         {
@@ -148,6 +168,9 @@ public sealed class CityNpcBrain
         {
             case GoalKind.Stay:
                 var parcel = _city.Parcels[_goal.Parcel];
+                // Bedtime at home: lock up (from inside, no key needed).
+                if (_goal.Label == "sleeping" && Inside == parcel.Id && _doors != null && !_doors.IsOpen(parcel.Id))
+                    _doors.Lock(parcel.Id);
                 RouteTo(parcel, RandomSpot(parcel), _goal.Label, 0.5 + _random.NextDouble());
                 break;
             default:
@@ -163,7 +186,7 @@ public sealed class CityNpcBrain
         {
             case GoalKind.Stay:
                 // Move to another spot in the same building now and then (not while asleep).
-                if (_goal.Label != "sleeping" && Inside == _goal.Parcel)
+                if (_goal.Label != "sleeping" && Inside == _goal.Parcel || Inside != _goal.Parcel) // or try again to get in
                     RouteTo(_city.Parcels[_goal.Parcel], RandomSpot(_city.Parcels[_goal.Parcel]), _goal.Label, 0.5 + _random.NextDouble());
                 else
                     _dwellUntil = time + 0.5 + _random.NextDouble();
@@ -195,7 +218,9 @@ public sealed class CityNpcBrain
         {
             var start = LeaveBuilding();
             foreach (var p in _paths.StreetWalk(start, CityPaths.StreetOf(target), _lane)) _route.Enqueue(p);
-            foreach (var p in CityPaths.WayIn(target, spot)) _route.Enqueue(p);
+            var way = CityPaths.WayIn(target, spot);
+            for (var i = 0; i < way.Count; i++)
+                _route.Enqueue(i == 2 ? new Waypoint(way[i].X, way[i].Z, target.Id, Entering: true) : way[i]); // yard -> just inside
         }
         _routeEndsIn = target.Id;
         _routeLabel = label;
@@ -219,7 +244,9 @@ public sealed class CityNpcBrain
         if (Inside >= 0)
         {
             var parcel = _city.Parcels[Inside];
-            foreach (var p in CityPaths.WayOut(parcel, (X, Z)).Skip(1)) _route.Enqueue(p);
+            var way = CityPaths.WayOut(parcel, (X, Z));
+            for (var i = 1; i < way.Count; i++)
+                _route.Enqueue(i == 2 ? new Waypoint(way[i].X, way[i].Z, parcel.Id) : way[i]); // just inside -> yard
             Inside = -1;
             return CityPaths.StreetOf(parcel);
         }
@@ -243,7 +270,17 @@ public sealed class CityNpcBrain
         }
         while (step > 1e-5f && _route.Count > 0)
         {
-            var (tx, tz) = _route.Peek();
+            var next = _route.Peek();
+            if (next.Door >= 0 && _doors != null && !_doorReady)
+            {
+                if (!OpenDoor(next))
+                {
+                    TurnBack(next, time);
+                    break;
+                }
+                _doorReady = true;
+            }
+            var (tx, tz) = next;
             float dx = tx - X, dz = tz - Z;
             var dist = MathF.Sqrt(dx * dx + dz * dz);
             if (dist <= 1e-4f)
@@ -329,8 +366,68 @@ public sealed class CityNpcBrain
 
     private void ReachWaypoint(double time)
     {
-        _route.Dequeue();
+        var reached = _route.Dequeue();
+        if (reached.Door >= 0 && _doors != null) CloseBehind(reached, time);
+        _doorReady = false;
         if (_route.Count == 0) Arrive(time);
+    }
+
+    // ---- doors ----
+
+    private bool HasKey(int parcel) =>
+        HasKeyTo?.Invoke(parcel) ?? (parcel == Person.Home || parcel == Person.Work);
+
+    /// <summary>Opens the door on the way (unlocking it with their key, or from inside). False if they can't.</summary>
+    private bool OpenDoor(Waypoint through)
+    {
+        var door = through.Door;
+        if (_doors!.IsOpen(door)) return true;
+        _relock = false;
+        if (_doors.IsLocked(door))
+        {
+            if (through.Entering && !HasKey(door)) return false; // locked out
+            _relock = !through.Entering; // let themselves out: the latch locks again behind them
+            _doors.Unlock(door);
+        }
+        return _doors.Open(door);
+    }
+
+    /// <summary>Through the door: close it (unless a player stands in the way), and lock up when appropriate.</summary>
+    private void CloseBehind(Waypoint through, double time)
+    {
+        var door = through.Door;
+        var p = _city.Parcels[door];
+        if (_crowd?.PlayerNear(p.Door.X, p.Door.Z, 1.6f) == true) return; // leave it open rather than shut it on someone
+        _doors!.Close(door);
+        var hour = time % 24;
+        bool lockIt;
+        if (through.Entering)
+            lockIt = door == Person.Home && (hour >= 21 || hour < 6); // home for the night
+        else
+            lockIt = _relock || HasKey(door) && _crowd?.AnyoneBelongingInside(door, this) != true; // last one out
+        if (lockIt) _doors.Lock(door);
+    }
+
+    /// <summary>Locked out (no key): walk back out through the gate to the street, and do something else.</summary>
+    private void TurnBack(Waypoint through, double time)
+    {
+        var p = _city.Parcels[through.Door];
+        _route.Clear();
+        _route.Enqueue(CityPaths.WayIn(p, p.Spots[0])[0]); // the street in front of the gate
+        _routeEndsIn = -1;
+        _routeLabel = "walking";
+        _dwellHours = 0.02;
+        _doorReady = false;
+        Activity = "walking";
+    }
+
+    /// <summary>Killed: drops where they stand and does nothing more.</summary>
+    public void Die()
+    {
+        Dead = true;
+        Moving = false;
+        _route.Clear();
+        Activity = "dead";
     }
 
     private void Arrive(double time)
@@ -378,7 +475,7 @@ public sealed class CityNpcBrain
     private Parcel? NearbyShop()
     {
         var (x, z) = (X, Z);
-        var shops = _city.Parcels.Where(p => p.IsPublic)
+        var shops = _city.Parcels.Where(p => p.IsPublic && (_doors == null || !_doors.IsLocked(p.Id)))
             .OrderBy(p => (p.Door.X - x) * (p.Door.X - x) + (p.Door.Z - z) * (p.Door.Z - z))
             .Take(5).ToList();
         return shops.Count == 0 ? null : shops[_random.Next(shops.Count)];

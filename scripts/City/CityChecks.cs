@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using ExploreTogether.Core.City;
 using Godot;
 using Sides = ExploreTogether.Core.Dungeon.Sides;
@@ -7,20 +8,23 @@ namespace ExploreTogether.City;
 
 /// <summary>
 /// Dev check (--dev-check-city): raycasts the built city's collision against the layout, per parcel.
-/// - Door path: from the street through the fence gate and the doorway, 1 m into the building, nothing is hit.
+/// - Door path: from the street through the fence gate and the doorway, 1 m into the building, nothing is hit
+///   but the closed door itself (doors are checked separately: a closed door must block the doorway).
 /// - Fence: beside the gate, a ray from the street hits the fence at the parcel's edge.
 /// - Wall: beside the doorway, a ray from the yard hits the building's front wall.
 /// </summary>
 public static class CityChecks
 {
-    public static (int Checked, List<string> Failures) Verify(CityLayout city, World3D world)
+    /// <param name="level">The built city (its CityDoor nodes).</param>
+    public static (int Checked, List<string> Failures) Verify(CityLayout city, World3D world, Node level)
     {
+        var doors = level.GetChildren().OfType<CityDoor>().ToDictionary(d => d.ParcelId);
         var space = world.DirectSpaceState;
         var failures = new List<string>();
         var count = 0;
 
-        Godot.Collections.Dictionary Ray(Vector3 from, Vector3 to) =>
-            space.IntersectRay(PhysicsRayQueryParameters3D.Create(from, to, collisionMask: 1));
+        Godot.Collections.Dictionary Ray(Vector3 from, Vector3 to, Godot.Collections.Array<Rid>? exclude = null) =>
+            space.IntersectRay(PhysicsRayQueryParameters3D.Create(from, to, collisionMask: 1, exclude: exclude));
 
         foreach (var p in city.Parcels)
         {
@@ -39,11 +43,22 @@ public static class CityChecks
             var street = door + outward * (edgeDist + 2);
             var label = $"{p.Building} {p.Id}";
 
-            // 1. The way in is open: street -> gate -> doorway -> 1 m inside (below fence height, so the gate is tested).
-            count++;
-            var hit = Ray(street + Vector3.Up * 0.5f, door - outward * 1.0f + Vector3.Up * 0.5f);
+            // 1. The way in is open: street -> gate -> doorway -> 1 m inside (below fence height, so the gate is tested),
+            //    apart from the door; and with the door closed, the ray stops at the door.
+            count += 2;
+            var doorNode = doors.GetValueOrDefault(p.Id);
+            var hit = Ray(street + Vector3.Up * 0.5f, door - outward * 1.0f + Vector3.Up * 0.5f,
+                doorNode != null ? [doorNode.GetRid()] : null);
             if (hit.Count > 0)
                 failures.Add($"{label}: door path blocked at {(Vector3)hit["position"]}");
+            if (doorNode == null)
+                failures.Add($"{label}: no door");
+            else if (!doorNode.IsOpen)
+            {
+                var atDoor = Ray(street + Vector3.Up * 1.0f, door - outward * 1.0f + Vector3.Up * 1.0f);
+                if (atDoor.Count == 0 || atDoor["collider"].AsGodotObject() != doorNode)
+                    failures.Add($"{label}: the closed door doesn't block its doorway");
+            }
 
             // 2. The fence beside the gate is solid (3.5 m to one side, still in front of the parcel).
             var side = SideOffset(p, 3.5f);

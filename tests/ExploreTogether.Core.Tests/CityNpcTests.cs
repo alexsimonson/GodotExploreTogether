@@ -74,7 +74,8 @@ public class CityNpcTests
     private const float SecondsPerHour = 120; // the default: a 48-minute day
     private const float Step = 0.25f;
 
-    private sealed record Sim(CityLayout City, CityPopulation Population, List<CityNpcBrain> Brains, CityClock Clock, CityCrowd Crowd);
+    private sealed record Sim(CityLayout City, CityPopulation Population, List<CityNpcBrain> Brains, CityClock Clock, CityCrowd Crowd,
+        CityDoors Doors);
 
     private static Sim Start(int size, int seed, float startHour)
     {
@@ -85,7 +86,9 @@ public class CityNpcTests
         var brains = pop.People.Select(p => new CityNpcBrain(p, city, paths, seed, clock.Time)).ToList();
         var crowd = new CityCrowd();
         foreach (var b in brains) crowd.Add(b);
-        return new Sim(city, pop, brains, clock, crowd);
+        var doors = new CityDoors(city);
+        crowd.SetUpDoors(city, doors, clock.Time);
+        return new Sim(city, pop, brains, clock, crowd, doors);
     }
 
     /// <summary>Runs until the clock reaches the hour (game time), calling <paramref name="each"/> after every step.</summary>
@@ -253,6 +256,64 @@ public class CityNpcTests
         Assert.True(closest >= CityCrowd.NpcRadius + CityCrowd.PlayerRadius - 0.01f, $"came within {closest:0.00} m");
         Assert.True(Dist(walker.X, walker.Z, startX, startZ) > 4, $"{walker.Person.Name} only got {Dist(walker.X, walker.Z, startX, startZ):0.0} m");
         Assert.True(Dist(walker.X, walker.Z, ahead.X, ahead.Z) >= CityCrowd.NpcRadius + CityCrowd.PlayerRadius - 0.01f);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(4)]
+    public void AtNight_DoorsAreShut_AndHomesLocked(int seed)
+    {
+        var sim = Start(5, seed, 5.5f);
+        var opened = new HashSet<int>();
+        sim.Doors.Changed += p => { if (sim.Doors.IsOpen(p)) opened.Add(p); };
+        RunUntil(sim, 24 + 3);
+        Assert.True(opened.Count > 20, $"only {opened.Count} doors were ever opened");
+        for (var p = 0; p < sim.Doors.Count; p++)
+        {
+            Assert.False(sim.Doors.IsOpen(p), $"{sim.City.Parcels[p].Building} {p} left open at 03:00");
+            var sleepers = sim.Brains.Where(b => b.Inside == p && b.Person.Home == p).ToList();
+            if (sleepers.Count > 0 && CityPopulation.HomeCapacity(sim.City.Parcels[p].Building) > 0)
+                Assert.True(sim.Doors.IsLocked(p), $"{sim.City.Parcels[p].Building} {p} unlocked at night with {sleepers.Count} inside");
+        }
+    }
+
+    [Fact]
+    public void Shops_AreLockedAfterHours()
+    {
+        var sim = Start(5, 2, 5.5f);
+        RunUntil(sim, 21);
+        foreach (var shop in sim.City.Parcels.Where(p => p.Building == BuildingType.Shop))
+            if (!sim.Brains.Any(b => sim.City.ParcelAt(b.X, b.Z)?.Id == shop.Id))
+                Assert.True(sim.Doors.IsLocked(shop.Id), $"shop {shop.Id} is empty but unlocked at 21:00");
+    }
+
+    [Fact]
+    public void WithoutAKey_ALockedHomeStaysShut()
+    {
+        var sim = Start(5, 3, 5.5f);
+        var home = sim.Population.People.First(p => p.Role == NpcRole.Worker).Home;
+        var household = sim.Brains.Where(b => b.Person.Home == home).ToList();
+        foreach (var b in household) b.HasKeyTo = _ => false; // they lost their keys
+        RunUntil(sim, 13); // everyone's out by now
+        Assert.All(household, b => Assert.NotEqual(home, sim.City.ParcelAt(b.X, b.Z)?.Id));
+        sim.Doors.Close(home);
+        sim.Doors.Lock(home);
+        RunUntil(sim, 24 + 2);
+        Assert.All(household, b => Assert.NotEqual(home, b.Inside));
+        Assert.True(sim.Doors.IsLocked(home));
+    }
+
+    [Fact]
+    public void TheDead_StayPut_AndDontBlockAnyone()
+    {
+        var sim = Start(5, 1, 8.5f);
+        RunUntil(sim, 9);
+        var victim = sim.Brains.First(b => b.Moving);
+        victim.Die();
+        var (x, z) = (victim.X, victim.Z);
+        RunUntil(sim, 11);
+        Assert.Equal((x, z), (victim.X, victim.Z));
+        Assert.Null(sim.Crowd.Overlapping(sim.Brains.First(b => b != victim), x, z));
     }
 
     [Fact]

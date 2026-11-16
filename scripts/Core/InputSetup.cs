@@ -12,6 +12,7 @@ public static class InputSetup
     public const string Jump = "jump";
     public const string Sprint = "sprint";
     public const string Interact = "interact";
+    public const string LockDoor = "lock_door";
 
     public static void EnsureActions()
     {
@@ -22,6 +23,7 @@ public static class InputSetup
         Add(Jump, Key.Space);
         Add(Sprint, Key.Shift);
         Add(Interact, Key.E);
+        Add(LockDoor, Key.L);
     }
 
     private static void Add(string action, Key key)

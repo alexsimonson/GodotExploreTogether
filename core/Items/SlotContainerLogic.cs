@@ -1,7 +1,10 @@
 namespace ExploreTogether.Core.Items;
 
-/// <summary>Where a slot is. Storage is the hub storage (port of Storage.storage_inventory), an inventory of its own.</summary>
-public enum ItemContainer { Inventory, Gear, Storage }
+/// <summary>
+/// Where a slot is. Storage is the hub storage (port of Storage.storage_inventory), an inventory of its own.
+/// Loot is a body being searched (new): what the dead person carried and wore. The server only allows taking from it.
+/// </summary>
+public enum ItemContainer { Inventory, Gear, Storage, Loot }
 
 /// <summary>
 /// Port of SlotContainer.OnDrop: what happens when an item is dragged from one slot onto another.
@@ -28,11 +31,12 @@ public static class SlotContainerLogic
 {
     /// <summary>Applies a drag from (from, fromSlot) to (to, toSlot). Returns false if nothing changed.</summary>
     /// <param name="storage">The hub storage, or null when it isn't available (then moves involving it fail).</param>
+    /// <param name="loot">The body being searched, or null (then moves involving it fail).</param>
     public static bool Move(Inventory inventory, Gear gear, ItemContainer from, int fromSlot, ItemContainer to, int toSlot,
-        Inventory? storage = null)
+        Inventory? storage = null, Inventory? loot = null)
     {
-        var source = Slot(inventory, gear, from, fromSlot, storage);
-        var target = Slot(inventory, gear, to, toSlot, storage);
+        var source = Slot(inventory, gear, from, fromSlot, storage, loot);
+        var target = Slot(inventory, gear, to, toSlot, storage, loot);
         if (source == null || target == null || source.itemId == null) return false;
         if (ReferenceEquals(source, target)) return false;
 
@@ -43,6 +47,21 @@ public static class SlotContainerLogic
             (true, false) => UnEquipItem(source, target, Gear.TypeOf(fromSlot)),
             (true, true) => SwapEquipment(source, target, Gear.TypeOf(fromSlot), Gear.TypeOf(toSlot)),
         };
+    }
+
+    /// <summary>
+    /// Bodies are take-only: nothing goes into the loot, and taking must not swap anything back into it
+    /// (the target slot is empty, or holds the same stackable item to merge onto). Moves not involving loot pass.
+    /// </summary>
+    public static bool IsAllowedForLoot(Inventory inventory, Gear gear, Inventory loot, ItemContainer from, int fromSlot,
+        ItemContainer to, int toSlot)
+    {
+        if (to == ItemContainer.Loot) return false;
+        if (from != ItemContainer.Loot) return true;
+        var source = Slot(inventory, gear, from, fromSlot, loot: loot);
+        var target = Slot(inventory, gear, to, toSlot, loot: loot);
+        if (source?.itemId is not { } id || target == null) return false;
+        return target.itemId == null || target.itemId == id && ItemCatalog.Get(id) is { Stack: true };
     }
 
     private static bool SwapItem(ItemSlot drag, ItemSlot other)
@@ -102,12 +121,14 @@ public static class SlotContainerLogic
         slot.uid = null;
     }
 
-    public static ItemSlot? Slot(Inventory inventory, Gear gear, ItemContainer container, int index, Inventory? storage = null) =>
+    public static ItemSlot? Slot(Inventory inventory, Gear gear, ItemContainer container, int index, Inventory? storage = null,
+        Inventory? loot = null) =>
         container switch
         {
             ItemContainer.Inventory when index >= 0 && index < inventory.slots.Length => inventory.slots[index],
             ItemContainer.Gear when index >= 0 && index < gear.slots.Length => gear.slots[index],
             ItemContainer.Storage when storage != null && index >= 0 && index < storage.slots.Length => storage.slots[index],
+            ItemContainer.Loot when loot != null && index >= 0 && index < loot.slots.Length => loot.slots[index],
             _ => null,
         };
 

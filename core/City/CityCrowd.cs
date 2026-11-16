@@ -26,6 +26,36 @@ public sealed class CityCrowd
 
     public IReadOnlyList<CityNpcBrain> Npcs => _npcs;
 
+    /// <summary>The city's doors, which residents open, close and lock as they pass (null: no doors).</summary>
+    public CityDoors? Doors { get; set; }
+
+    private CityLayout? _city;
+
+    /// <summary>
+    /// Starts the doors in a state that fits where everyone is: closed; locked where nobody is inside, and homes
+    /// locked at night.
+    /// </summary>
+    public void SetUpDoors(CityLayout city, CityDoors doors, double time)
+    {
+        (_city, Doors) = (city, doors);
+        var hour = time % 24;
+        var night = hour >= 21 || hour < 6;
+        foreach (var p in city.Parcels)
+        {
+            var occupied = _npcs.Any(b => b.Inside == p.Id);
+            if (!occupied || night && CityPopulation.HomeCapacity(p.Building) > 0) doors.Lock(p.Id);
+        }
+    }
+
+    /// <summary>Is a player within <paramref name="radius"/> of (x, z)?</summary>
+    public bool PlayerNear(float x, float z, float radius) =>
+        _players.Any(p => Dist(p.X, p.Z, x, z) < radius);
+
+    /// <summary>Is anyone who lives or works on the parcel (other than <paramref name="self"/>) on it right now?</summary>
+    public bool AnyoneBelongingInside(int parcel, CityNpcBrain self) =>
+        _city != null && _npcs.Any(b => b != self && !b.Dead && (b.Person.Home == parcel || b.Person.Work == parcel)
+                                       && _city.ParcelAt(b.X, b.Z)?.Id == parcel);
+
     public void Add(CityNpcBrain brain) => _npcs.Add(brain);
 
     /// <summary>Where the players are now (call before each step).</summary>
@@ -48,7 +78,7 @@ public sealed class CityCrowd
             if (Closer(fx, fz, x, z, px, pz, NpcRadius + PlayerRadius)) return Blocker.Player;
         if (ignoreNpcs) return Blocker.None;
         foreach (var other in _npcs)
-            if (other != self && Closer(fx, fz, x, z, other.X, other.Z, NpcRadius * 2)) return Blocker.Npc;
+            if (other != self && !other.Dead && Closer(fx, fz, x, z, other.X, other.Z, NpcRadius * 2)) return Blocker.Npc;
         return Blocker.None;
     }
 
@@ -59,7 +89,7 @@ public sealed class CityCrowd
         var bestD = NpcRadius * 2;
         foreach (var other in _npcs)
         {
-            if (other == self) continue;
+            if (other == self || other.Dead) continue;
             var d = Dist(x, z, other.X, other.Z);
             if (d < bestD) (best, bestD) = (other, d);
         }

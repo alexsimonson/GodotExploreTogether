@@ -58,6 +58,12 @@ public static class ItemCatalog
     /// <summary>What trees give.</summary>
     public const int LogId = 432;
 
+    /// <summary>
+    /// New (not in the original): a key to one city door. Its data is the lock's code (see CityDoors.LockCode),
+    /// so every key fits exactly one door. Never generated as random loot (a key without a lock is useless).
+    /// </summary>
+    public const int KeyId = 1700;
+
     public static readonly IReadOnlyList<ItemDef> All =
     [
         new(0, "Default Item", "Placeholder really", true, "default_item.png"),
@@ -82,6 +88,7 @@ public static class ItemCatalog
         // here reserve ammo is an item you carry. No icon yet.
         new(PistolRoundsId, "Pistol Rounds", "Ammunition for the pistol", true, "", LootCount: 10),
         new(1515, "Sword", "Just a sword", false, "sword.png", ItemClass.Melee, EquipmentType.Weapon, WeaponStyle.Melee, 10),
+        new(KeyId, "Key", "Opens one particular door", false, ""),
     ];
 
     private static readonly Dictionary<int, ItemDef> ById = All.ToDictionary(i => i.Id);
@@ -90,11 +97,11 @@ public static class ItemCatalog
 
     public static string NameOf(int id) => Get(id)?.Name ?? $"Unknown item {id}";
 
-    /// <summary>Port of Manager.GenerateItem: a random item from the bank, never the Dungeon Pass or a retired item.</summary>
+    /// <summary>Port of Manager.GenerateItem: a random item from the bank, never the Dungeon Pass, a key or a retired item.</summary>
     public static ItemDef GenerateItem(Random random)
     {
         ItemDef? generated = null;
-        while (generated == null || generated.Id == DungeonPassId || generated.Retired)
+        while (generated == null || generated.Id is DungeonPassId or KeyId || generated.Retired)
             generated = All[random.Next(0, All.Count)];
         return generated;
     }

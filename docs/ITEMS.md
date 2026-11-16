@@ -44,7 +44,9 @@ All in `core/Items/`, Godot-free and unit-tested:
 
 ### Per-copy state (`data`)
 
-Each slot can carry one nullable integer that travels with that copy of the item: when it is moved, equipped, dropped, picked up or saved. Today it holds only **a gun's loaded rounds**: `InitialData` gives a fresh pistol 10, and reloading moves rounds from Pistol Rounds stacks into it. Stackable items never have data.
+Each slot can carry one nullable integer that travels with that copy of the item: when it is moved, equipped, dropped, picked up or saved. Stackable items never have data. It holds:
+- **A gun's loaded rounds.** `InitialData` gives a fresh pistol 10, and reloading moves rounds from Pistol Rounds stacks into it.
+- **A key's lock code** (Key, id 1700, new). A key fits exactly one city door: the one whose `CityDoors.LockCode` equals its data. The code mixes the city's seed with the parcel id, so a key kept from an earlier city fits nothing in a new one. Keys are never generated as random loot.
 
 ### Serials (per-copy identity)
 

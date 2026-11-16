@@ -23,6 +23,8 @@ public sealed class PeerSession(long peer)
     public Gear? Gear { get; set; }
     /// <summary>The character's hub storage (50 slots), loaded with the inventory. Usable only at the hub's storage chest.</summary>
     public Inventory? Storage { get; set; }
+    /// <summary>The body this player is searching (node name of a dead city resident), if any.</summary>
+    public string? LootingNpc { get; set; }
     /// <summary>
     /// Item events for changes not saved yet (slot moves are saved with the next save, not immediately).
     /// They're written in the same transaction as that save, so the log always matches the saved items.
@@ -126,6 +128,7 @@ public partial class ServerGame : Node
         _session.MoveItemRequested += OnMoveItem;
         SetUpCombat();
         _session.DropItemRequested += OnDropItem;
+        _session.LockDoorRequested += OnLockDoor;
         _session.PlayerTransformReceived += (peer, instanceId, position, yaw) =>
         {
             // Ignore movement for an instance the player has already left.
@@ -373,6 +376,16 @@ public partial class ServerGame : Node
         if (interactionId == City.CityBuilder.GateId)
         {
             UseCityGate(s, instance);
+            return;
+        }
+        if (instance.Kind == InstanceKinds.City && City.CityDoor.TryParse(interactionId, out var doorParcel))
+        {
+            UseDoor(s, instance, doorParcel);
+            return;
+        }
+        if (instance.Kind == InstanceKinds.City && interactionId.StartsWith(City.CityNpc.LootPrefix))
+        {
+            SearchBody(s, instance, interactionId[City.CityNpc.LootPrefix.Length..]);
             return;
         }
         if (interactionId != DungeonEntranceId) return;

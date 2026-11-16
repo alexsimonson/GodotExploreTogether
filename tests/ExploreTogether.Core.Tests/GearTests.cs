@@ -129,7 +129,8 @@ public class SlotContainerLogicTests
         Assert.Equal(EquipmentType.Leg, ItemCatalog.Get(Pants)!.Slot);
         Assert.Equal(WeaponStyle.Gun, ItemCatalog.Get(Pistol)!.Style);
         Assert.False(ItemCatalog.Get(Coin)!.IsEquipment);
-        Assert.All(ItemCatalog.All.Where(i => i.Id != ItemCatalog.PistolRoundsId), i => Assert.EndsWith(".png", i.Icon));
+        // New items without original art have no icon yet.
+        Assert.All(ItemCatalog.All.Where(i => i.Id is not (ItemCatalog.PistolRoundsId or ItemCatalog.KeyId)), i => Assert.EndsWith(".png", i.Icon));
     }
 }
 

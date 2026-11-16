@@ -83,6 +83,9 @@ If a design never fits, or fits only on parcels its type isn't used on, the log 
 
 - **Collision:** a `StaticBody3D` (collision layer 1, the default) with shapes for the walls, so players can't walk through them. Box shapes are best: navigation and the checks handle them well. The example puts all its shapes under one `StaticBody3D` named `Collision`.
 - **A doorway at `DoorOffset`:** an opening at least 1.6 m wide and 2.4 m tall in the front wall, with nothing blocking the straight path from the street into the room.
+- **Don't model the door itself.** The generator puts a working door in every doorway: lockable, and opened and closed by players and residents.
+  - The door hangs 0.15 m behind the front face, hinged on the left side as seen from the street.
+  - It swings 90° inward. Keep a 1.6 × 1.6 m area clear just inside the doorway on the hinge side, or the open door will poke through your furniture or walls.
 - **Solid front wall beside the door:** at least 1.3 m on one side of the door's middle. The check tests this.
 - **Stay inside the footprint.** Small things in front are fine, such as a porch, steps or a sign: there's 1.5 m before the fence. Keep everything else within the green outline, or it will poke into the neighbor's yard.
 - **Ground floor at y = 0**, with an open interior. People who live or work there walk in and stand at the spots.
@@ -97,7 +100,7 @@ If a design never fits, or fits only on parcels its type isn't used on, the log 
    ```
    Walk through the gold City Gate in the hub. A fixed `--city-seed` gives the same city each time.
 2. **Automatic check:** run a scripted client with `--dev-check-city` (see the scripted-test commands in the project `CLAUDE.md`, and the `city` scenario in `tools/smoke-test.ps1`). For every parcel it checks:
-   - the path through the gate and doorway is open,
+   - the path through the gate and doorway is open (apart from the door), and the closed door blocks it,
    - the fence is solid,
    - the wall beside the door is solid.
 

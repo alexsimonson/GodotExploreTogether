@@ -91,6 +91,7 @@ public static class CityBuilder
             AddFences(b, city, parcel);
             AddBuilding(b, level, parcel);
             level.AddChild(Sign(parcel));
+            level.AddChild(CityDoor.Create(parcel)); // closed until the server says otherwise
         }
 
         // The city wall, just outside the outermost fences.
