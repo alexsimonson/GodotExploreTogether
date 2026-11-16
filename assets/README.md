@@ -9,6 +9,8 @@ The exceptions are `rockbottom.png` and `roof_wood.png`, converted from `.gif` b
 comes from `Assets/Resources/Models/Torch`. It's included because the original dungeon prefabs (T and X junctions)
 use it via the nested "Torch Particle" prefab.
 
+**Item icons** (`icons/`) come from `Assets/Resources/UI`, for the same reason: the original item assets reference them.
+
 ## Dungeon pieces (`dungeon_pieces/`, `scenes/dungeon/`)
 Generated from the Unity prefabs by `tools/import_unity_dungeon.py` (rerunnable; don't hand-edit the outputs):
 exact ProBuilder geometry and UVs (OBJ per piece and material), the original materials (walls brick, floor/ceiling

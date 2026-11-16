@@ -234,6 +234,41 @@ public sealed class GameDatabase : IDisposable
         tx.Commit();
     }
 
+    // ------------------------------------------------------------- equipment
+
+    /// <summary>Saved gear as an item id per slot (-1 = empty), like the original ExportGear.</summary>
+    public int[] LoadGear(long characterId, int slotCount)
+    {
+        var gear = Enumerable.Repeat(-1, slotCount).ToArray();
+        using var cmd = Command("SELECT slot, item_id FROM equipment_items WHERE character_id = $c;", ("$c", characterId));
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            var slot = r.GetInt32(0);
+            if (slot >= 0 && slot < slotCount) gear[slot] = r.GetInt32(1);
+        }
+        return gear;
+    }
+
+    public void SaveGear(long characterId, IReadOnlyList<int> gearItemIds)
+    {
+        using var tx = _connection.BeginTransaction();
+        using (var del = Command("DELETE FROM equipment_items WHERE character_id = $c;", ("$c", characterId)))
+        {
+            del.Transaction = tx;
+            del.ExecuteNonQuery();
+        }
+        for (int slot = 0; slot < gearItemIds.Count; slot++)
+        {
+            if (gearItemIds[slot] < 0) continue;
+            using var ins = Command("INSERT INTO equipment_items (character_id, slot, item_id) VALUES ($c, $s, $i);",
+                ("$c", characterId), ("$s", slot), ("$i", gearItemIds[slot]));
+            ins.Transaction = tx;
+            ins.ExecuteNonQuery();
+        }
+        tx.Commit();
+    }
+
     // ------------------------------------------------------------------ runs
 
     public long CreateRun(int seed, int width, int height, int length, long? createdByCharacterId)

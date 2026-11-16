@@ -14,6 +14,8 @@ public partial class ItemPickup : Interactable
     public const string InteractionPrefix = "item:";
 
     [Export] public int ItemId { get; set; }
+    /// <summary>How many (a dropped stack stays one pickup).</summary>
+    [Export] public int Count { get; set; } = 1;
 
     public MultiplayerSynchronizer Sync => GetNode<MultiplayerSynchronizer>("Sync");
 
@@ -24,10 +26,11 @@ public partial class ItemPickup : Interactable
     {
         InteractionId = InteractionPrefix + Name;
         var isPass = ItemId == ItemCatalog.DungeonPassId;
-        Prompt = $"Pick up {ItemCatalog.NameOf(ItemId)}";
+        var label = Count > 1 ? $"{ItemCatalog.NameOf(ItemId)} x{Count}" : ItemCatalog.NameOf(ItemId);
+        Prompt = $"Pick up {label}";
 
         _visual = GetNode<Node3D>("Visual");
-        GetNode<Label3D>("Label").Text = ItemCatalog.NameOf(ItemId);
+        GetNode<Label3D>("Label").Text = label;
         GetNode<MeshInstance3D>("Visual/Loot").Visible = !isPass;
         GetNode<Node3D>("Visual/Pass").Visible = isPass;
         GetNode<OmniLight3D>("Glow").Visible = isPass;

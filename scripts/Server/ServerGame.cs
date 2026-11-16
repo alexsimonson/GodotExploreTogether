@@ -19,6 +19,8 @@ public sealed class PeerSession(long peer)
     public CharacterRecord? Character { get; set; }
     /// <summary>The character's inventory while playing (loaded on character select).</summary>
     public Inventory? Inventory { get; set; }
+    /// <summary>The character's equipment (12 slots), loaded with the inventory.</summary>
+    public Gear? Gear { get; set; }
     /// <summary>Instance the client was told to load and hasn't confirmed yet.</summary>
     public int? PendingInstanceId { get; set; }
     /// <summary>True while a password hash is being computed for this peer.</summary>
@@ -103,6 +105,8 @@ public partial class ServerGame : Node
         _session.InteractRequested += OnInteract;
         _session.CreateDungeonRequested += OnCreateDungeon;
         _session.JoinDungeonRequested += OnJoinDungeon;
+        _session.MoveItemRequested += OnMoveItem;
+        _session.DropItemRequested += OnDropItem;
         _session.PlayerTransformReceived += (peer, instanceId, position, yaw) =>
         {
             // Ignore movement for an instance the player has already left.
@@ -260,6 +264,8 @@ public partial class ServerGame : Node
         s.Character = character;
         s.Inventory = new Inventory();
         s.Inventory.Load(_db.LoadInventory(character.Id));
+        s.Gear = new Gear();
+        s.Gear.ImportGear(_db.LoadGear(character.Id, Gear.SlotCount));
         s.PlayTimeCountedUntil = DateTime.UtcNow;
         SendToInstance(s, _instances.Hub);
     }

@@ -52,6 +52,26 @@ public sealed class Inventory
         return -1;
     }
 
+    /// <summary>
+    /// Adds several of an item (e.g. picking up a dropped stack). Stackables go onto one stack;
+    /// others take a slot each. Returns how many were added (fewer if the inventory filled up).
+    /// </summary>
+    public int AddItems(int itemId, int count)
+    {
+        var def = ItemCatalog.Get(itemId);
+        if (def == null || count <= 0) return 0;
+        if (def.Stack)
+        {
+            int slot = AddItem(itemId);
+            if (slot < 0) return 0;
+            slots[slot].stack_size += count - 1;
+            return count;
+        }
+        int added = 0;
+        while (added < count && AddItem(itemId) >= 0) added++;
+        return added;
+    }
+
     /// <summary>Empties a slot (the whole stack), like the original RemoveItem. Returns the removed item id.</summary>
     public int? RemoveItem(int index)
     {

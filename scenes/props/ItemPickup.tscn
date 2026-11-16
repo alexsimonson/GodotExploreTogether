@@ -29,6 +29,9 @@ properties/0/replication_mode = 0
 properties/1/path = NodePath(".:position")
 properties/1/spawn = true
 properties/1/replication_mode = 0
+properties/2/path = NodePath(".:Count")
+properties/2/spawn = true
+properties/2/replication_mode = 0
 
 [node name="ItemPickup" type="StaticBody3D"]
 collision_layer = 4

@@ -166,11 +166,12 @@ public sealed class InstanceManager
     }
 
     /// <summary>Puts an item into the instance, visible to everyone inside.</summary>
-    public ItemPickup SpawnItem(ServerInstance instance, int itemId, Vector3 position)
+    public ItemPickup SpawnItem(ServerInstance instance, int itemId, Vector3 position, int count = 1)
     {
         var item = GD.Load<PackedScene>(InstanceFactory.ItemScenePath).Instantiate<ItemPickup>();
         item.Name = $"Item{instance.NextItemNumber++}";
         item.ItemId = itemId;
+        item.Count = count;
         item.Position = position;
         instance.Nodes.Items.AddChild(item, forceReadableName: true);
         instance.Items[item.Name] = item;

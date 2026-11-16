@@ -34,7 +34,8 @@ public partial class ClientGame : Node
     private Label _promptLabel = null!;
     private Label _noticeLabel = null!;
     private DungeonMenu _dungeonMenu = null!;
-    private InventoryPanel _inventory = null!;
+    private InventoryScreen _inventory = null!;
+    private Label _weaponLabel = null!;
     private Label _statusLabel = null!;
     private Interactable? _focused;
     private double _noticeTimeLeft;
@@ -43,6 +44,7 @@ public partial class ClientGame : Node
     private string _username = "";
     private string _password = "";
     private int? _currentInstanceId;
+    private string _currentKind = "";
 
     // Dev auto-login state.
     private readonly bool _devAuto = CmdArgs.Has("user");
@@ -87,8 +89,10 @@ public partial class ClientGame : Node
         _session.InventoryReceived += OnInventory;
         _session.DungeonStatusReceived += OnDungeonStatus;
 
-        _inventory = new InventoryPanel { Name = "Inventory", Visible = false };
+        _inventory = new InventoryScreen { Name = "Inventory", Visible = false };
         AddChild(_inventory);
+        _inventory.MoveRequested += (fc, fs, tc, ts) => _session.SendMoveItem((int)fc, fs, (int)tc, ts);
+        _inventory.DropRequested += (c, slot) => _session.SendDropItem((int)c, slot);
 
         _dungeonMenu = new DungeonMenu { Name = "DungeonMenu", Visible = false };
         AddChild(_dungeonMenu);
@@ -111,6 +115,16 @@ public partial class ClientGame : Node
         _statusLabel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopRight);
         _statusLabel.GrowHorizontal = Control.GrowDirection.Begin;
         _statusLabel.Position += new Vector2(-10, 8);
+
+        // Like the original HUD's WeaponText (bottom right).
+        _weaponLabel = new Label { Visible = false, HorizontalAlignment = HorizontalAlignment.Right };
+        _weaponLabel.AddThemeColorOverride("font_outline_color", Colors.Black);
+        _weaponLabel.AddThemeConstantOverride("outline_size", 6);
+        hud.AddChild(_weaponLabel);
+        _weaponLabel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.BottomRight);
+        _weaponLabel.GrowHorizontal = Control.GrowDirection.Begin;
+        _weaponLabel.GrowVertical = Control.GrowDirection.Begin;
+        _weaponLabel.Position += new Vector2(-12, -12);
 
         if (_devAuto)
         {
@@ -174,15 +188,55 @@ public partial class ClientGame : Node
         _noticeTimeLeft = 4;
     }
 
-    private void OnInventory(int[] triples)
+    private void OnInventory(int[] triples, int[] gear)
     {
-        _inventory.SetContents(triples);
+        _inventory.SetState(triples, gear);
+        var weaponSlot = (int)Core.Items.EquipmentType.Weapon;
+        var weapon = weaponSlot < gear.Length && gear[weaponSlot] >= 0 ? Core.Items.ItemCatalog.NameOf(gear[weaponSlot]) : "none";
+        _weaponLabel.Text = $"Weapon: {weapon}";
+        _weaponLabel.Visible = true;
+
         var names = new List<string>();
         for (int i = 0; i + 2 < triples.Length; i += 3)
             names.Add(triples[i + 2] > 1 ? $"{Core.Items.ItemCatalog.NameOf(triples[i + 1])} x{triples[i + 2]}"
                                          : Core.Items.ItemCatalog.NameOf(triples[i + 1]));
-        GD.Print($"[client] inventory ({names.Count} slots): {string.Join(", ", names)}");
+        var equipped = new List<string>();
+        for (int i = 0; i < gear.Length; i++)
+            if (gear[i] >= 0) equipped.Add($"{(Core.Items.EquipmentType)i}={Core.Items.ItemCatalog.NameOf(gear[i])}");
+        GD.Print($"[client] inventory ({names.Count} slots): {string.Join(", ", names)} | gear: {string.Join(", ", equipped)}");
+        DevInventoryActions(triples, gear);
     }
+
+    /// <summary>
+    /// --dev-equip: equip every item that fits an empty gear slot. --dev-drop NAME: drop the first stack of NAME ("*" = any).
+    /// Each runs once per inventory update and stops when there's nothing left to do.
+    /// </summary>
+    private void DevInventoryActions(int[] triples, int[] gear)
+    {
+        if (_currentKind != InstanceKinds.Hub) return;
+        if (CmdArgs.Has("dev-equip"))
+        {
+            for (int i = 0; i + 2 < triples.Length; i += 3)
+            {
+                var def = Core.Items.ItemCatalog.Get(triples[i + 1]);
+                if (def?.Slot is not { } type || gear[(int)type] >= 0) continue;
+                _session.SendMoveItem((int)Core.Items.ItemContainer.Inventory, triples[i], (int)Core.Items.ItemContainer.Gear, (int)type);
+                return; // one move per update; the next update continues
+            }
+        }
+        if (CmdArgs.Get("dev-drop") is { Length: > 0 } dropName && !_devDropDone)
+        {
+            for (int i = 0; i + 2 < triples.Length; i += 3)
+            {
+                if (dropName != "*" && Core.Items.ItemCatalog.NameOf(triples[i + 1]) != dropName) continue;
+                _devDropDone = true;
+                _session.SendDropItem((int)Core.Items.ItemContainer.Inventory, triples[i]);
+                return;
+            }
+        }
+    }
+
+    private bool _devDropDone;
 
     private void OnDungeonStatus(DungeonStatus status)
     {
@@ -316,6 +370,7 @@ public partial class ClientGame : Node
         _statusLabel.Visible = false;
         InstanceFactory.Build(_main.Instances, instanceId, kind, layoutData, isServer: false);
         _currentInstanceId = instanceId;
+        _currentKind = kind;
         MaterialDebug.Apply(_main.Instances);
         UpdateDebugLabel();
         _loginMenu.Visible = false;
@@ -338,8 +393,13 @@ public partial class ClientGame : Node
                 if (_currentInstanceId == instanceId) _session.SendInteract(DungeonExit.Id);
             };
 
-        // --dev-screenshot PATH: save what the camera sees a few seconds after entering a dungeon, then quit.
-        if (kind == InstanceKinds.Dungeon && CmdArgs.Has("dev-screenshot"))
+        // --dev-screenshot PATH: save what the camera sees a few seconds after arriving, then quit.
+        // --dev-open-inventory: open the inventory screen on arrival (for screenshots).
+        if (CmdArgs.Has("dev-open-inventory") && !_inventory.Visible)
+            GetTree().CreateTimer(0.5).Timeout += () => { if (!_inventory.Visible) _inventory.Toggle(); };
+
+        // In the dungeon when --dev-dungeon is used, otherwise wherever the client arrives.
+        if (CmdArgs.Has("dev-screenshot") && (kind == InstanceKinds.Dungeon || !CmdArgs.Has("dev-dungeon")))
         {
             GetTree().CreateTimer(CmdArgs.GetFloat("dev-screenshot-delay", 3)).Timeout += () =>
             {

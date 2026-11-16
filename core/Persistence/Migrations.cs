@@ -88,6 +88,15 @@ public static class Migrations
                 PRIMARY KEY (run_id, character_id)
             );
             """),
+
+        new(3, "equipment (gear)", Sql: """
+            CREATE TABLE equipment_items (
+                character_id  INTEGER NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+                slot          INTEGER NOT NULL,
+                item_id       INTEGER NOT NULL,
+                PRIMARY KEY (character_id, slot)
+            );
+            """),
     ];
 
     public static int LatestVersion => All.Count;

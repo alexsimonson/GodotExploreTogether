@@ -25,12 +25,19 @@ public partial class ServerGame
         var name = interactionId[ItemPickup.InteractionPrefix.Length..];
         if (!instance.Items.TryGetValue(name, out var item) || s.Inventory == null) return;
 
-        if (s.Inventory.AddItem(item.ItemId) < 0)
+        var added = s.Inventory.AddItems(item.ItemId, item.Count);
+        if (added == 0)
         {
             _session.SendNotice(s.Peer, "Your inventory is full.");
             return;
         }
-        var itemName = ItemCatalog.NameOf(item.ItemId);
+        var itemName = item.Count > 1 ? $"{ItemCatalog.NameOf(item.ItemId)} x{added}" : ItemCatalog.NameOf(item.ItemId);
+        if (added < item.Count)
+        {
+            // Partly fit: leave the rest on the ground.
+            _instances.SpawnItem(instance, item.ItemId, item.Position, item.Count - added);
+            _session.SendNotice(s.Peer, "Your inventory is full; some were left behind.");
+        }
         var isPass = item.ItemId == ItemCatalog.DungeonPassId;
         _instances.RemoveItem(instance, item);
         SendInventory(s);
@@ -135,13 +142,15 @@ public partial class ServerGame
     private void SendInventory(PeerSession s)
     {
         if (s.Inventory == null) return;
-        _session.SendInventory(s.Peer, s.Inventory.Occupied().SelectMany(o => new[] { o.Slot, o.ItemId, o.Count }).ToArray());
+        _session.SendInventory(s.Peer, s.Inventory.Occupied().SelectMany(o => new[] { o.Slot, o.ItemId, o.Count }).ToArray(),
+            s.Gear?.ExportGear() ?? []);
     }
 
-    /// <summary>Saves the inventory, leaving out the Dungeon Pass (it belongs to the dungeon).</summary>
+    /// <summary>Saves the inventory and gear, leaving out the Dungeon Pass (it belongs to the dungeon).</summary>
     private void SaveInventory(PeerSession s)
     {
         if (s.Inventory == null || s.Character == null) return;
         _db.SaveInventory(s.Character.Id, s.Inventory.Occupied().Where(o => o.ItemId != ItemCatalog.DungeonPassId));
+        if (s.Gear != null) _db.SaveGear(s.Character.Id, s.Gear.ExportGear());
     }
 }

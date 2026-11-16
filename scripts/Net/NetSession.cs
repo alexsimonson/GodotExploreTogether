@@ -41,6 +41,8 @@ public partial class NetSession : Node
     public event Action<long, int, int, int>? CreateDungeonRequested;   // width, height, length
     public event Action<long, int>? JoinDungeonRequested;               // instance id
     public event Action<long, int, Vector3, float>? PlayerTransformReceived; // instance id, position, yaw
+    public event Action<long, int, int, int, int>? MoveItemRequested;   // from container, from slot, to container, to slot
+    public event Action<long, int, int>? DropItemRequested;             // container, slot
 
     // ---- Client-side events (the server called us) ----
     public event Action<bool, string, string>? AuthResultReceived;       // ok, code, message
@@ -49,7 +51,7 @@ public partial class NetSession : Node
     public event Action<int, string, int[]>? EnterInstanceReceived;      // instance id, kind, maze layout (dungeons)
     public event Action<List<DungeonSummary>>? DungeonMenuReceived;
     public event Action<string>? NoticeReceived;                         // short message for the HUD
-    public event Action<int[]>? InventoryReceived;                       // (slot, item id, count) triples
+    public event Action<int[], int[]>? InventoryReceived;                // inventory (slot, item id, count) triples; gear item ids (-1 = empty)
     public event Action<DungeonStatus>? DungeonStatusReceived;
 
     // =========================================================== client -> server
@@ -62,6 +64,25 @@ public partial class NetSession : Node
     public void SendInteract(string interactionId) => RpcId(1, MethodName.Interact, interactionId);
     public void SendCreateDungeon(int width, int height, int length) => RpcId(1, MethodName.CreateDungeon, width, height, length);
     public void SendJoinDungeon(int instanceId) => RpcId(1, MethodName.JoinDungeon, instanceId);
+
+    /// <summary>A drag-and-drop between slots (see Core.Items.SlotContainerLogic).</summary>
+    public void SendMoveItem(int fromContainer, int fromSlot, int toContainer, int toSlot) =>
+        RpcId(1, MethodName.MoveItem, fromContainer, fromSlot, toContainer, toSlot);
+
+    /// <summary>Ctrl + right-click: drop a slot's contents into the world.</summary>
+    public void SendDropItem(int container, int slot) => RpcId(1, MethodName.DropItem, container, slot);
+
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void MoveItem(int fromContainer, int fromSlot, int toContainer, int toSlot)
+    {
+        if (Main.IsServer) MoveItemRequested?.Invoke(Multiplayer.GetRemoteSenderId(), fromContainer, fromSlot, toContainer, toSlot);
+    }
+
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void DropItem(int container, int slot)
+    {
+        if (Main.IsServer) DropItemRequested?.Invoke(Multiplayer.GetRemoteSenderId(), container, slot);
+    }
 
     /// <summary>
     /// The owning client's movement. Sent through this node (whose path never changes) with the
@@ -138,8 +159,8 @@ public partial class NetSession : Node
 
     public void SendNotice(long peer, string message) => RpcId(peer, MethodName.Notice, message);
 
-    /// <summary>The player's whole inventory as (slot, item id, count) triples.</summary>
-    public void SendInventory(long peer, int[] triples) => RpcId(peer, MethodName.Inventory, triples);
+    /// <summary>The player's whole inventory as (slot, item id, count) triples, plus gear item ids per slot.</summary>
+    public void SendInventory(long peer, int[] triples, int[] gear) => RpcId(peer, MethodName.Inventory, triples, gear);
 
     public void SendDungeonStatus(long peer, DungeonStatus status) =>
         RpcId(peer, MethodName.DungeonStatusUpdate, status.ExitOpen, status.PassHolder, status.Escaped, status.PlayersInside);
@@ -178,7 +199,7 @@ public partial class NetSession : Node
     private void Notice(string message) => NoticeReceived?.Invoke(message);
 
     [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
-    private void Inventory(int[] triples) => InventoryReceived?.Invoke(triples);
+    private void Inventory(int[] triples, int[] gear) => InventoryReceived?.Invoke(triples, gear);
 
     [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void DungeonStatusUpdate(bool exitOpen, string passHolder, string[] escaped, int playersInside) =>

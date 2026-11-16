@@ -120,6 +120,7 @@ Each phase ends with something runnable.
   - Now each client stops its own player at another's edge and slides it sideways out of any overlap, so it never moves vertically.
   - Trade-off: you can't stand on a teammate's head; that would need server-side resolution.
   - Arrivals are also placed at the nearest free spot. Test with `--dev-chase`.
+- ✅ Inventory & equipment UI ported from the Unity version: a drag-and-drop inventory grid, a 12-slot paper-doll equipment panel, item icons, Ctrl + right-click to drop, and an equipped-weapon readout. Gear is saved (database v3). The server applies the original drop rules. Review notes: `docs/inventory-port-notes.md`. Redesign pending review.
 - ✅ Client: Tab inventory panel, dungeon status in the top-right corner (pass holder, exit state, who escaped, who's inside), notices.
 - ✅ **Done:** two groups at once, headless. In one, a player opened the exit and escaped, a mid-run joiner escaped too, and a third left early, recorded as "completed, 2/3 escaped". In the other, the pass was dropped when its holder left, and the run was recorded as "abandoned". Inventory survives a re-login without the pass. 76 unit tests.
 
