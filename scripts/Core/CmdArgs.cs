@@ -31,6 +31,9 @@ public static class CmdArgs
 
     public static bool Has(string key) => Args.ContainsKey(key);
 
+    /// <summary>Every argument given (without the leading "--").</summary>
+    public static IEnumerable<string> Names => Args.Keys;
+
     public static string Get(string key, string fallback = "") =>
         Args.TryGetValue(key, out var v) && v != "" ? v : fallback;
 

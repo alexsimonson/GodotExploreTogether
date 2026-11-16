@@ -364,7 +364,7 @@ public partial class ClientGame : Node
     {
         _loginMenu.SetBusy(true, _pendingAction == LoginMenu.AuthAction.Login ? "Logging in..." : "Registering...");
         if (_pendingAction == LoginMenu.AuthAction.Login) _session.SendLogin(_username, _password);
-        else _session.SendRegister(_username, _password);
+        else _session.SendRegister(_username, _password, _loginMenu.InviteCode);
     }
 
     private void OnAuthResult(bool ok, string code, string message)

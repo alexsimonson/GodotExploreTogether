@@ -110,6 +110,12 @@ public sealed class GameDatabase : IDisposable
     // ---------------------------------------------------------------- accounts
 
     /// <summary>Creates an account. Returns null if the username is taken (case-insensitive).</summary>
+    public int CountAccounts()
+    {
+        using var cmd = Command("SELECT COUNT(*) FROM accounts;");
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
     public AccountRecord? CreateAccount(string username, string passwordHash)
     {
         using var cmd = Command(

@@ -360,8 +360,13 @@ public partial class ServerGame
         {
             // A city counts as in use while someone is in it or still loading into it.
             var city = _instances.Cities.FirstOrDefault(c =>
-                           c.Players.Count > 0 || _sessions.Values.Any(o => o.PendingInstanceId == c.Id))
-                       ?? CreateCity(s.Character!.Name);
+                           c.Players.Count > 0 || _sessions.Values.Any(o => o.PendingInstanceId == c.Id));
+            if (city == null && _instances.Cities.Count() >= MaxCities)
+            {
+                _session.SendNotice(s.Peer, "The city is busy right now. Try again in a minute.");
+                return;
+            }
+            city ??= CreateCity(s.Character!.Name);
             Save(s, CityReturnPoint); // a later login starts in front of the gate, not inside it
             GD.Print($"[server] '{s.Character!.Name}' goes to city {city.Id}");
             SendToInstance(s, city);

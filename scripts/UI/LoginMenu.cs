@@ -15,6 +15,10 @@ public partial class LoginMenu : CanvasLayer
     private LineEdit _address = null!;
     private LineEdit _username = null!;
     private LineEdit _password = null!;
+    private LineEdit _invite = null!;
+
+    /// <summary>The invite code typed in (only sent when registering; a public server needs one).</summary>
+    public string InviteCode => _invite.Text.StripEdges();
     private Button _login = null!;
     private Button _register = null!;
     private Label _status = null!;
@@ -36,6 +40,10 @@ public partial class LoginMenu : CanvasLayer
         box.AddChild(new Label { Text = "Password" });
         _password = new LineEdit { Secret = true, MaxLength = GameRules.PasswordMax };
         box.AddChild(_password);
+
+        box.AddChild(new Label { Text = "Invite code (to register on a friend's server)" });
+        _invite = new LineEdit { Text = CmdArgs.Get("invite"), PlaceholderText = "leave empty on your own server" };
+        box.AddChild(_invite);
 
         var buttons = new HBoxContainer();
         buttons.AddThemeConstantOverride("separation", 8);

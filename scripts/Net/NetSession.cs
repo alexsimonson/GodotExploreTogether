@@ -34,7 +34,7 @@ public partial class NetSession : Node
 {
     // ---- Server-side events (a client called us). First argument is the sender's peer id. ----
     public event Action<long, string, string>? LoginRequested;          // user, password
-    public event Action<long, string, string>? RegisterRequested;       // user, password
+    public event Action<long, string, string, string>? RegisterRequested; // user, password, invite code
     public event Action<long, string, Color, bool>? CreateCharacterRequested; // name, color, hardcore
     public event Action<long, long>? SelectCharacterRequested;          // character id
     public event Action<long, int>? InstanceReadyReceived;              // instance id
@@ -91,7 +91,7 @@ public partial class NetSession : Node
     // =========================================================== client -> server
 
     public void SendLogin(string user, string password) => RpcId(1, MethodName.Login, user, password);
-    public void SendRegister(string user, string password) => RpcId(1, MethodName.Register, user, password);
+    public void SendRegister(string user, string password, string invite) => RpcId(1, MethodName.Register, user, password, invite);
     public void SendCreateCharacter(string name, Color color, bool hardcore) =>
         RpcId(1, MethodName.CreateCharacter, name, color, hardcore);
     public void SendSelectCharacter(long characterId) => RpcId(1, MethodName.SelectCharacter, characterId);
@@ -208,9 +208,9 @@ public partial class NetSession : Node
     }
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
-    private void Register(string user, string password)
+    private void Register(string user, string password, string invite)
     {
-        if (Accept()) RegisterRequested?.Invoke(Multiplayer.GetRemoteSenderId(), user, password);
+        if (Accept()) RegisterRequested?.Invoke(Multiplayer.GetRemoteSenderId(), user, password, invite);
     }
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]

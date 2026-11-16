@@ -17,6 +17,8 @@ namespace ExploreTogether;
 ///   --connect host[:port]       client: server address for the login screen / auto-login
 ///   --user NAME                 client: dev auto-login as NAME (registers the account if missing)
 ///   --password P                client: password for auto-login (default "devpass")
+///   --invite CODE               client: invite code for registering on a public server (fills the login screen)
+///   --public                    server: reachable from the internet; see ServerGame.Public and docs/DEV-SERVER.md
 ///   --character NAME            client: character to auto-play, created if missing (default: the user name)
 ///   --color COLOR               client: color for an auto-created character ("#3cb043" or "green")
 ///   --dev-quit-after SECONDS    quit automatically (for scripted tests)

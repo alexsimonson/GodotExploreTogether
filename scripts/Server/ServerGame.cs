@@ -64,6 +64,8 @@ public sealed class PeerSession(long peer)
     /// <summary>Health while playing (full again whenever the player reaches the hub).</summary>
     public Core.Combat.Health Health { get; } = new(100);
     public double LastAttackAt { get; set; } = -1000;
+    /// <summary>The address the peer connected from (for per-address limits on a public server).</summary>
+    public string Address { get; init; } = "";
     public double LastGatherAt { get; set; } = -1000;
     /// <summary>Instance the client was told to load and hasn't confirmed yet.</summary>
     public int? PendingInstanceId { get; set; }
@@ -85,7 +87,6 @@ public sealed class PeerSession(long peer)
 /// </summary>
 public partial class ServerGame : Node
 {
-    private const int MaxClients = 64;
     private const double AutosaveSeconds = 15;
     private const string DungeonEntranceId = "dungeon_entrance";
 
@@ -108,6 +109,7 @@ public partial class ServerGame : Node
         var main = GetParent<Main>();
         _session = main.Session;
 
+        if (!CheckPublicPolicy()) return; // --public: refuses to start with dev switches or without an invite code
         var dbPath = ServerPaths.DatabasePath();
         try
         {
@@ -132,7 +134,7 @@ public partial class ServerGame : Node
 
         var port = CmdArgs.GetInt("port", GameInfo.DefaultPort);
         var peer = new ENetMultiplayerPeer();
-        var err = peer.CreateServer(port, MaxClients);
+        var err = peer.CreateServer(port, MaxPlayers);
         if (err != Error.Ok)
         {
             GD.PushError($"[server] failed to listen on port {port}: {err}");
@@ -143,8 +145,9 @@ public partial class ServerGame : Node
         SetUpRequestLimits();
         Multiplayer.PeerConnected += id =>
         {
-            _sessions[id] = new PeerSession(id);
-            GD.Print($"[server] peer {id} connected");
+            var session = _sessions[id] = new PeerSession(id) { Address = AddressOf(id) };
+            GD.Print($"[server] peer {id} connected from {session.Address}");
+            if (!AdmitConnection(session)) return;
         };
         Multiplayer.PeerDisconnected += OnPeerDisconnected;
 
@@ -212,12 +215,14 @@ public partial class ServerGame : Node
         if (!ok)
         {
             _session.SendAuthResult(peer, false, "invalid", "Invalid username or password.");
+            LoginFailed(s, $"failed login as '{username.StripEdges()}'");
             return;
         }
+        LoginSucceeded(s);
         CompleteLogin(s, account!);
     }
 
-    private async void OnRegister(long peer, string username, string password)
+    private async void OnRegister(long peer, string username, string password, string invite)
     {
         if (!_sessions.TryGetValue(peer, out var s) || s.AuthInProgress) return;
         if (s.Account != null)
@@ -225,6 +230,7 @@ public partial class ServerGame : Node
             _session.SendAuthResult(peer, false, "already_logged_in", "Already logged in.");
             return;
         }
+        if (!RegistrationAllowed(s, invite)) return;
 
         username = username.StripEdges();
         var error = GameRules.ValidateUsername(username) ?? GameRules.ValidatePassword(password);
@@ -452,6 +458,11 @@ public partial class ServerGame : Node
         if (!_sessions.TryGetValue(peer, out var s) || !IsNear(s, DungeonEntranceId, out var instance)
             || instance != _instances.Hub) return;
 
+        if (_instances.Dungeons.Count() >= MaxDungeons)
+        {
+            _session.SendNotice(peer, "Too many dungeons are open right now. Join one, or try again later.");
+            return;
+        }
         LeaveHubViaEntrance(s);
         var dungeon = _instances.CreateDungeon(width, height, length, s.Character!.Name);
         var layout = dungeon.Layout!;
@@ -504,6 +515,7 @@ public partial class ServerGame : Node
             LetGoOfBody(leaving, notify: false);
             if (from?.Kind == InstanceKinds.City) OnLeavingCity(leaving, from, connected: false);
         }
+        if (_sessions.TryGetValue(peer, out var gone)) _addressGuard.Disconnected(gone.Address);
         if (_sessions.Remove(peer, out var s))
         {
             if (from?.Kind == InstanceKinds.Dungeon) OnLeavingDungeon(s, from, connected: false);
