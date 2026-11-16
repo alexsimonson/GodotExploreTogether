@@ -33,6 +33,8 @@ See `E:\claude\CLAUDE.md` for the environment setup (the .NET 10 SDK on E:, neve
 - Transforms written by hand in `.tscn` files are **row-major**: `Transform3D(row0, row1, row2, origin)`.
 - After adding or changing assets, run `<godot>_console.exe --headless --path . --import` before headless runs.
 
+- Playing with a friend over the internet (export, Tailscale or port forwarding, firewall): `docs/PLAYING-ONLINE.md`.
+
 ## Conventions
 - The dedicated server is authoritative. Clients send requests; the server validates and broadcasts. Only a client's own movement is client-driven.
 - Files the game writes (database, logs) go to explicit, configurable paths, not hard-coded `user://` (which defaults to C:).

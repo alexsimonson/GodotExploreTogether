@@ -534,6 +534,31 @@ public class ReactionTests
     }
 
     [Fact]
+    public void AHumanShield_MakesPoliceHoldFire_CloseIn_AndGrab()
+    {
+        var w = Start(hour: 10);
+        w.Run(1);
+        // An armed officer who wouldn't risk the shot.
+        var cop = w.Brains.First(b => b.Person.Role == NpcRole.Police && b.Activity == "patrolling" && !(b.Person.Has(NpcTraits.Brave) && b.Person.Id % 3 == 0));
+        cop.HasGun = true;
+        cop.Obstacles = (_, _, _, _, _) => CityNav.Obstacle.None;
+        var (px, pz) = (cop.X - MathF.Sin(cop.Yaw) * 6, cop.Z - MathF.Cos(cop.Yaw) * 6);
+        for (var i = 0; i < 3; i++) cop.Perceive(SeeingPlayer(cop, px, pz, Conduct.Violent, -1), 0.2f, 10);
+        Assert.Equal(Mood.Hostile, cop.Mood);
+        w.Intents.Clear();
+        for (var i = 0; i < 160; i++)
+        {
+            w.Run(0.05);
+            if (i % 4 == 0) cop.Perceive(SeeingPlayer(cop, px, pz, Conduct.Holding | Conduct.Violent, -1), 0.2f, 10);
+        }
+        Assert.DoesNotContain(w.Intents, i => i.Kind == NpcIntentKind.Shoot);
+        Assert.Contains(w.Intents, i => i.Kind == NpcIntentKind.Grab && i.Player == 42);
+        // Grabbing them (which frees the hostage) turns into an arrest.
+        cop.GrabResult(42, true);
+        Assert.Equal("arresting", cop.Activity);
+    }
+
+    [Fact]
     public void ADeadBody_MakesPeopleScream_AndCallThePolice()
     {
         var w = Start(hour: 10);

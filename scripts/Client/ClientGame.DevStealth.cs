@@ -16,7 +16,8 @@ namespace ExploreTogether.Client;
 ///   --dev-breach     walk to three locked doors: kick the first in, pick the second (needs lockpicks), and shoot the
 ///                    third's lock out with a pump shotgun (needs one, and slugs: --dev-starter-kit)
 ///   --dev-trespass   walk into a building where someone is (an office or warehouse at work time) and stay put
-///   --dev-grab       walk up behind a walking resident and grab them; hold on (--dev-strangle: and strangle them)
+///   --dev-grab       walk up behind a walking resident and grab them; hold on (--dev-hit-hostage: strike them once;
+///                    --dev-strangle: then strangle them)
 ///   --dev-struggle   when a resident holds us, mash F to break free
 ///   --dev-upstairs   walk to the nearest building with stairs (kicking the door in if it's locked), climb to its top
 ///                    floor, logging the height reached; with --dev-shots DIR, save screenshots on the way
@@ -24,7 +25,7 @@ namespace ExploreTogether.Client;
 public partial class ClientGame
 {
     private double _devStruggleTimer;
-    private bool _devStrangling;
+    private bool _devStrangling, _devHitHostage;
 
     private void DevStealthStart(int instanceId)
     {
@@ -195,6 +196,13 @@ public partial class ClientGame
             if (!IsInstanceValid(me) || _currentInstanceId != instanceId) return;
             if (_grabState == "holding")
             {
+                if (CmdArgs.Has("dev-hit-hostage") && !_devHitHostage)
+                {
+                    _devHitHostage = true;
+                    GD.Print("[client] dev-grab: striking the hostage");
+                    _session.SendCityAction("hit", "");
+                    await Wait(1.0);
+                }
                 if (CmdArgs.Has("dev-strangle") && !_devStrangling)
                 {
                     _devStrangling = true;

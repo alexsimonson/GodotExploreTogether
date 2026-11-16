@@ -66,10 +66,15 @@ public partial class ClientGame
     private bool HandleStealthInput(InputEvent @event)
     {
         if (_currentKind != InstanceKinds.City || _dungeonMenu.Visible || Input.MouseMode != Input.MouseModeEnum.Captured) return false;
-        // Holding someone: the attack button strangles while held down.
+        // Holding someone: the attack button strangles while held down; right-click strikes them.
         if (_grabState == "holding" && @event is InputEventMouseButton { ButtonIndex: MouseButton.Left } strangle)
         {
             _session.SendCityAction("strangle", strangle.Pressed ? "1" : "0");
+            return true;
+        }
+        if (_grabState == "holding" && @event is InputEventMouseButton { ButtonIndex: MouseButton.Right, Pressed: true })
+        {
+            _session.SendCityAction("hit", "");
             return true;
         }
         if (@event.IsActionPressed(InputSetup.Grab))

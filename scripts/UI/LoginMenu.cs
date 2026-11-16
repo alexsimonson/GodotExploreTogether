@@ -25,7 +25,8 @@ public partial class LoginMenu : CanvasLayer
         box.AddChild(UiKit.Title(GameInfo.Name));
 
         box.AddChild(new Label { Text = "Server address" });
-        _address = new LineEdit { Text = $"127.0.0.1:{CmdArgs.GetInt("port", GameInfo.DefaultPort)}" };
+        // --connect ADDRESS pre-fills it (e.g. a shortcut for a friend's server).
+        _address = new LineEdit { Text = CmdArgs.Get("connect", $"127.0.0.1:{CmdArgs.GetInt("port", GameInfo.DefaultPort)}") };
         box.AddChild(_address);
 
         box.AddChild(new Label { Text = "Username" });

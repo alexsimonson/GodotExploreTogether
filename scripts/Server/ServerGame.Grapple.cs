@@ -49,6 +49,9 @@ public partial class ServerGame
                 s.Strangling = target == "1" && s.HoldingNpc != null;
                 if (!s.Strangling && s.StrangleProgress <= 0) _session.SendProgress(peer, "", 0);
                 break;
+            case "hit":
+                HitHostage(s, found.Instance);
+                break;
             case "struggle":
                 if (s.HeldByNpc != null) Struggle(s, found.Instance);
                 break;
@@ -90,6 +93,7 @@ public partial class ServerGame
         _session.SendGrabState(s.Peer, "holding", npc.NetName);
         _session.SendNotice(s.Peer, surprised ? $"You grab {npc.NetName} from behind. Hold left mouse to strangle, F to let go."
                                               : $"You grab {npc.NetName}! They're struggling. Hold left mouse to strangle, F to let go.");
+        _session.SendNotice(s.Peer, "Right-click to strike them (they'll stop struggling). Left mouse: strangle. F: let go.");
         GD.Print($"[server] '{s.Character!.Name}' grabs {npc.NetName} ({npc.Role}, grit {npc.Brain.Person.Grit:0.00})" +
                  (surprised ? " from behind" : ""));
     }
@@ -179,12 +183,56 @@ public partial class ServerGame
         {
             s.NextEscapeRoll = now + 1;
             var chance = Breaching.EscapeChancePerSecond(grit, s.HoldingSurprised);
+            var cowed = now < s.HostageCowedUntil;
+            if (cowed) chance *= Breaching.CowedEscapeFactor;
             if (s.Strangling) chance = Breaching.EscapeWhileStrangled(chance, s.StrangleProgress);
             if (npc.Brain.Frozen) chance = 0; // frozen stiff
             if (_combatRandom.NextDouble() < chance) LetGoOfResident(s, escaped: true, notify: true);
-            else if (!s.HoldingSurprised && !s.Strangling && _combatRandom.NextDouble() < 0.5)
+            else if (!s.HoldingSurprised && !s.Strangling && !cowed && _combatRandom.NextDouble() < 0.5)
                 EmitNoise(city, new Noise(want.X, want.Z, Stealth.ShoutRadius, "shout", Severity.Crime, s.Peer, want.Y));
         }
+    }
+
+    /// <summary>
+    /// Right-click while holding someone: strike them with what you hold (the butt of a gun, your weapon, your fists).
+    /// A blunt weapon knocks them out; otherwise they're hurt and cowed for a while: silent, and they hardly try to get
+    /// away. Anyone watching sees violence.
+    /// </summary>
+    private void HitHostage(PeerSession s, ServerInstance city)
+    {
+        if (s.HoldingNpc is not { } name || !city.Npcs.TryGetValue(name, out var npc) || npc.IsDown) return;
+        if (Now - s.LastAttackAt < 0.8) return;
+        s.LastAttackAt = Now;
+        s.LastViolentAt = Now;
+        var p = _instances.FindPlayer(s.Peer)!.Value.Player.NetPosition;
+        var weapon = s.Gear?.EquippedWeapon;
+        EmitNoise(city, new Noise(npc.Position.X, npc.Position.Z, 8, "fight", Severity.Violent, s.Peer, p.Y));
+        if (weapon is { KnocksOut: true })
+        {
+            LetGoOfResident(s, escaped: false, notify: true);
+            npc.Brain.Attacked(s.Peer, p.X, p.Z, p.Y, s.HoldingSurprised ? null : LookOf(s, _instances.FindPlayer(s.Peer)!.Value.Player), 1);
+            npc.KnockOut(WakeSeconds);
+            _session.SendNotice(s.Peer, $"You knock {npc.NetName} out cold.");
+            GD.Print($"[server] '{s.Character!.Name}' knocks out the hostage {npc.NetName} with {weapon.Name}");
+            return;
+        }
+        var damage = weapon switch
+        {
+            { Class: ItemClass.Gun } => 8,
+            { Class: ItemClass.Melee or ItemClass.Tool } => 12,
+            _ => 5,
+        };
+        var killed = npc.TakeDamage(damage);
+        GD.Print($"[server] '{s.Character!.Name}' strikes the hostage {npc.NetName} with {weapon?.Name ?? "fists"} for {damage}" +
+                 (killed ? ", killed" : $" ({npc.NetHealth} left)"));
+        if (killed)
+        {
+            _session.SendNotice(s.Peer, $"{npc.NetName} goes limp.");
+            return; // TickHolding lets go of the body
+        }
+        s.HostageCowedUntil = Now + Breaching.CowedSeconds;
+        npc.Brain.Cowed();
+        _session.SendNotice(s.Peer, $"{npc.NetName} stops struggling.");
     }
 
     // ------------------------------------------------------------------ residents holding players

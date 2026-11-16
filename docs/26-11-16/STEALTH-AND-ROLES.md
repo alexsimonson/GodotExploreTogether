@@ -9,6 +9,7 @@ What was built for [TODO.md](TODO.md) (items 0 to 4) and the follow-ups that cam
 | C (hold) | Crouch: slow (2.4 m/s), quiet, harder to see |
 | F | Grab the resident you're looking at; F again lets go. When a resident holds you: mash F to break free |
 | Left mouse (hold, while holding someone) | Strangle them until they're subdued |
+| Right-click (while holding someone) | Strike them: they stop struggling for a while |
 | K | Kick the door you're looking at (from outside) |
 | L | Lock/unlock with a key or from inside. Without the key, with a lockpick: hold to pick (let go to stop) |
 | Left click (shotgun) | A slug through a door's deadbolt from within 6 m destroys the lock |
@@ -60,6 +61,10 @@ Watch → Confront (warning, about 9 s to comply) → Alarmed:
 
 - **You grab a resident** (within 1.8 m): they're pulled along in front of you. Each second they may break free, with a chance of 5% + 30% × grit. That chance is halved if you grabbed them from behind while they were unaware, and then they can't shout either.
 - **Strangling** (hold left mouse while holding someone): a meter fills over 3.5–6.5 s (by grit, 15% quicker on a surprised victim). When it's full they're subdued (unconscious, like a knockout). They can't cry out while strangled. Their escape chance starts at 140% of normal and fades to 10% as they black out. Ease off and the meter drains 15% a second. Witnesses see an attack. Victims remember you when they come round.
+- **Human shields**: holding someone puts them between you and anyone in front of you.
+  - Residents' bullets hit whatever is first in their way: a hostage, a passer-by, or another player. Blows aimed at you can land on the hostage too.
+  - Police mostly hold fire at someone holding a hostage. They shout ("Let them go!"), close in and grab, which frees the hostage, then arrest. Only some brave officers within 8 m risk a careful shot.
+  - Right-click while holding someone strikes them with what you hold (gun butt 8, weapon 12, fists 5; a blunt weapon knocks them out). A struck hostage is cowed for 10 s: silent, and only a fifth as likely to wriggle free.
 - **A resident grabs you**: you can move at most 0.8 m/s (enforced by the server), and you're pulled back if you get more than 1.4 m from them. Each F press is worth 1 / (6 + 9 × their grit), so 6 to 15 presses break you free.
 
 ## Breaking in (`Breaching`, `CityDoors`, `ServerGame.Grapple`)

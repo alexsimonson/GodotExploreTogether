@@ -525,6 +525,14 @@ public sealed partial class CityNpcBrain
         Mood = Mood.Alarmed;
     }
 
+    /// <summary>Struck by whoever holds them: they give in for now.</summary>
+    public void Cowed()
+    {
+        if (!Held || IsDown) return;
+        Say(Pick("Okay! Okay! Don't hurt me!", "Please... I'll do what you want.", "Ow! Stop, stop!"));
+        Activity = "cowering";
+    }
+
     /// <summary>A held resident moves where they're pulled.</summary>
     public void MoveHeld(float x, float z, float yaw, float y = 0)
     {
@@ -552,8 +560,9 @@ public sealed partial class CityNpcBrain
     public void GrabResult(long player, bool held)
     {
         _grabPendingUntil = 0;
-        if (_act != Act.Arrest || player != _target) return;
+        if (_act is not (Act.Arrest or Act.Attack) || player != _target) return; // attackers grab hostage-takers too
         if (!held) return;
+        if (_act == Act.Attack) _detainOnly = Person.Role != NpcRole.Police;
         _act = Act.Holding;
         _actStarted = _clockSeconds;
         _route.Clear();
@@ -869,6 +878,27 @@ public sealed partial class CityNpcBrain
                 if (sus.Visible && _lookingSince >= 0) { _lookingSince = -1; Activity = "fighting"; Say(Pick("There!", "Got eyes on them!")); }
                 var dt = Dist(sus.X, sus.Z, X, Z);
                 WeaponOut = true;
+                if (sus.Visible && (sus.Conduct & Conduct.Holding) != 0 && !TakesTheShot(dt))
+                {
+                    // A human shield: hold fire. Close in and grab them instead (that frees the hostage).
+                    if (now >= _nextAttack)
+                    {
+                        _nextAttack = now + 3 + _random.NextDouble() * 2;
+                        Say(Pick("Let them go!", "Drop them, now!", "Nobody needs to get hurt. Let them go.", "Hold your fire, there's a hostage!"));
+                    }
+                    if (dt > Breaching.GrabReach) GoTo(sus.X, sus.Z, sus.Floor);
+                    else
+                    {
+                        StandStill();
+                        FaceToward(sus.X, sus.Z);
+                        if (now >= _grabPendingUntil)
+                        {
+                            _grabPendingUntil = now + 0.6;
+                            Emit(new NpcIntent(NpcIntentKind.Grab, _target));
+                        }
+                    }
+                    break;
+                }
                 if (HasGun)
                 {
                     if (!sus.Visible || dt > 18) GoTo(sus.X, sus.Z, sus.Floor);
@@ -977,6 +1007,13 @@ public sealed partial class CityNpcBrain
         }
         UpdateMood();
     }
+
+    /// <summary>
+    /// Someone holding a hostage in front of them: only a brave police officer, close by (under 8 m), risks a careful
+    /// shot (and the hostage may still take it). Everyone else holds fire.
+    /// </summary>
+    private bool TakesTheShot(float distance) =>
+        HasGun && Person.Role == NpcRole.Police && Brave && distance < 8 && Person.Id % 3 == 0;
 
     /// <summary>
     /// The one they're after is out of sight: run to where they were last seen, then stop and look around; still

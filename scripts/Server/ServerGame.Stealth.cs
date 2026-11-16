@@ -365,22 +365,40 @@ public partial class ServerGame
         var light = LightAt(city, target.X, target.Z);
         var chance = Mathf.Clamp(0.85f - d * 0.018f - (1 - light) * 0.3f - (s.SampledSpeed > 5.5f ? 0.15f : 0)
                                  - (player.NetCrouching ? 0.05f : 0) + (gun.Breaches && d < 8 ? 0.1f : 0), 0.1f, 0.92f);
-        var hitPlayer = _combatRandom.NextDouble() < chance;
-        var aim = hitPlayer ? target : target + new Vector3((float)_combatRandom.NextDouble() - 0.5f, (float)_combatRandom.NextDouble() - 0.3f, (float)_combatRandom.NextDouble() - 0.5f) * 2.5f;
-        var end = from + (aim - from).Normalized() * Mathf.Max(d + 6, 10);
-        var wall = player.GetWorld3D().DirectSpaceState.IntersectRay(PhysicsRayQueryParameters3D.Create(from, aim, collisionMask: 1));
-        if (wall.Count > 0)
-        {
-            hitPlayer = false;
-            end = (Vector3)wall["position"];
-        }
-        else if (hitPlayer) end = target;
+        if (s.HoldingNpc != null) chance *= 0.7f; // a careful shot past a hostage
+        var onTarget = _combatRandom.NextDouble() < chance;
+        var aim = onTarget ? target : target + new Vector3((float)_combatRandom.NextDouble() - 0.5f, (float)_combatRandom.NextDouble() - 0.3f, (float)_combatRandom.NextDouble() - 0.5f) * 2.5f;
+        // The bullet hits whatever is first in its way: a wall, a player (not always the one aimed at), or a person
+        // (a hostage held in front of the target, a passer-by).
+        var dir = (aim - from).Normalized();
+        var hitbox = npc.GetNode<Dungeon.Interactable>("Hitbox").GetRid();
+        var hit = player.GetWorld3D().DirectSpaceState.IntersectRay(PhysicsRayQueryParameters3D.Create(
+            from, from + dir * (d + 8), collisionMask: 1 | 2 | 8, exclude: [hitbox]));
+        var end = hit.Count > 0 ? (Vector3)hit["position"] : from + dir * (d + 8);
         foreach (var other in city.Players.Keys) _session.SendShot(other, from, end);
         EmitNoise(city, new Noise(from.X, from.Z, gun.Breaches ? Stealth.ShotgunRadius : Stealth.GunshotRadius, "gunshot", Severity.Violent, Y: npc.Position.Y));
         var damage = NpcDamage(gun, d);
-        GD.Print($"[server] {npc.NetName} ({npc.Role}) fires {gun.Name} at '{s.Character!.Name}' from {d:0.0} m: " +
-                 (hitPlayer ? $"hit for {damage}" : "miss") + $" ({chance:P0})");
-        if (hitPlayer) HurtPlayerByResident(city, s, npc, damage);
+        var outcome = "miss";
+        var collider = hit.Count > 0 ? hit["collider"].AsGodotObject() : null;
+        if (collider is PlayerCharacter shot && _sessions.TryGetValue(shot.OwnerPeerId, out var victim) && !victim.Health.IsDead)
+        {
+            outcome = victim == s ? $"hit for {damage}" : $"hit '{victim.Character?.Name}' instead, for {damage}";
+            HurtPlayerByResident(city, victim, npc, damage);
+        }
+        else if (collider is Node { } body && body.GetParent() is CityNpc person && !person.NetDead)
+        {
+            outcome = $"hit {(person.HeldBy != 0 ? "the hostage " : "")}{person.NetName} instead, for {damage}";
+            HurtResidentByResident(npc, person, damage);
+        }
+        GD.Print($"[server] {npc.NetName} ({npc.Role}) fires {gun.Name} at '{s.Character!.Name}' from {d:0.0} m: {outcome} ({chance:P0})");
+    }
+
+    /// <summary>A resident's shot or blow lands on another resident (a hostage, a passer-by).</summary>
+    private void HurtResidentByResident(CityNpc attacker, CityNpc victim, int damage)
+    {
+        var killed = victim.TakeDamage(damage);
+        GD.Print($"[server] {victim.NetName} ({victim.Role}) is hit by {attacker.NetName} for {damage} ({victim.NetHealth} left)" +
+                 (killed ? ", killed" : ""));
     }
 
     /// <summary>A resident hits a player within arm's reach (fists, a club, a blade, or a gun's butt).</summary>
@@ -391,6 +409,19 @@ public partial class ServerGame
         if (d > 2.3f || Mathf.Abs(player.NetPosition.Y - npc.Position.Y) > 1.5f) return;
         var weapon = npc.Gear.EquippedWeapon;
         var damage = weapon is { Class: ItemClass.Gun } ? 8 : NpcDamage(weapon, d);
+        // Swinging at someone holding a hostage in front of them: the blow may land on the hostage.
+        if (s.HoldingNpc is { } held && city.Npcs.TryGetValue(held, out var hostage) && !hostage.IsDown)
+        {
+            float fx = -Mathf.Sin(player.NetYaw), fz = -Mathf.Cos(player.NetYaw);
+            float ax = npc.Position.X - player.NetPosition.X, az = npc.Position.Z - player.NetPosition.Z;
+            if (fx * ax + fz * az > 0 && _combatRandom.NextDouble() < 0.6)
+            {
+                EmitNoise(city, new Noise(npc.Position.X, npc.Position.Z, Stealth.FightRadius, "fight", Severity.Violent, Y: npc.Position.Y));
+                GD.Print($"[server] {npc.NetName} ({npc.Role}) swings at '{s.Character!.Name}' and hits the hostage {hostage.NetName}");
+                HurtResidentByResident(npc, hostage, damage);
+                return;
+            }
+        }
         EmitNoise(city, new Noise(npc.Position.X, npc.Position.Z, Stealth.FightRadius, "fight", Severity.Violent, Y: npc.Position.Y));
         GD.Print($"[server] {npc.NetName} ({npc.Role}) hits '{s.Character!.Name}' with {weapon?.Name ?? "fists"} for {damage}");
         HurtPlayerByResident(city, s, npc, damage);

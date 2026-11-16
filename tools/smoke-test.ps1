@@ -283,7 +283,7 @@ $Scenarios = [ordered]@{
         Clients = [ordered]@{
             Kermit    = @('--dev-city', '--dev-trespass', '--dev-quit-after', '80')
             Blueberry = @('--dev-city', '--dev-weapon', 'Pistol', '--dev-shoot-air', '--dev-shoot-delay', '4', '--dev-quit-after', '85')
-            Grape     = @('--dev-city', '--dev-grab', '--dev-strangle', '--dev-quit-after', '90')
+            Grape     = @('--dev-city', '--dev-grab', '--dev-hit-hostage', '--dev-strangle', '--dev-quit-after', '90')
         }
         Checks = {
             Expect Kermit 'dev-trespass: walking into ' 'Kermit heads into an occupied building'
@@ -293,6 +293,7 @@ $Scenarios = [ordered]@{
             Expect server 'responding' 'police respond to a report'
             Expect server "noise in city 2: gunshot" "Blueberry's gunfire is heard across the city"
             Expect server "'Grape' grabs .*\((Civilian|Worker)" 'Grape grabs a resident'
+            Expect server "'Grape' strikes the hostage .* with fists for 5" 'and strikes them (they give in)'
             Expect server "('Grape' strangles .* unconscious|breaks free from 'Grape')" 'Grape strangles them unconscious, or they wriggle free'
             Expect server "(fires .* at|hits|grabs) '(Kermit|Blueberry|Grape)'" 'residents fight back or grab a player'
             Expect server "arrests '(Kermit|Blueberry|Grape)'" 'the police arrest someone'

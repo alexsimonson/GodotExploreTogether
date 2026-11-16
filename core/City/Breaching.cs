@@ -66,6 +66,11 @@ public static class Breaching
     public static float EscapeWhileStrangled(float chance, float progress) =>
         chance * MathF.Max(0.1f, 1.4f - 1.3f * Math.Clamp(progress, 0, 1));
 
+    /// <summary>A hostage struck by whoever holds them is cowed this long: no shouting, and they hardly try to get free.</summary>
+    public const float CowedSeconds = 10f;
+    /// <summary>A cowed hostage's chance of wriggling free is this fraction of the usual.</summary>
+    public const float CowedEscapeFactor = 0.2f;
+
     /// <summary>Held by police this long: arrested.</summary>
     public const float ArrestSeconds = 5f;
 
