@@ -3,11 +3,13 @@ rem Starts a local dedicated server (console window) and N client windows (defau
 rem Usage: tools\dev-run.cmd [clientCount] [server args...]
 rem   e.g. tools\dev-run.cmd 1 --city-favor MyHouse --city-seed 3
 setlocal
+rem The script folder, saved before the argument loop below (shift would change %0).
+set "TOOLS=%~dp0"
 set "COUNT=%~1"
 if "%COUNT%"=="" set "COUNT=2"
 set "SERVER_ARGS="
 :collect_args
-shift
+shift /1
 if "%~1"=="" goto args_done
 set "SERVER_ARGS=%SERVER_ARGS% %1"
 goto collect_args
@@ -16,7 +18,7 @@ goto collect_args
 set "GODOT_DIR=E:\Godot Install\Godot_v4.7.2-stable_mono_win64"
 set "GODOT=%GODOT_DIR%\Godot_v4.7.2-stable_mono_win64.exe"
 set "GODOT_CONSOLE=%GODOT_DIR%\Godot_v4.7.2-stable_mono_win64_console.exe"
-set "PROJECT=%~dp0.."
+set "PROJECT=%TOOLS%.."
 
 rem Keep everything off C: (see E:\claude\CLAUDE.md).
 set "DOTNET_ROOT=E:\claude\tools\dotnet"
@@ -26,7 +28,7 @@ set "TMP=E:\claude\_tmp"
 set "APPDATA=E:\claude\_appdata"
 
 rem Close any previous dev session first.
-call "%~dp0dev-stop.cmd"
+call "%TOOLS%dev-stop.cmd"
 
 rem Build C# first so every process loads the latest code.
 dotnet build "%PROJECT%\ExploreTogether.csproj" -nologo -v q || exit /b 1
