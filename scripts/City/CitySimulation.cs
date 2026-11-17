@@ -107,6 +107,13 @@ public partial class CitySimulation : Node
         Apply(brain, node);
     }
 
+    /// <summary>Takes a resident out of the simulation (their body is gone: see ZombieLayer, rising).</summary>
+    public void Remove(CityNpc node)
+    {
+        _npcs.RemoveAll(n => n.Node == node);
+        _crowd.Remove(node.Brain);
+    }
+
     public override void _PhysicsProcess(double delta)
     {
         _accumulator += delta;

@@ -295,8 +295,13 @@ public partial class PlayerCharacter : CharacterBody3D
             foreach (var e in enemies.GetChildren().OfType<Enemies.EnemyCharacter>())
                 if (!e.IsDead) yield return (e, BodyRadius + Enemies.EnemyCharacter.Radius);
         if (instance?.GetNodeOrNull("Npcs") is { } npcs)
+        {
             foreach (var n in npcs.GetChildren().OfType<City.CityNpc>())
                 if (!n.IsDown) yield return (n, BodyRadius + Core.City.CityCrowd.NpcRadius);
+            // Creatures added by layers (zombies...).
+            foreach (var b in npcs.GetChildren().OfType<ISolidBody>())
+                if (b.Solid && b is Node3D node) yield return (node, BodyRadius + b.Radius);
+        }
     }
 
     /// <summary>Horizontal offset from another body and whether we overlap it vertically.</summary>

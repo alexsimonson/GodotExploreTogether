@@ -140,7 +140,7 @@ public sealed partial class CityNpcBrain
         if (IsDown) return;
         (_crowd, _doors) = (crowd, crowd?.Doors);
         if (Held) return;
-        if (Frozen)
+        if (Frozen || _clockSeconds < _bracedUntil)
         {
             Moving = false;
             return;

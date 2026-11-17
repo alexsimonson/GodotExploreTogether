@@ -89,6 +89,7 @@ public static class InstanceFactory
         container.AddChild(npcs);
         var npcSpawner = new MultiplayerSpawner { Name = "NpcSpawner", SpawnPath = new NodePath("../Npcs") };
         npcSpawner.AddSpawnableScene(NpcScenePath);
+        npcSpawner.AddSpawnableScene(Zombies.ZombieNpc.ScenePath); // only spawned in cities made with zombies
         container.AddChild(npcSpawner);
 
         return new InstanceNodes(container, level, players, items, enemies, resources, npcs);

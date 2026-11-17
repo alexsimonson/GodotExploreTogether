@@ -28,6 +28,7 @@ See `E:\claude\CLAUDE.md` for the environment setup (the .NET 10 SDK on E:, neve
   - Stealth and breaking in (see `docs/26-11-16/STEALTH-AND-ROLES.md`): server `--dev-oblivious` (residents ignore players); clients `--dev-breach` (kick, pick and shoot out three locked doors; needs `--dev-starter-kit`), `--dev-trespass` (walk into an occupied building), `--dev-grab` (grab a passer-by), `--dev-struggle` (mash free when held), `--dev-shoot-air [--dev-shoot-delay S]`, `--dev-upstairs [--dev-shots DIR]` (climb to a top floor, screenshots on the way). Smoke scenarios `breach`, `floors`, `stealth`.
   - The server validates player movement (`MoveGuard`, wall rays): dev automation must walk for real (`PlayerCharacter.DevWalkTarget`), not teleport.
   - Furniture, power, hotbar, flashlight: client `--dev-chair` (take the nearest chair, hold it), `--dev-power` (fuse box, street lamp, light switch, substation, main breaker; needs a pistol and `--dev-skip-proximity`), `--dev-hotbar` (bind and use keys, then the flashlight and the two-hands rule).
+  - Zombies (optional layer, off by default): server `--city-zombies N` (the City Gate menu's default), `--dev-zombies-near-start`, `--dev-log-zombies`. Core logic in `core/Zombies/`, the layer in `scripts/Zombies/`, server wiring only in `ServerGame.Zombies.cs`. Smoke scenarios `zombies`, `zombieguns`.
   - Gathering/storage: client `--dev-weapon Axe --dev-gather N` (chop the hub trees until carrying N logs, then store them; needs the server's `--dev-skip-proximity --dev-starter-kit`).
   - Screenshots without disturbing the user: a windowed client with `--resolution 800x450 --position -3000,100` plus `--dev-camera YAW,PITCH --dev-screenshot E:\claude\_tmp\shots\x.png`, then view the PNG.
 - Dungeon pieces: regenerate with `python -I tools/import_unity_dungeon.py E:/claude/_reference/ExploreTogether`, then re-import.
@@ -38,6 +39,7 @@ See `E:\claude\CLAUDE.md` for the environment setup (the .NET 10 SDK on E:, neve
 - Playing with a friend over the internet (export, Tailscale or port forwarding, firewall): `docs/PLAYING-ONLINE.md`.
 
 ## Conventions
+- Rapid prototyping with reusable parts: build features as discrete, toggleable layers on top of existing systems (see Zombies, the power grid). A feature that's off must not change anything else. Core logic stays Godot-free and unit-tested; layers plug in through generic hooks (`IHittable`, `ISolidBody`, `ServerInstance.LayerSyncs`/`NoiseEmitted`, `CityNpcBrain.Threatened`) rather than edits to the systems they sit on.
 - The dedicated server is authoritative. Clients send requests; the server validates and broadcasts. Only a client's own movement is client-driven.
 - Files the game writes (database, logs) go to explicit, configurable paths, not hard-coded `user://` (which defaults to C:).
 - Target framework: net10.0.

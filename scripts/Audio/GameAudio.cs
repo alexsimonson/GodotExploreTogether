@@ -79,6 +79,10 @@ public partial class GameAudio : Node
         SoundId.Breaker => ("breaker", -4, 0.05f, 12),
         SoundId.Sparks => ("sparks", 0, 0.05f, 40),
         SoundId.MainBreaker => ("main_breaker", 2, 0, 50),
+        SoundId.ZombieGroan => ("zombie_groan", -2, 0.15f, 30),
+        SoundId.ZombieBite => ("zombie_bite", -1, 0.1f, 20),
+        SoundId.ZombieDeath => ("zombie_death", 0, 0.1f, 35),
+        SoundId.ZombieBash => ("zombie_bash", 0, 0.1f, 50),
         _ => ("", 0, 0, 0),
     };
 

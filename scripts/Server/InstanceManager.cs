@@ -37,6 +37,8 @@ public sealed class ServerInstance
     public List<Noise> Noises { get; } = new();
     /// <summary>The city's electricity, fuse boxes, light switches and broken lights (see Core.City.CityPower).</summary>
     public CityPower? Power { get; set; }
+    /// <summary>The city's zombies, if it was made with any (null otherwise: the layer only exists when used).</summary>
+    public Zombies.ZombieLayer? Zombies { get; set; }
     /// <summary>Chairs and stools someone has picked up (furniture ids): gone for the rest of the city's life.</summary>
     public HashSet<int> TakenFurniture { get; } = new();
     /// <summary>Cities only: recent calls to the police (so ten witnesses don't send ten officers).</summary>
@@ -68,7 +70,15 @@ public sealed class ServerInstance
             .Concat(Items.Values.Select(i => i.Sync))
             .Concat(Enemies.Values.Select(e => e.Sync))
             .Concat(Resources.Values.Select(r => r.Sync))
-            .Concat(Npcs.Values.Select(n => n.Sync));
+            .Concat(Npcs.Values.Select(n => n.Sync))
+            .Concat(LayerSyncs);
+
+    /// <summary>Synchronizers of things added by layers (zombies...): shown to the peers inside like everything else.</summary>
+    public List<MultiplayerSynchronizer> LayerSyncs { get; } = new();
+
+    /// <summary>Every noise made in the instance (a city), for layers that listen (zombies come to gunfire).</summary>
+    public event Action<Noise>? NoiseEmitted;
+    public void OnNoise(Noise noise) => NoiseEmitted?.Invoke(noise);
 }
 
 /// <summary>

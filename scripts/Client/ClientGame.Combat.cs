@@ -32,6 +32,23 @@ public partial class ClientGame
     private Vector3 _aimSentPoint;
     private double _devFightTimer;
 
+    /// <summary>Dev: the nearest standing zombie within 40 m with nothing in between (null in cities without them).</summary>
+    private static Node3D? DevVisibleZombie(PlayerCharacter me, Node? container)
+    {
+        var space = me.GetWorld3D().DirectSpaceState;
+        var head = me.GlobalPosition + new Vector3(0, 1.6f, 0);
+        return container?.GetNodeOrNull("Npcs")?.GetChildren().OfType<Zombies.ZombieNpc>()
+            .Where(z => z.State is not (Core.Zombies.ZombieState.Dead or Core.Zombies.ZombieState.Down)
+                        && z.GlobalPosition.DistanceTo(me.GlobalPosition) < 40)
+            .OrderBy(z => z.GlobalPosition.DistanceTo(me.GlobalPosition))
+            .FirstOrDefault(z =>
+            {
+                var hit = space.IntersectRay(PhysicsRayQueryParameters3D.Create(head, z.GlobalPosition + Vector3.Up * 1.6f, collisionMask: 1 | 8,
+                    exclude: [me.GetRid()]));
+                return hit.Count > 0 && hit["collider"].AsGodotObject() is Node c && c.GetParent() == z;
+            });
+    }
+
     /// <summary>Dev: the nearest living city resident within 120 m with nothing in between.</summary>
     private static Node3D? DevVisibleResident(PlayerCharacter me, Node? container)
     {
@@ -260,8 +277,9 @@ public partial class ClientGame
 
         if (EquippedWeapon?.Class == ItemClass.Gun && _magazine == 0) { _session.SendReload(); return; }
         var container = _main.Instances.GetNodeOrNull(InstanceFactory.NodeName(_currentInstanceId!.Value));
+        var zombie = _currentKind == InstanceKinds.City ? DevVisibleZombie(me, container) : null;
         Node3D? target = _currentKind == InstanceKinds.City
-            ? DevVisibleResident(me, container)
+            ? zombie ?? DevVisibleResident(me, container)
             : container?.GetNodeOrNull("Enemies")?.GetChildren().OfType<EnemyCharacter>()
                 .Where(e => !e.IsDead).OrderBy(e => e.GlobalPosition.DistanceTo(me.GlobalPosition)).FirstOrDefault();
         if (target == null) return;
@@ -272,7 +290,9 @@ public partial class ClientGame
 
         // Aim from the head: at the enemy's chest, or at its feet for magic (the area lands on the floor).
         var head = me.GlobalPosition + new Vector3(0, 1.6f, 0);
-        var aimAt = target.GlobalPosition + new Vector3(0, EquippedWeapon?.Class == ItemClass.Magic ? 0.05f : 1.0f, 0);
+        // A zombie: guns go for the head (that's what stops them).
+        var height = EquippedWeapon?.Class == ItemClass.Magic ? 0.05f : zombie != null && EquippedWeapon?.Class == ItemClass.Gun ? 1.6f : 1.0f;
+        var aimAt = target.GlobalPosition + new Vector3(0, height, 0);
         var dir = (aimAt - head).Normalized();
         me.LookAt(new Vector3(target.GlobalPosition.X, me.GlobalPosition.Y, target.GlobalPosition.Z));
         _session.SendAttack(dir);

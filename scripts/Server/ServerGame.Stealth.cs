@@ -81,6 +81,7 @@ public partial class ServerGame
     {
         if (city.Kind != Net.InstanceKinds.City) return;
         city.Noises.Add(noise);
+        city.OnNoise(noise);
         PlaySound(city, NoiseSound(noise), new Vector3(noise.X, noise.Y + 1.2f, noise.Z));
         if (noise.Severity >= Severity.Crime || noise.Radius >= Stealth.KickRadius)
             GD.Print($"[server] noise in city {city.Id}: {noise.Cause} at ({noise.X:0}, {noise.Z:0}), heard within {noise.Radius:0} m");

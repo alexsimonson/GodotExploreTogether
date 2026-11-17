@@ -18,7 +18,7 @@ public partial class CityMenu : CanvasLayer
     public event Action? Closed;
 
     private VBoxContainer _list = null!;
-    private SpinBox _size = null!, _hour = null!, _people = null!, _dayMinutes = null!, _seed = null!;
+    private SpinBox _size = null!, _hour = null!, _people = null!, _dayMinutes = null!, _seed = null!, _zombies = null!;
     private Label _peopleHint = null!;
 
     public override void _Ready()
@@ -40,6 +40,7 @@ public partial class CityMenu : CanvasLayer
         _people = AddSpin(grid, "People (0 = automatic)", 0, 1000, 0, 1);
         _dayMinutes = AddSpin(grid, "Real minutes per day", 1, 1440, 48, 1);
         _seed = AddSpin(grid, "Seed (0 = random)", 0, int.MaxValue, 0, 1);
+        _zombies = AddSpin(grid, "Zombies (0 = none)", 0, 200, 0, 1);
         box.AddChild(grid);
         _peopleHint = new Label { Modulate = new Color(1, 1, 1, 0.6f) };
         box.AddChild(_peopleHint);
@@ -56,7 +57,7 @@ public partial class CityMenu : CanvasLayer
         box.AddChild(buttons);
 
         create.Pressed += () => CreateRequested?.Invoke(new CitySettings((int)_size.Value, (float)_hour.Value,
-            (int)_people.Value > 0 ? (int)_people.Value : -1, (float)_dayMinutes.Value, (int)_seed.Value));
+            (int)_people.Value > 0 ? (int)_people.Value : -1, (float)_dayMinutes.Value, (int)_seed.Value, (int)_zombies.Value));
         cancel.Pressed += Close;
     }
 
@@ -80,6 +81,7 @@ public partial class CityMenu : CanvasLayer
             _people.Value = Math.Max(0, defaults.People);
             _dayMinutes.Value = defaults.DayMinutes;
             _seed.Value = defaults.Seed;
+            _zombies.Value = defaults.Zombies;
         }
         UpdateHint();
         foreach (var child in _list.GetChildren()) child.QueueFree();

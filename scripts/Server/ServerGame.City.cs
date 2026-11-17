@@ -375,7 +375,7 @@ public partial class ServerGame
     private const int MaxPeoplePerTile = 8, MaxCityPeople = 1000;
 
     /// <summary>The menu's defaults (from the server args).</summary>
-    private static CitySettings DefaultCitySettings => new(CitySize, CityStartHour, CityPeople ?? -1, CityDayMinutes, CitySeed ?? 0);
+    private static CitySettings DefaultCitySettings => new(CitySize, CityStartHour, CityPeople ?? -1, CityDayMinutes, CitySeed ?? 0, CityZombies);
 
     private ServerInstance CreateCity(string createdBy, CitySettings settings)
     {
@@ -410,6 +410,8 @@ public partial class ServerGame
             npc.KnockOut(WakeSeconds);
             GD.Print($"[server] dev: {npc.NetName} ({npc.Role}) is knocked out in city {city.Id} for {WakeSeconds:0} s");
         }
+        // Zombies only if asked for: otherwise the layer doesn't exist and nothing about the city changes.
+        if (settings.Zombies > 0) AddZombies(city, Mathf.Min(settings.Zombies, MaxZombies));
         // Keep everyone's clock in step (clients run it on between updates).
         city.Simulation!.ClockBroadcast += (hour, rate) =>
         {

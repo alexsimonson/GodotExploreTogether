@@ -542,6 +542,29 @@ public sealed partial class CityNpcBrain
         if (Held) (X, Z, Yaw, _level) = (x, z, yaw, y);
     }
 
+    private double _bracedUntil = -1;
+
+    /// <summary>
+    /// A danger that isn't a player (a zombie, say), at (x, z). With <paramref name="holdGround"/> they stand and face it
+    /// for a moment (police with a gun: the caller does the shooting); otherwise they run from it and call for help.
+    /// Nothing in the city calls this by itself: it's for layers that add threats (see Core.Zombies).
+    /// </summary>
+    public void Threatened(float x, float z, bool holdGround)
+    {
+        if (IsDown || Held) return;
+        if (holdGround)
+        {
+            if (_act == Act.Flee) return;
+            _bracedUntil = _clockSeconds + 0.6;
+            Yaw = MathF.Atan2(-(x - X), -(z - Z));
+            WeaponOut = true;
+            if (Activity != "fighting") { Activity = "fighting"; Say(Pick("Stay back!", "Get down!", "Stop right there!")); }
+            return;
+        }
+        if (_act is Act.Flee or Act.Attack or Act.Arrest or Act.Holding) return;
+        StartFleeFrom(x, z, report: true);
+    }
+
     /// <summary>Let go of (or wriggled free): they react to whoever held them.</summary>
     public void Released(long player, bool escaped)
     {

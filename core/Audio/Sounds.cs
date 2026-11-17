@@ -48,6 +48,10 @@ public enum SoundId
     Breaker,
     Sparks,
     MainBreaker,
+    ZombieGroan,
+    ZombieBite,
+    ZombieDeath,
+    ZombieBash,
 }
 
 /// <summary>How far each sound carries (m): the server only sends it to players that close.</summary>

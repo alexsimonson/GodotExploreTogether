@@ -176,6 +176,11 @@ def main():
     write("sparks", mix(*[pad(gain(env(highpass(noise(0.04), 3500), 0.0005), rnd.uniform(0.3, 1)), rnd.uniform(0, 0.9)) for _ in range(14)],
                         env(tone(1.0, 60, 40, "saw"), 0.01)), 0.75)
     write("main_breaker", mix(thud(0.6, 50, 1.0, 1500), pad(env(tone(1.5, 120, 30, "saw"), 0.01), 0.1)), 0.8)
+    # Zombies.
+    write("zombie_groan", voice(1.6, 95, 70, 0.7, 700), 0.7)
+    write("zombie_bite", mix(voice(0.35, 140, 90, 0.8, 1200), pad(gain(env(lowpass(noise(0.25), 2500), 0.002), 0.7), 0.1)), 0.75)
+    write("zombie_death", mix(voice(0.9, 110, 45, 0.7, 600), pad(thud(0.4, 60, 0.8, 900), 0.5)), 0.8)
+    write("zombie_bash", mix(*[pad(thud(0.25, 70, 0.9, 1400), t) for t in (0.0, 0.32, 0.6)]), 0.8)
     write("furniture_grab", mix(thud(0.15, 160, 0.4, 2000), pad(gain(env(lowpass(noise(0.2), 1500), 0.01), 0.4), 0.05)), 0.5)
 
     # Items, the exit, travel, UI.

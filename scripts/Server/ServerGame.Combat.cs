@@ -36,6 +36,7 @@ public partial class ServerGame
         public double ExpiresAt { get; init; }
         public HashSet<EnemyCharacter> AlreadyHit { get; } = new();
         public HashSet<City.CityNpc> AlreadyHitNpcs { get; } = new();
+        public HashSet<IHittable> AlreadyHitOthers { get; } = new();
     }
 
     private readonly Queue<PendingAttack> _pendingAttacks = new();
@@ -134,6 +135,12 @@ public partial class ServerGame
             var muzzle = origin + dir * 0.5f + new Vector3(0, -0.25f, 0);
             foreach (var peer in instance.Players.Keys) _session.SendShot(peer, muzzle, end);
         }
+        // Anything a layer added (zombies...): it takes the hit itself.
+        if (hit.Count > 0 && hit["collider"].AsGodotObject() is Node { } struck && struck.GetParent() is IHittable other && other.CanBeHit)
+        {
+            other.TakeWeaponHit(weapon, profile.Damage, (Vector3)hit["position"], origin, s.Peer);
+            return true;
+        }
         if (hit.Count > 0 && instance.Kind == InstanceKinds.City
             && HitPowerProp(s, instance, hit["collider"].AsGodotObject(), (Vector3)hit["position"]))
             return false;
@@ -226,6 +233,15 @@ public partial class ServerGame
                     caster.Health.Heal(CombatRules.BloodHealPerHit);
                     SyncHealth(caster);
                 }
+            }
+            // Anything a layer added (zombies...), under the instance's NPCs.
+            foreach (var other in area.Instance.Nodes.Npcs.GetChildren().OfType<IHittable>().ToList())
+            {
+                if (!other.CanBeHit || area.AlreadyHitOthers.Contains(other)) continue;
+                var off = other.GlobalPosition - area.Center;
+                if (new Vector2(off.X, off.Z).Length() > CombatRules.MagicAreaRadius + 0.4f || Mathf.Abs(off.Y) > 2f) continue;
+                area.AlreadyHitOthers.Add(other);
+                other.TakeAreaHit(area.Damage, area.Style == MagicStyle.Frost, area.Center, area.OwnerPeer);
             }
             foreach (var enemy in area.Instance.Enemies.Values.ToList())
             {

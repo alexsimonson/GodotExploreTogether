@@ -20,7 +20,8 @@ public sealed record CitySummary(int Id, string CreatedBy, int Size, int People,
 /// What a new city is made with (the City Gate's options). <see cref="People"/> below 0: the default for the size;
 /// <see cref="Seed"/> 0: random.
 /// </summary>
-public sealed record CitySettings(int Size, float StartHour, int People, float DayMinutes, int Seed);
+/// <see cref="Zombies"/>: how many (0: none; the zombie layer isn't even created).
+public sealed record CitySettings(int Size, float StartHour, int People, float DayMinutes, int Seed, int Zombies = 0);
 
 /// <summary>
 /// Session-level RPCs (not tied to an instance). Lives at /root/Main/Session on both
@@ -117,7 +118,7 @@ public partial class NetSession : Node
     public void SendDragBody(string interactionId) => RpcId(1, MethodName.DragBody, interactionId);
     public void SendCreateDungeon(int width, int height, int length) => RpcId(1, MethodName.CreateDungeon, width, height, length);
     public void SendJoinDungeon(int instanceId) => RpcId(1, MethodName.JoinDungeon, instanceId);
-    public void SendCreateCity(CitySettings c) => RpcId(1, MethodName.CreateCity, c.Size, c.StartHour, c.People, c.DayMinutes, c.Seed);
+    public void SendCreateCity(CitySettings c) => RpcId(1, MethodName.CreateCity, c.Size, c.StartHour, c.People, c.DayMinutes, c.Seed, c.Zombies);
     public void SendJoinCity(int instanceId) => RpcId(1, MethodName.JoinCity, instanceId);
     public void SendSetHotbar(int key, int container, int slot) => RpcId(1, MethodName.SetHotbar, key, container, slot);
     public void SendUseHotbar(int key) => RpcId(1, MethodName.UseHotbar, key);
@@ -222,9 +223,9 @@ public partial class NetSession : Node
     }
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
-    private void CreateCity(int size, float startHour, int people, float dayMinutes, int seed)
+    private void CreateCity(int size, float startHour, int people, float dayMinutes, int seed, int zombies)
     {
-        if (Accept()) CreateCityRequested?.Invoke(Multiplayer.GetRemoteSenderId(), new CitySettings(size, startHour, people, dayMinutes, seed));
+        if (Accept()) CreateCityRequested?.Invoke(Multiplayer.GetRemoteSenderId(), new CitySettings(size, startHour, people, dayMinutes, seed, zombies));
     }
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
@@ -379,7 +380,7 @@ public partial class NetSession : Node
                 ["id"] = c.Id, ["by"] = c.CreatedBy, ["size"] = c.Size, ["people"] = c.People, ["hour"] = c.Hour,
                 ["players"] = c.Players,
             });
-        RpcId(peer, MethodName.CityMenu, list, defaults.Size, defaults.StartHour, defaults.People, defaults.DayMinutes);
+        RpcId(peer, MethodName.CityMenu, list, defaults.Size, defaults.StartHour, defaults.People, defaults.DayMinutes, defaults.Zombies);
     }
 
     public void SendCharacterList(long peer, IEnumerable<CharacterSummary> characters)
@@ -452,7 +453,7 @@ public partial class NetSession : Node
     }
 
     [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
-    private void CityMenu(GArray list, int size, float startHour, int people, float dayMinutes)
+    private void CityMenu(GArray list, int size, float startHour, int people, float dayMinutes, int zombies)
     {
         var result = new List<CitySummary>();
         foreach (var item in list)
@@ -461,7 +462,7 @@ public partial class NetSession : Node
             result.Add(new CitySummary(d["id"].AsInt32(), d["by"].AsString(), d["size"].AsInt32(), d["people"].AsInt32(),
                 d["hour"].AsSingle(), d["players"].AsStringArray()));
         }
-        CityMenuReceived?.Invoke(result, new CitySettings(size, startHour, people, dayMinutes, 0));
+        CityMenuReceived?.Invoke(result, new CitySettings(size, startHour, people, dayMinutes, 0, zombies));
     }
 
     [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]

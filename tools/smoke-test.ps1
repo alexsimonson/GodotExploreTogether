@@ -11,6 +11,8 @@
               with it, and the chair breaks.
     power   - at night, a player shoots a fuse box open and cuts a building's power, shoots out a street lamp, flips a
               light switch, then cuts a district's substation and the city's main breaker.
+    zombies - a city made with 8 zombies (near the gate) and nobody else: they come and bite; a bat knocks them down.
+    zombieguns - zombies near the gate; a player puts them down with pistol headshots.
     hotbar  - a player puts the sword and the bat on hotbar keys 1 and 2, then presses 1, 2, and 2 again; then holds a
               flashlight in the offhand, switches it on, and can't add a two-handed shotgun.
     combat  - three players with sword, ice wand and pistol fight enemies placed at the start;
@@ -78,6 +80,7 @@ $Scenarios = [ordered]@{
         Checks = {
             Expect server 'city 2: 5x5, seed 11, loops 15%, \d+ parcels' 'a 5x5 city is generated from the seed'
             ExpectNot server 'city 3:' 'only one city is generated for the two players'
+            ExpectNot server 'zombie' 'a city made without zombies has none (the layer is off)'
             Expect server "\('Kermit'\) entered instance 2" 'Kermit enters the city'
             Expect server "\('Blueberry'\) entered instance 2" 'Blueberry joins the same city'
             Expect Kermit 'city check: (\d+)/\1 doors, fences and walls match' 'built doorways, fences and walls match the layout'
@@ -260,6 +263,34 @@ $Scenarios = [ordered]@{
             Expect server "'Kermit' cuts the power of district 0" 'a substation darkens its district'
             Expect server "'Kermit' cuts the power of the whole city" 'the main breaker darkens the city'
             Expect Kermit 'power: \d+ building\(s\) without power, 1 lamp\(s\) broken, the station is down' 'the client sees it all'
+        }
+    }
+    zombies = @{
+        Port   = 7956
+        # Nobody lives here (no police to help), so it's the players against them.
+        Server = @('--dev-skip-proximity', '--dev-starter-kit', '--city-seed', '4', '--city-start-hour', '12', '--city-people', '0',
+                   '--city-zombies', '8', '--dev-zombies-near-start', '--dev-log-zombies', '--dev-quit-after', '50')
+        Clients = [ordered]@{
+            Kermit    = @('--dev-city', '--dev-weapon', 'Bat', '--dev-fight', '--dev-quit-after', '40')
+            Blueberry = @('--dev-city', '--dev-quit-after', '42')
+        }
+        Checks = {
+            Expect server 'city 2: 8 zombie\(s\) added' 'the city is made with 8 zombies'
+            Expect server "zombie \d+ bites '(Kermit|Blueberry)'" 'zombies come for the players and bite'
+            Expect server 'zombie \d+ knocked down with Bat' 'a bat knocks one down (it gets back up)'
+            ExpectNot server 'Exception' 'no server exceptions'
+        }
+    }
+    zombieguns = @{
+        Port   = 7957
+        Server = @('--dev-skip-proximity', '--dev-starter-kit', '--city-seed', '4', '--city-start-hour', '12', '--city-people', '0',
+                   '--city-zombies', '6', '--dev-zombies-near-start', '--dev-quit-after', '40')
+        Clients = [ordered]@{
+            Kermit = @('--dev-city', '--dev-weapon', 'Pistol', '--dev-fight', '--dev-quit-after', '32')
+        }
+        Checks = {
+            Expect server "'Kermit' destroys zombie \d+ with a headshot" 'a headshot puts one down for good' -Min 3
+            ExpectNot server 'Exception' 'no server exceptions'
         }
     }
     hotbar = @{

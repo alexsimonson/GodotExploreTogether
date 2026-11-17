@@ -61,6 +61,8 @@ public sealed class CityCrowd
 
     public void Add(CityNpcBrain brain) => _npcs.Add(brain);
 
+    public void Remove(CityNpcBrain brain) => _npcs.Remove(brain);
+
     /// <summary>Where the players are now (call before each step).</summary>
     public void SetPlayers(IEnumerable<(float X, float Z)> players)
     {
