@@ -18,7 +18,7 @@ public sealed record WeaponProfile(
 /// - Gun (Weapon.Shoot): ray with unlimited range, 100 damage; uses ammo (GunAmmo).
 /// - Magic (Magic.Attack + PlayerGhostAim + AreaOfEffect): place an area within 10 m where you aim;
 ///   enemies entering it take Random.Range(0, max_damage) damage once; the area lasts 5 s.
-///   Frost freezes them for `timer` (5 s); Blood heals the caster 10 per enemy hit.
+///   Frost freezes them for `timer` (5 s); Blood heals the caster 15 per enemy hit.
 /// Difference: attacks have a short cooldown. The original had none (one attack per click), which in
 /// multiplayer would let an auto-clicker attack every frame.
 /// </summary>
@@ -32,7 +32,7 @@ public static class CombatRules
     public const float MagicAreaRadius = 1.5f;
     public const float MagicAreaLifetime = 5f;
     public const float FrostFreezeSeconds = 5f;
-    public const int BloodHealPerHit = 10;
+    public const int BloodHealPerHit = 15;
     public const int MagicMaxDamage = 50;
 
     public static WeaponProfile? ProfileFor(ItemDef? weapon)

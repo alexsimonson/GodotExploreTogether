@@ -242,6 +242,12 @@ public partial class ServerGame
                 if (new Vector2(off.X, off.Z).Length() > CombatRules.MagicAreaRadius + 0.4f || Mathf.Abs(off.Y) > 2f) continue;
                 area.AlreadyHitOthers.Add(other);
                 other.TakeAreaHit(area.Damage, area.Style == MagicStyle.Frost, area.Center, area.OwnerPeer);
+                // Blood heals the caster for every source hit, zombies and other layer targets included.
+                if (area.Style == MagicStyle.Blood && _sessions.TryGetValue(area.OwnerPeer, out var bloodCaster))
+                {
+                    bloodCaster.Health.Heal(CombatRules.BloodHealPerHit);
+                    SyncHealth(bloodCaster);
+                }
             }
             foreach (var enemy in area.Instance.Enemies.Values.ToList())
             {

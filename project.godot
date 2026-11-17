@@ -14,13 +14,13 @@ config/name="ExploreTogether"
 run/main_scene="res://scenes/Main.tscn"
 config/features=PackedStringArray("4.7", "C#", "Forward Plus")
 
-[dotnet]
-
-project/assembly_name="ExploreTogether"
-
 [debug]
 
 file_logging/enable_file_logging.pc=false
+
+[dotnet]
+
+project/assembly_name="ExploreTogether"
 
 [layer_names]
 

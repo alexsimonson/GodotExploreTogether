@@ -137,7 +137,7 @@ Each phase ends with something runnable.
     - The **loaded rounds belong to that gun** (per-item state, database v5), so they go with it when it changes hands, is dropped or saved.
     - **Reserve ammo is an item** ("Pistol Rounds", stackable, found as loot in stacks of 10).
     - The original kept both numbers on the shared item asset.
-  - Magic: hold right-click to aim, left-click to place a 5 s area within 10 m that rolls 0–49 damage once per enemy entering. Frost freezes for 5 s; Blood heals the caster 10 per hit.
+  - Magic: hold right-click to aim, left-click to place a 5 s area within 10 m that rolls 0–49 damage once per enemy entering. Frost freezes for 5 s; Blood heals the caster 15 per hit.
     - The ghost preview and placed area use the original pentagram model, solid, in the caster's character color.
     - Other players see your aiming ghost: the client sends its spot about 15 times a second, the server checks it (wand equipped, within reach) and replicates it on the player node (`AimActive`, `AimPoint`).
     - If nothing is hit within 10 m, the area drops to the floor below the 10 m point (the original showed no ghost then). Client and server share this rule (`MagicAim`).
