@@ -1,3 +1,4 @@
+using ExploreTogether.Core.Audio;
 using System.Collections.Generic;
 using System.Linq;
 using System;
@@ -81,10 +82,12 @@ public partial class ServerGame
                 // The rounds are in this particular gun (they go with it if it changes hands).
                 if (!GunRules.TryFire(s.Gear.WeaponSlot))
                 {
+                    PlaySound(found.Instance, SoundId.DryFire, origin);
                     _session.SendNotice(s.Peer, "Out of ammo. Press R to reload.");
                     return;
                 }
                 SendAmmoState(s);
+                PlaySound(found.Instance, ShotSound(weapon!), origin);
                 HitScan(s, found.Instance, space, origin, dir, profile, weapon!);
                 if (found.Instance.Kind == InstanceKinds.City)
                 {
@@ -96,10 +99,13 @@ public partial class ServerGame
                 break;
 
             case ItemClass.Melee:
-                HitScan(s, found.Instance, space, origin, dir, profile, weapon!);
+                PlaySound(found.Instance, SoundId.Swing, origin);
+                if (HitScan(s, found.Instance, space, origin, dir, profile, weapon!) && weapon!.BreaksOnHit)
+                    BreakHeldItem(s, found.Instance); // a chair over someone's head: in pieces
                 break;
 
             case ItemClass.Tool:
+                PlaySound(found.Instance, SoundId.Swing, origin);
                 // Port of Tool.Attack: hit an enemy, otherwise use whatever interactable is in reach.
                 if (!HitScan(s, found.Instance, space, origin, dir, profile, weapon!))
                 {
@@ -128,6 +134,9 @@ public partial class ServerGame
             var muzzle = origin + dir * 0.5f + new Vector3(0, -0.25f, 0);
             foreach (var peer in instance.Players.Keys) _session.SendShot(peer, muzzle, end);
         }
+        if (hit.Count > 0 && instance.Kind == InstanceKinds.City
+            && HitPowerProp(s, instance, hit["collider"].AsGodotObject(), (Vector3)hit["position"]))
+            return false;
         if (hit.Count > 0 && hit["collider"].AsGodotObject() is City.CityDeadbolt bolt)
         {
             if (weapon.Breaches) BreakDoorLock(s, instance, bolt.Door, origin.DistanceTo((Vector3)hit["position"]));
@@ -139,6 +148,7 @@ public partial class ServerGame
         if (!instance.Enemies.ContainsKey(enemy.Name) || enemy.IsDead) return false;
 
         var killed = enemy.TakeDamage(profile.Damage, profile.Knockback ? dir : null);
+        PlaySound(instance, killed ? SoundId.EnemyDeath : SoundId.EnemyHurt, enemy.GlobalPosition + Vector3.Up);
         GD.Print($"[server] '{s.Character!.Name}' hit {enemy.Name} with {weapon.Name} for {profile.Damage} ({enemy.NetHealth} left){(killed ? ", killed" : "")}");
         return true;
     }
@@ -163,6 +173,7 @@ public partial class ServerGame
             ExpiresAt = Now + CombatRules.MagicAreaLifetime,
         };
         _magicAreas.Add(area);
+        PlaySound(instance, style == MagicStyle.Blood ? SoundId.MagicBlood : SoundId.MagicIce, area.Center + Vector3.Up * 0.5f);
         foreach (var peer in instance.Players.Keys)
             _session.SendMagicArea(peer, area.Center, (int)style, CombatRules.MagicAreaLifetime, CasterColor(s));
         GD.Print($"[server] '{s.Character!.Name}' cast {weapon.Name} ({style}, {area.Damage} damage) at {area.Center.Snapped(Vector3.One * 0.1f)}");
@@ -226,6 +237,7 @@ public partial class ServerGame
                 // AreaOfEffect.Effect: damage once on entering; Frost freezes; Blood heals the caster.
                 area.AlreadyHit.Add(enemy);
                 var killed = enemy.TakeDamage(area.Damage);
+                PlaySound(area.Instance, killed ? SoundId.EnemyDeath : SoundId.EnemyHurt, enemy.GlobalPosition + Vector3.Up);
                 if (area.Style == MagicStyle.Frost && !killed) enemy.Freeze(CombatRules.FrostFreezeSeconds);
                 if (area.Style == MagicStyle.Blood && _sessions.TryGetValue(area.OwnerPeer, out var owner))
                 {
@@ -249,6 +261,7 @@ public partial class ServerGame
             return;
         }
         SendInventory(s); // the rounds moved from the inventory into the gun (also sends the ammo state)
+        if (_instances.FindPlayer(peer) is { } reloading) PlaySound(reloading.Instance, ReloadSound(gun), reloading.Player.GlobalPosition + Vector3.Up);
         var gunSerial = s.Gear.WeaponSlot.uid is { } uid ? $" #{uid}" : "";
         SaveInventory(s, ItemEventFor(s, ItemActions.Loaded, gun.AmmoItemId!.Value, loaded, null,
             _instances.FindPlayer(peer)?.Instance, $"into {gun.Name}{gunSerial}"));
@@ -272,6 +285,8 @@ public partial class ServerGame
 
         var died = s.Health.Damage(damage);
         SyncHealth(s);
+        PlaySound(instance, SoundId.EnemyAttack, enemy.GlobalPosition + Vector3.Up);
+        PlaySound(instance, died ? SoundId.PlayerDeath : SoundId.PlayerHurt, player.GlobalPosition + Vector3.Up);
         GD.Print($"[server] {enemy.Name} hit '{s.Character.Name}' for {damage} ({s.Health.Current} left)");
         if (died) HandlePlayerDeath(s, instance);
     }

@@ -12,6 +12,10 @@ public enum BuildingType
     Office,
     Warehouse,
     Guardhouse,
+    /// <summary>Public in the evening and at night (see <see cref="Stealth.IsOpen"/>): where people gather after dark.</summary>
+    Tavern,
+    /// <summary>The city's power station (one per city): the main breaker inside feeds every district (see <see cref="CityPower"/>).</summary>
+    PowerStation,
 }
 
 public enum Zone
@@ -104,7 +108,7 @@ public sealed class Parcel
     }
 
     /// <summary>Open to anyone while it's open for business (see <see cref="Stealth"/> for opening hours).</summary>
-    public bool IsPublic => Building == BuildingType.Shop;
+    public bool IsPublic => Building is BuildingType.Shop or BuildingType.Tavern;
 }
 
 /// <summary>
@@ -178,6 +182,8 @@ public sealed class CityLayout
         BuildParcels();
         AssignBuildings();
         PlaceGuardhouses();
+        PlaceTaverns();
+        PlacePowerStation();
     }
 
     /// <param name="catalog">The building designs to use (default: greybox only).</param>
@@ -506,6 +512,37 @@ public sealed class CityLayout
         }
     }
 
+    /// <summary>
+    /// The nightlife district: one tavern per ~10 tiles (at least one), the first in the commercial middle of town and
+    /// the rest on the parcels nearest to it, so people gather in one lively area at night.
+    /// </summary>
+    private void PlaceTaverns()
+    {
+        var wanted = Math.Max(1, (int)Math.Round(Width * Height / 10.0));
+        var candidates = parcels.Where(p => p.Cells.Count <= 2 && p.Building != BuildingType.Guardhouse).ToList();
+        if (candidates.Count == 0) return;
+        var center = candidates.Where(p => p.Zone == Zone.Commercial).OrderBy(_ => random.Next()).FirstOrDefault()
+                     ?? candidates[random.Next(candidates.Count)];
+        var chosen = candidates.OrderBy(c => Dist2(c, center)).ThenBy(c => c.Id).Take(wanted).ToList();
+        foreach (var p in chosen) SetBuilding(p, BuildingType.Tavern);
+
+        static float Dist2(Parcel a, Parcel b)
+        {
+            float dx = a.Bounds.CenterX - b.Bounds.CenterX, dz = a.Bounds.CenterZ - b.Bounds.CenterZ;
+            return dx * dx + dz * dz;
+        }
+    }
+
+    /// <summary>The power station: on the two-lot parcel farthest from the middle of town (out on the edge).</summary>
+    private void PlacePowerStation()
+    {
+        var b = Bounds;
+        var candidates = parcels.Where(p => p.Cells.Count == 2 && p.Building is not (BuildingType.Guardhouse or BuildingType.Tavern)).ToList();
+        if (candidates.Count == 0) return;
+        var station = candidates.MaxBy(p => MathF.Abs(p.Bounds.CenterX - b.CenterX) + MathF.Abs(p.Bounds.CenterZ - b.CenterZ))!;
+        SetBuilding(station, BuildingType.PowerStation);
+    }
+
     private BuildingType Pick(params (BuildingType Type, int Weight)[] options)
     {
         var roll = random.Next(options.Sum(o => o.Weight));
@@ -527,6 +564,8 @@ public sealed class CityLayout
         BuildingType.Office => [3],
         BuildingType.Warehouse => [2, 3],
         BuildingType.Guardhouse => [1, 2],
+        BuildingType.Tavern => [1, 2],
+        BuildingType.PowerStation => [2],
         _ => [1],
     };
 
@@ -555,6 +594,8 @@ public sealed class CityLayout
         BuildingType.Office => (26, 9, 3),
         BuildingType.Warehouse => (22, 9, 2),
         BuildingType.Guardhouse => (9, 8, 2),
+        BuildingType.Tavern => (10, 9, 2),
+        BuildingType.PowerStation => (20, 9, 1),
         _ => (8, 8, 1),
     };
 
@@ -661,7 +702,7 @@ public sealed class CityLayout
         // Custom designs keep their own spots (or a back row and two side spots), all on the ground floor.
         if (v.IsGreybox)
         {
-            p.Interior = BuildingInterior.Generate(p, w, d, v.Floors, openGround: v.Type == BuildingType.Warehouse);
+            p.Interior = BuildingInterior.Generate(p, w, d, v.Floors, openGround: v.Type is BuildingType.Warehouse or BuildingType.Tavern or BuildingType.PowerStation);
             p.Places = p.Interior.Spots;
             p.Spots = p.Places.Where(s => s.Floor == 0).Select(s => (s.X, s.Z)).ToList();
             return;

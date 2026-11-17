@@ -23,11 +23,15 @@ public sealed class CityClock(float startHour, float hoursPerSecond)
 /// Pure logic (positions on the ground plane), run by the server and unit-tested.
 ///
 /// Days (each person shifts their times by up to ±45 minutes):
-/// - Civilian: home until 8, errands (shops and walks) until 12, home for lunch, errands 13 to 18, home.
-/// - Worker: home until 7, at work 7 to 17, errands until 18:30, home.
+/// - Civilian: home until 8, errands (shops and walks) until 12, home for lunch, errands 13 to 18, home (some take
+///   an evening walk 19 to 20:30).
+/// - Worker: home until 7, at work 7 to 17, errands until 18:30, home. Tavern staff: at work 15:30 to 3, sleep late.
 /// - Shopkeeper: home until 7:30, keeps the shop 7:30 to 18:30, home.
-/// - Police: patrol streets near the station on shift (day 6 to 18, or night), rest in the station off shift.
+/// - Police: on shift (day 6 to 18, or night), patrol streets near the station, or keep it (desk officers); off
+///   shift, at home.
 /// - Security: on watch at their post on shift (day or night), at home off shift.
+/// - Night owls (some civilians, workers and shopkeepers): from 19:00 or so until 23:30 to 2:30, at a tavern or
+///   hanging about the streets near it, then home to bed (and up later the next morning).
 ///
 /// Trouble interrupts the day (see CityNpcBrain.Reactions.cs and <see cref="Stealth"/>): while reacting, the
 /// schedule waits, and afterwards they find their way back to it.
@@ -71,8 +75,15 @@ public sealed partial class CityNpcBrain
     private readonly Random _random;
     private readonly (float X, float Z) _lane;
     private readonly float _offset; // personal schedule shift, hours
+    private readonly int _tavern = -1;     // the tavern they go to at night (night owls), or -1
+    private readonly float _owlUntil;      // night owls: when they head home (hours, past 24 = after midnight)
+    private readonly bool _eveningWalker;  // civilians: out for a walk after dinner
+    private readonly bool _tavernStaff;    // works at a tavern (evening hours)
 
-    private enum GoalKind { Stay, Errands, Patrol }
+    /// <summary>Spends evenings at a tavern.</summary>
+    public bool NightOwl => _tavern >= 0;
+
+    private enum GoalKind { Stay, Errands, Patrol, Nightlife }
     private readonly record struct Goal(GoalKind Kind, int Parcel, string Label);
 
     private Goal _goal;
@@ -106,6 +117,17 @@ public sealed partial class CityNpcBrain
         _lane = ((float)(_random.NextDouble() * 2 - 1) * CityPaths.MaxLaneOffset,
                  (float)(_random.NextDouble() * 2 - 1) * CityPaths.MaxLaneOffset);
         _offset = (float)(_random.NextDouble() * 1.5 - 0.75);
+        // Night life, from its own seeded random (so it never changes anything else about the day).
+        var night = new Random(unchecked(seed * 17 + person.Id * 104729 + 3));
+        _tavernStaff = person.Work >= 0 && city.Parcels[person.Work].Building == BuildingType.Tavern;
+        var owlOdds = _tavernStaff ? 0 : person.Role switch
+        {
+            NpcRole.Civilian => 45, NpcRole.Worker => 35, NpcRole.Shopkeeper => 25, _ => 0,
+        };
+        var taverns = city.Parcels.Where(p => p.Building == BuildingType.Tavern).ToList();
+        if (taverns.Count > 0 && night.Next(100) < owlOdds) _tavern = taverns[night.Next(taverns.Count)].Id;
+        _owlUntil = 23.5f + (float)night.NextDouble() * 3;
+        _eveningWalker = person.Role == NpcRole.Civilian && night.Next(100) < 50;
         Speed = person.Role switch { NpcRole.Police or NpcRole.Security => 1.5f, NpcRole.Worker or NpcRole.Shopkeeper => 1.4f, _ => 1.25f };
         PlaceAtStart(time);
     }
@@ -161,31 +183,43 @@ public sealed partial class CityNpcBrain
         var h = hour - _offset; // shifting the clock shifts every time in the day
         if (h < 0) h += 24;
         if (h >= 24) h -= 24;
+        // Night owls: out from `from` until _owlUntil (which may be after midnight); up later the next morning.
+        bool Out(float from) => NightOwl && (h >= from && h < _owlUntil || _owlUntil > 24 && h < _owlUntil - 24);
+        var nightlife = new Goal(GoalKind.Nightlife, _tavern, "at the tavern");
+        var lateRise = NightOwl ? 1.5f : 0;
+        // Shift workers off duty: day shift sleeps at night; night shift sleeps in the morning.
+        bool ShiftSleeps(int shift) => h < 6 || h >= 22 || shift == 1 && h >= 7 && h < 14;
         switch (p.Role)
         {
             case NpcRole.Police:
-                var dayShift = h >= 6 && h < 18;
-                return dayShift == (p.Shift == 0)
-                    ? new Goal(GoalKind.Patrol, -1, "patrolling")
-                    : new Goal(GoalKind.Stay, p.Home, h < 6 || h >= 22 ? "sleeping" : "resting");
+                if ((h >= 6 && h < 18) == (p.Shift == 0))
+                    return p.Desk ? new Goal(GoalKind.Stay, p.Work, "on desk") : new Goal(GoalKind.Patrol, -1, "patrolling");
+                return new Goal(GoalKind.Stay, p.Home, ShiftSleeps(p.Shift) ? "sleeping" : "at home");
             case NpcRole.Security:
                 var onDuty = (h >= 6 && h < 18) == (p.Shift == 0);
                 if (onDuty) return new Goal(GoalKind.Stay, p.Work, "on watch");
-                return new Goal(GoalKind.Stay, p.Home, h < 6 || h >= 22 || p.Shift == 1 && h >= 7 && h < 14 ? "sleeping" : "at home");
+                return new Goal(GoalKind.Stay, p.Home, ShiftSleeps(p.Shift) ? "sleeping" : "at home");
             case NpcRole.Shopkeeper:
-                if (h < 7.5f) return new Goal(GoalKind.Stay, p.Home, h < 6.5f ? "sleeping" : "at home");
+                if (Out(19.5f)) return nightlife;
+                if (h < 7.5f + lateRise) return new Goal(GoalKind.Stay, p.Home, h < 6.5f + lateRise ? "sleeping" : "at home");
                 if (h < 18.5f) return new Goal(GoalKind.Stay, p.Work, "keeping shop");
                 return new Goal(GoalKind.Stay, p.Home, h >= 22 ? "sleeping" : "at home");
+            case NpcRole.Worker when _tavernStaff:
+                if (h >= 15.5f || h < Stealth.TavernCloses) return new Goal(GoalKind.Stay, p.Work, "serving");
+                return new Goal(GoalKind.Stay, p.Home, h < 10.5f ? "sleeping" : "at home");
             case NpcRole.Worker:
+                if (Out(19.5f)) return nightlife;
                 if (h < 7) return new Goal(GoalKind.Stay, p.Home, h < 6 ? "sleeping" : "at home");
                 if (h < 17) return new Goal(GoalKind.Stay, p.Work, "working");
                 if (h < 18.5f) return new Goal(GoalKind.Errands, -1, "out");
                 return new Goal(GoalKind.Stay, p.Home, h >= 22 ? "sleeping" : "at home");
             default:
-                if (h < 8) return new Goal(GoalKind.Stay, p.Home, h < 7 ? "sleeping" : "at home");
+                if (Out(19)) return nightlife;
+                if (h < 8 + lateRise) return new Goal(GoalKind.Stay, p.Home, h < 7 + lateRise ? "sleeping" : "at home");
                 if (h < 12) return new Goal(GoalKind.Errands, -1, "out");
                 if (h < 13) return new Goal(GoalKind.Stay, p.Home, "lunch at home");
                 if (h < 18) return new Goal(GoalKind.Errands, -1, "out");
+                if (_eveningWalker && h >= 19 && h < 20.5f) return new Goal(GoalKind.Errands, -1, "out");
                 return new Goal(GoalKind.Stay, p.Home, h >= 22 ? "sleeping" : "at home");
         }
     }
@@ -193,10 +227,10 @@ public sealed partial class CityNpcBrain
     private void PlaceAtStart(double time)
     {
         var goal = DesiredGoal((float)(time % 24));
-        if (goal.Kind == GoalKind.Stay && goal.Parcel >= 0)
+        if (goal.Kind is GoalKind.Stay or GoalKind.Nightlife && goal.Parcel >= 0)
         {
             var parcel = _city.Parcels[goal.Parcel];
-            var spot = RandomSpot(parcel, upstairs: goal.Label == "sleeping");
+            var spot = goal.Kind == GoalKind.Nightlife ? GroundSpot(parcel) : RandomSpot(parcel, upstairs: goal.Label == "sleeping");
             (X, Z, _level) = (spot.X, spot.Z, spot.Y);
             Inside = parcel.Id;
             Activity = goal.Label;
@@ -243,8 +277,18 @@ public sealed partial class CityNpcBrain
                 else
                     _dwellUntil = time + 0.5 + _random.NextDouble();
                 break;
+            case GoalKind.Nightlife:
+                // Mostly inside, drinking; now and then out front, or a stroll round the block. Locked (the staff
+                // aren't in yet, or have gone home): hang about outside.
+                var tavern = _city.Parcels[_goal.Parcel];
+                var shut = _doors?.IsLocked(tavern.Id) == true && Inside != tavern.Id;
+                if (!shut && _random.Next(100) < 70)
+                    RouteTo(tavern, GroundSpot(tavern), _goal.Label, 0.4 + _random.NextDouble() * 0.8);
+                else
+                    RouteToStreet(RandomStreetCell(near: CityPaths.StreetOf(tavern), radius: 2), "hanging about", 0.1 + _random.NextDouble() * 0.25);
+                break;
             case GoalKind.Errands:
-                if (_random.Next(100) < 45 && NearbyShop() is { } shop)
+                if (_random.Next(100) < 45 && NearbyShop(time) is { } shop)
                     RouteTo(shop, RandomSpot(shop), "shopping", 0.25 + _random.NextDouble() * 0.4);
                 else
                     RouteToStreet(RandomStreetCell(near: HereStreetCell(), radius: 8), "walking", 0.05 + _random.NextDouble() * 0.15);
@@ -290,7 +334,7 @@ public sealed partial class CityNpcBrain
         foreach (var p in _paths.StreetWalk(start, target, _lane)) _route.Enqueue(p);
         _routeEndsIn = -1;
         _routeLabel = label;
-        Activity = label == "patrolling" ? label : "walking";
+        Activity = label is "patrolling" or "hanging about" ? label : "walking";
     }
 
     /// <summary>Queues the way out of the current building (if inside one) and returns the street cell to start from.</summary>
@@ -303,7 +347,8 @@ public sealed partial class CityNpcBrain
             var way = CityPaths.WayIn(parcel, parcel.Door);
             _route.Enqueue(new Waypoint(way[1].X, way[1].Z, parcel.Id)); // just inside -> yard
             _route.Enqueue(way[0]);
-            Inside = -1;
+            // Still inside until they're through the door (see ReachWaypoint): a change of plan on the way out
+            // starts from in here, not from the street.
             return CityPaths.StreetOf(parcel);
         }
         return CurrentStreetCell();
@@ -454,6 +499,8 @@ public sealed partial class CityNpcBrain
     {
         var reached = _route.Dequeue();
         _level = reached.Y;
+        // Through a front door: in (or out of) the building from now on, wherever the walk ends.
+        if (reached.Door >= 0) Inside = reached.Entering ? reached.Door : -1;
         if (reached.Door >= 0 && _doors != null) CloseBehind(reached, time);
         _doorReady = false;
         if (_route.Count == 0) Arrive(time);
@@ -605,6 +652,13 @@ public sealed partial class CityNpcBrain
         return spots[_random.Next(spots.Count)];
     }
 
+    /// <summary>A spot on the ground floor (taverns: the bar room).</summary>
+    private Place GroundSpot(Parcel p)
+    {
+        var spots = p.Places.Where(s => s.Floor == 0).ToList();
+        return spots.Count > 0 ? spots[_random.Next(spots.Count)] : RandomSpot(p);
+    }
+
     /// <summary>The street cell they're on, or the one in front of the building they're in.</summary>
     private Cell HereStreetCell() => Inside >= 0 ? CityPaths.StreetOf(_city.Parcels[Inside]) : CurrentStreetCell();
 
@@ -631,15 +685,19 @@ public sealed partial class CityNpcBrain
         return cells[_random.Next(cells.Count)];
     }
 
+    /// <summary>Police: on patrol right now (on shift, not keeping the desk).</summary>
+    public bool OnPatrol => _hasGoal && _goal.Kind == GoalKind.Patrol;
+
     /// <summary>A street cell within 8 cells (about 100 m) of the guard's post.</summary>
     private Cell PatrolCell() =>
         RandomStreetCell(near: CityPaths.StreetOf(_city.Parcels[Person.Work]), radius: 8);
 
-    /// <summary>One of the five shops nearest to where they are, or null if the city has none.</summary>
-    private Parcel? NearbyShop()
+    /// <summary>One of the five open shops (or taverns) nearest to where they are, or null if there are none.</summary>
+    private Parcel? NearbyShop(double time)
     {
         var (x, z) = (X, Z);
-        var shops = _city.Parcels.Where(p => p.IsPublic && (_doors == null || !_doors.IsLocked(p.Id)))
+        var hour = (float)(time % 24);
+        var shops = _city.Parcels.Where(p => p.IsPublic && Stealth.IsOpen(p.Building, hour) && (_doors == null || !_doors.IsLocked(p.Id)))
             .OrderBy(p => (p.Door.X - x) * (p.Door.X - x) + (p.Door.Z - z) * (p.Door.Z - z))
             .Take(5).ToList();
         return shops.Count == 0 ? null : shops[_random.Next(shops.Count)];

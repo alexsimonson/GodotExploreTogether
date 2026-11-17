@@ -125,9 +125,18 @@ public partial class ItemSlotButton : PanelContainer
         ItemDropped?.Invoke((ItemContainer)d["container"].AsInt32(), d["slot"].AsInt32(), Container, Index);
     }
 
+    /// <summary>The slot under the mouse (for binding hotbar keys by hovering and pressing a number), or null.</summary>
+    public static ItemSlotButton? Hovered { get; private set; }
+
+    /// <summary>The item shown in the slot (null: empty).</summary>
+    public int? ItemId => _itemId;
+
     public override void _Notification(int what)
     {
         if (what == NotificationDragEnd) Modulate = Colors.White;
+        else if (what == NotificationMouseEnter) Hovered = this;
+        else if (what == NotificationMouseExit && Hovered == this) Hovered = null;
+        else if (what == NotificationPredelete && Hovered == this) Hovered = null;
     }
 
     public override void _GuiInput(InputEvent @event)

@@ -19,6 +19,7 @@ public static class WeaponLook
         var (size, material) = def switch
         {
             { Id: ItemCatalog.ConcreteBlockId } => (new Vector3(0.2f, 0.1f, 0.4f), Stone),
+            { BreaksOnHit: true } => (new Vector3(0.42f, 0.5f, 0.42f), Wood), // a chair or stool, held up
             { Class: ItemClass.Gun, Breaches: true } => (new Vector3(0.07f, 0.09f, 0.8f), Steel),
             { Class: ItemClass.Gun } => (new Vector3(0.05f, 0.12f, 0.22f), Steel),
             { Class: ItemClass.Magic } => (new Vector3(0.04f, 0.04f, 0.5f), Glow),

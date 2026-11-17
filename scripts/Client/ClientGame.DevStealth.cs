@@ -32,6 +32,7 @@ public partial class ClientGame
         if (CmdArgs.Has("dev-breach")) GetTree().CreateTimer(2.5).Timeout += () => { if (_currentInstanceId == instanceId) _ = DevBreach(instanceId); };
         if (CmdArgs.Has("dev-trespass")) GetTree().CreateTimer(2.5).Timeout += () => { if (_currentInstanceId == instanceId) _ = DevTrespass(instanceId); };
         if (CmdArgs.Has("dev-grab")) GetTree().CreateTimer(2.5).Timeout += () => { if (_currentInstanceId == instanceId) _ = DevGrab(instanceId); };
+        if (CmdArgs.Has("dev-power")) GetTree().CreateTimer(2.5).Timeout += () => { if (_currentInstanceId == instanceId) _ = DevPower(instanceId); };
         if (CmdArgs.Has("dev-upstairs")) GetTree().CreateTimer(2.5).Timeout += () => { if (_currentInstanceId == instanceId) _ = DevUpstairs(instanceId); };
     }
 
@@ -85,6 +86,54 @@ public partial class ClientGame
         me.LookAt(new Vector3(at.X, me.GlobalPosition.Y, at.Z));
     }
 
+    // ---- --dev-power ----
+
+    /// <summary>
+    /// --dev-power (needs a pistol, and the server's --dev-skip-proximity for the far ones): walk to the nearest
+    /// building, shoot its fuse box open and cut its power, shoot out the nearest street lamp, flip the building's
+    /// light switch, then cut a substation and the main breaker.
+    /// </summary>
+    private async Task DevPower(int instanceId)
+    {
+        if (PlayerCharacter.Local is not { } me) return;
+        var (city, paths) = DevCity();
+        var here = CityNav.NearestStreet(city, paths, (me.GlobalPosition.X, me.GlobalPosition.Z));
+        var target = city.Parcels.Where(p => p.Building != BuildingType.PowerStation)
+            .OrderBy(p => paths.StreetRoute(here, CityPaths.StreetOf(p)).Count).First();
+        EquipFromInventory(1337); // the pistol
+        if (!await DevWalk(DevWayToDoor(city, paths, me.GlobalPosition, target), instanceId)) return;
+        await Wait(0.5);
+        void ShootAt(Vector3 at)
+        {
+            var head = me.GlobalPosition + new Vector3(0, 1.6f, 0);
+            me.LookAt(new Vector3(at.X, me.GlobalPosition.Y, at.Z));
+            _session.SendAttack((at - head).Normalized());
+        }
+        ShootAt(CityPowerProps.FuseBoxPosition(target));
+        await Wait(0.8);
+        _session.SendInteract(CityFuseBox.IdFor(target.Id));
+        await Wait(0.8);
+        // Out through the gate onto the street, then shoot the nearest street lamps until one goes out.
+        var lighting = new CityLighting(city);
+        if (!await DevWalk([CityPaths.WayIn(target, target.Spots[0])[0]], instanceId)) return;
+        await Wait(0.5);
+        foreach (var li in Enumerable.Range(0, lighting.Lamps.Count)
+                     .OrderBy(i => new Vector2(lighting.Lamps[i].X - me.GlobalPosition.X, lighting.Lamps[i].Z - me.GlobalPosition.Z).Length()).Take(4))
+        {
+            var (lx, lz) = lighting.Lamps[li];
+            ShootAt(new Vector3(lx, CityLighting.LampHeight + 0.12f, lz));
+            await Wait(0.8);
+            if (_power?.LampBroken(li) == true) break;
+        }
+        _session.SendInteract(CityLightSwitch.IdFor(target.Id));
+        await Wait(0.8);
+        _session.SendInteract(CitySubstation.IdFor(0));
+        await Wait(0.8);
+        _session.SendInteract(CityPowerProps.BreakerId);
+        await Wait(1.0);
+        GD.Print("[client] dev-power: done");
+    }
+
     // ---- --dev-breach ----
 
     private async Task DevBreach(int instanceId)
@@ -136,11 +185,13 @@ public partial class ClientGame
         _session.SendAttack((shootDoor.LockPosition - head).Normalized());
         await Wait(1.0);
         GD.Print(_doorStates[shoot.Id].LockBroken ? $"[client] dev-breach: door {shoot.Id} lock shot out" : $"[client] dev-breach: door {shoot.Id} lock intact");
-        // A shot-out door opens but won't lock.
+        await DevShot("breach-lock-shot");
+        // A shot-out door opens but won't lock, and drifts ajar again when closed.
         _session.SendInteract(shootDoor.InteractionId);
         await Wait(0.8);
         _session.SendInteract(shootDoor.InteractionId);
         await Wait(0.8);
+        await DevShot("breach-closed-ajar");
         _session.SendLockDoor(shootDoor.InteractionId);
         await Wait(0.5);
         GD.Print("[client] dev-breach: done");
@@ -255,7 +306,7 @@ public partial class ClientGame
         if (CmdArgs.Get("dev-shots") is not { Length: > 0 } dir) return;
         await Wait(0.6);
         var path = System.IO.Path.Combine(dir, name + ".png");
-        GD.Print($"[client] dev-upstairs: screenshot {path}: {GetViewport().GetTexture().GetImage().SavePng(path)}");
+        GD.Print($"[client] screenshot {path}: {GetViewport().GetTexture().GetImage().SavePng(path)}");
     }
 
     private void Face(PlayerCharacter me, float x, float z, float pitch = 0)

@@ -25,19 +25,19 @@ public static class Breaching
     public static float PickSeconds(BuildingType type) => type switch
     {
         BuildingType.Cottage or BuildingType.RowHouse => 4f,
-        BuildingType.House or BuildingType.Shop => 5f,
+        BuildingType.House or BuildingType.Shop or BuildingType.Tavern => 5f,
         BuildingType.Warehouse => 6f,
         BuildingType.Manor or BuildingType.Office => 7f,
-        BuildingType.Guardhouse => 8f,
+        BuildingType.Guardhouse or BuildingType.PowerStation => 8f,
         _ => 5f,
     };
 
     public static int KicksToBreak(BuildingType type) => type switch
     {
         BuildingType.Cottage or BuildingType.RowHouse => 2,
-        BuildingType.House or BuildingType.Shop => 3,
+        BuildingType.House or BuildingType.Shop or BuildingType.Tavern => 3,
         BuildingType.Manor or BuildingType.Office or BuildingType.Warehouse => 4,
-        BuildingType.Guardhouse => 6,
+        BuildingType.Guardhouse or BuildingType.PowerStation => 6,
         _ => 3,
     };
 

@@ -90,6 +90,7 @@ public partial class CityNpc : Node3D
     public override void _Ready()
     {
         _body = GetNode<Node3D>("Body");
+        Audio.GameAudio.Instance?.TrackFootsteps(this, -2);
         _label = GetNode<Label3D>("Label");
         _hitbox = GetNode<Interactable>("Hitbox");
         Position = NetPosition;

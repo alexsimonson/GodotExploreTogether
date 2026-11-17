@@ -38,6 +38,13 @@ public partial class CitySimulation : Node
     private CityLayout? _city;
     private CityDoors? _doors;
 
+    /// <summary>The city's electricity and light switches (null: lights only follow the residents).</summary>
+    public CityPower? Power { get; set; }
+    /// <summary>Per building: how long someone who belongs there has been awake inside with the lights switched off.</summary>
+    private float[] _darkFor = [];
+    /// <summary>A switched-off light gets noticed (and switched back on) after this long (real seconds).</summary>
+    public const float NoticeDarkSeconds = 12;
+
     private static readonly bool DevLog = CmdArgs.Has("dev-log-npcs");
 
     /// <param name="players">Where the players in this city are now.</param>
@@ -53,21 +60,44 @@ public partial class CitySimulation : Node
     }
 
     /// <summary>Every building with someone awake inside is lit after dark (clients light its windows; it helps residents see).</summary>
-    private void UpdateLights()
+    /// <param name="seconds">Real seconds since the last update (for noticing switched-off lights).</param>
+    private void UpdateLights(float seconds = 0)
     {
         if (_city == null || _doors == null) return;
         var dark = CityLighting.Daylight(Clock.HourOfDay) < 0.5f;
-        var lit = new bool[_city.Parcels.Count];
+        var want = new bool[_city.Parcels.Count];
+        var homeAwake = new CityNpcBrain?[_city.Parcels.Count]; // someone who belongs there, awake inside
         if (dark)
         {
             foreach (var (brain, _) in _npcs)
                 if (!brain.IsDown && brain.Activity != "sleeping" && _city.ParcelAt(brain.X, brain.Z) is { } p && p.Footprint.Contains(brain.X, brain.Z))
-                    lit[p.Id] = true;
-            // Police stations are staffed all night: always lit.
+                {
+                    want[p.Id] = true;
+                    if (brain.Person.Home == p.Id || brain.Person.Work == p.Id) homeAwake[p.Id] = brain;
+                }
+            // Police stations are staffed all night (always lit); so are taverns while open, and the power station.
             foreach (var p in _city.Parcels)
-                if (p.Building == BuildingType.Guardhouse) lit[p.Id] = true;
+                if (p.Building is BuildingType.Guardhouse or BuildingType.PowerStation
+                    || p.Building == BuildingType.Tavern && Stealth.IsOpen(p.Building, Clock.HourOfDay))
+                    want[p.Id] = true;
         }
-        for (var i = 0; i < lit.Length; i++) _doors.SetLit(i, lit[i]);
+        if (_darkFor.Length != want.Length) _darkFor = new float[want.Length];
+        for (var i = 0; i < want.Length; i++)
+        {
+            // Someone at home in the dark (a player switched it off): after a while they notice, and switch it back on.
+            if (Power?.SwitchState(i) == LightSwitch.Off && homeAwake[i] is { } who)
+            {
+                if ((_darkFor[i] += seconds) >= NoticeDarkSeconds)
+                {
+                    _darkFor[i] = 0;
+                    Power.ResetSwitch(i);
+                    who.Remark("Who turned the lights off?");
+                    GD.Print($"[server] {_label}: {who.Person.Name} switches the lights of building {i} back on");
+                }
+            }
+            else _darkFor[i] = 0;
+            _doors.SetLit(i, dark && (Power?.BuildingLit(i, want[i]) ?? want[i]));
+        }
     }
 
     public void Add(CityNpcBrain brain, CityNpc node)
@@ -96,8 +126,8 @@ public partial class CitySimulation : Node
         }
         if ((_lightsTimer += delta) >= 1)
         {
+            UpdateLights((float)_lightsTimer);
             _lightsTimer = 0;
-            UpdateLights();
         }
 
         if ((_clockBroadcastTimer += delta) >= 5)

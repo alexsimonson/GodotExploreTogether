@@ -8,10 +8,11 @@ public enum NpcRole
 {
     /// <summary>Lives in a home; spends the day on errands and walks. Minds their own home.</summary>
     Civilian,
-    /// <summary>Lives in a home; works at an office or warehouse. Minds their home and workplace.</summary>
+    /// <summary>Lives in a home; works at an office or warehouse (days) or a tavern (evenings). Minds their home and workplace.</summary>
     Worker,
-    /// <summary>Posted to a police station (a guardhouse, where they live); patrols nearby streets on shift.
-    /// Authority everywhere: investigates, arrests, and uses force on those who resist.</summary>
+    /// <summary>Lives in a home and works at a police station (a guardhouse): on shift, patrols nearby streets or (a desk
+    /// officer, <see cref="Person.Desk"/>) keeps the station. Authority everywhere: investigates, arrests, and uses force
+    /// on those who resist.</summary>
     Police,
     /// <summary>Lives in a home; keeps a shop (opens it in the morning, locks it at night) and defends it.</summary>
     Shopkeeper,
@@ -39,8 +40,13 @@ public enum NpcTraits
 /// <summary>One person in the city. <see cref="Home"/> and <see cref="Work"/> are parcel ids (-1 = none).</summary>
 public sealed record Person(int Id, string Name, NpcRole Role, int Home, int Work)
 {
+    private readonly int? _shift;
+
     /// <summary>Police and security: 0 = day shift (6:00 to 18:00), 1 = night shift.</summary>
-    public int Shift => Id % 2;
+    public int Shift { get => _shift ?? Id % 2; init => _shift = value; }
+
+    /// <summary>Police: keeps the station on shift (answers the door, wakes nobody, stays put unless needed) instead of patrolling.</summary>
+    public bool Desk { get; init; }
 
     public NpcTraits Traits { get; init; }
 
@@ -69,8 +75,10 @@ public sealed class CityPopulation
     private readonly Dictionary<int, List<Person>> _byParcel = new();
     private readonly CityLayout _city;
 
-    /// <summary>The default size: about 1.6 people per tile (40 for 5×5).</summary>
-    public static int DefaultCount(CityLayout city) => (int)Math.Round(city.Width * city.Height * 1.6);
+    /// <summary>The default size: about 2.4 people per tile (60 for 5×5).</summary>
+    public static int DefaultCount(CityLayout city) => (int)Math.Round(city.Width * city.Height * PerTile);
+
+    public const double PerTile = 2.4;
 
     public static int HomeCapacity(BuildingType type) => type switch
     {
@@ -86,8 +94,15 @@ public sealed class CityPopulation
     {
         BuildingType.Office => 4,
         BuildingType.Warehouse => 3,
+        BuildingType.PowerStation => 2,
         _ => 0,
     };
+
+    /// <summary>Staff a tavern always gets (evening workers), like a shop's keeper.</summary>
+    public const int TavernStaff = 2;
+
+    /// <summary>Workers a building employs: <see cref="Jobs"/>, or a tavern's staff.</summary>
+    public static int WorkerPosts(BuildingType type) => type == BuildingType.Tavern ? TavernStaff : Jobs(type);
 
     /// <summary>Security guards a property may hire (each post is filled about 60% of the time).</summary>
     public static int SecurityPosts(BuildingType type) => type switch
@@ -95,10 +110,12 @@ public sealed class CityPopulation
         BuildingType.Manor => 1,
         BuildingType.Office => 1,
         BuildingType.Warehouse => 1,
+        BuildingType.PowerStation => 1,
         _ => 0,
     };
 
-    public const int PolicePerStation = 2;
+    /// <summary>Per station: a patrol officer and a desk officer on each of the two shifts.</summary>
+    public const int PolicePerStation = 4;
 
     private CityPopulation(CityLayout city, List<Person> people)
     {
@@ -123,32 +140,49 @@ public sealed class CityPopulation
         var people = new List<Person>();
         var names = new NameMaker(random);
 
-        // Police first: they're what makes a station work.
+        // Police first: they're what makes a station work. Each station has, per shift, a patrol and a desk officer
+        // (so it's never left empty); off shift they go home like anyone else.
         var stations = city.Parcels.Where(p => p.Building == BuildingType.Guardhouse).ToList();
+        var officers = new List<(int Station, int Shift, bool Desk)>();
         foreach (var g in stations)
-            for (var i = 0; i < PolicePerStation && people.Count < total; i++)
-                people.Add(new Person(people.Count, names.Full(), NpcRole.Police, g.Id, g.Id));
+            for (var i = 0; i < PolicePerStation; i++)
+                officers.Add((g.Id, i % 2, i >= 2));
+        // With few people, the patrols come first at every station, then the desks.
+        officers = officers.OrderBy(o => o.Desk).Take(total).ToList();
+        var homes = city.Parcels.Where(p => HomeCapacity(p.Building) > 0).OrderBy(_ => random.Next()).ToList();
+        if (homes.Count == 0)
+        {
+            // A city with no homes (only possible with odd custom catalogs): the police live at their station.
+            foreach (var o in officers)
+                people.Add(new Person(people.Count, names.Full(), NpcRole.Police, o.Station, o.Station) { Shift = o.Shift, Desk = o.Desk });
+            officers.Clear();
+        }
 
-        // Then jobs, about half of the rest: every shop gets its keeper first, then security posts, then
-        // ordinary jobs, as long as there are people.
-        var keepers = city.Parcels.Where(p => p.Building == BuildingType.Shop).Select(p => (NpcRole.Shopkeeper, p.Id))
-            .OrderBy(_ => random.Next()).ToList();
+        // Then jobs, about half of the rest: every shop gets its keeper and every tavern its staff first, then
+        // security posts, then ordinary jobs, as long as there are people.
+        // Tavern staff come before everything else: a tavern nobody opens leaves its regulars standing in the street.
+        var keepers = city.Parcels.Where(p => p.Building == BuildingType.Tavern)
+            .SelectMany(p => Enumerable.Repeat((NpcRole.Worker, p.Id), TavernStaff))
+            .Concat(city.Parcels.Where(p => p.Building == BuildingType.Shop).Select(p => (NpcRole.Shopkeeper, p.Id))
+                .OrderBy(_ => random.Next())).ToList();
         var posts = city.Parcels.SelectMany(p => Enumerable.Repeat(p.Id, SecurityPosts(p.Building)))
             .Where(_ => random.Next(100) < 60).Select(id => (NpcRole.Security, id)).OrderBy(_ => random.Next()).ToList();
         var ordinary = city.Parcels.SelectMany(p => Enumerable.Repeat(p.Id, Jobs(p.Building)))
             .Select(id => (NpcRole.Worker, id)).OrderBy(_ => random.Next()).ToList();
         // Nearly half the jobs go to ordinary workers (offices and warehouses need staff too), then shops, then posts.
-        var remaining = total - people.Count;
+        var remaining = total - people.Count - officers.Count;
         var employed = Math.Min(keepers.Count + posts.Count + ordinary.Count, (int)Math.Round(remaining * 0.5));
         var staff = Math.Min(ordinary.Count, (int)Math.Round(employed * 0.45));
-        var jobs = ordinary.Take(staff).Concat(keepers).Concat(posts).Concat(ordinary.Skip(staff)).Take(employed).ToList();
-        var homesteaders = new List<(NpcRole Role, int Work)>();
-        for (var i = 0; i < employed; i++) homesteaders.Add(jobs[i]);
-        for (var i = employed; i < remaining; i++) homesteaders.Add((NpcRole.Civilian, -1));
+        var taverns = keepers.Count(k => k.Item1 == NpcRole.Worker);
+        var jobs = keepers.Take(taverns).Concat(ordinary.Take(staff)).Concat(keepers.Skip(taverns)).Concat(posts)
+            .Concat(ordinary.Skip(staff)).Take(employed).ToList();
+        var homesteaders = new List<(NpcRole Role, int Work, int Shift, bool Desk)>();
+        foreach (var o in officers) homesteaders.Add((NpcRole.Police, o.Station, o.Shift, o.Desk));
+        for (var i = 0; i < employed; i++) homesteaders.Add((jobs[i].Item1, jobs[i].Item2, -1, false));
+        for (var i = employed; i < remaining; i++) homesteaders.Add((NpcRole.Civilian, -1, -1, false));
         homesteaders = homesteaders.OrderBy(_ => random.Next()).ToList();
 
         // Households: fill random homes, each with 1..capacity people sharing a family name.
-        var homes = city.Parcels.Where(p => HomeCapacity(p.Building) > 0).OrderBy(_ => random.Next()).ToList();
         var next = 0;
         var homeIndex = 0;
         while (next < homesteaders.Count)
@@ -171,8 +205,9 @@ public sealed class CityPopulation
             var family = names.Family();
             for (var i = 0; i < size && next < homesteaders.Count; i++, next++)
             {
-                var (role, work) = homesteaders[next];
-                people.Add(new Person(people.Count, $"{names.First()} {family}", role, home.Id, work));
+                var (role, work, shift, desk) = homesteaders[next];
+                var person = new Person(people.Count, $"{names.First()} {family}", role, home.Id, work) { Desk = desk };
+                people.Add(shift >= 0 ? person with { Shift = shift } : person);
             }
         }
         return new CityPopulation(city, people.Select(p => WithTraits(p, seed)).ToList());

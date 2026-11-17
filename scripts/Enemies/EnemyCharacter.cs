@@ -71,6 +71,7 @@ public partial class EnemyCharacter : CharacterBody3D
     public override void _Ready()
     {
         _body = GetNode<Node3D>("Body");
+        Audio.GameAudio.Instance?.TrackFootsteps(this, 2);
         _healthLabel = GetNode<Label3D>("HealthLabel");
         _bodyMaterial = (StandardMaterial3D)GetNode<MeshInstance3D>("Body/Mesh").GetActiveMaterial(0).Duplicate();
         GetNode<MeshInstance3D>("Body/Mesh").MaterialOverride = _bodyMaterial;

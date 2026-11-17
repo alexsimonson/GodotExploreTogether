@@ -140,6 +140,9 @@ public sealed partial class CityNpcBrain
 
     private void Emit(NpcIntent intent) => _intents.Enqueue(intent);
 
+    /// <summary>Says something not tied to a reaction (the server's doing, e.g. noticing the lights are off).</summary>
+    public void Remark(string text) => Say(text);
+
     private void Say(string text)
     {
         Speech = text;

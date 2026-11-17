@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using ExploreTogether.Core;
+using ExploreTogether.Core.Items;
 using ExploreTogether.Dungeon;
 using ExploreTogether.Net;
 using ExploreTogether.Player;
@@ -36,10 +37,16 @@ public partial class ClientGame : Node
     private NetSession _session = null!;
     private LoginMenu _loginMenu = null!;
     private CharacterMenu _characterMenu = null!;
-    private Label _debugLabel = null!;
     private Label _promptLabel = null!;
     private Label _noticeLabel = null!;
     private DungeonMenu _dungeonMenu = null!;
+    private CityMenu _cityMenu = null!;
+    private HotbarBar _hotbar = null!;
+    private int[] _lastHotbar = [];
+    private bool _devHotbarDone, _shownFlashlight;
+
+    /// <summary>The dungeon entrance's or City Gate's menu is open (the mouse is free; no walking or attacking).</summary>
+    private bool MenuOpen => _dungeonMenu.Visible || _cityMenu.Visible;
     private InventoryScreen _inventory = null!;
     private Label _weaponLabel = null!;
     private Label _statusLabel = null!;
@@ -64,6 +71,8 @@ public partial class ClientGame : Node
     {
         _main = GetParent<Main>();
         _session = _main.Session;
+        AddChild(new Audio.GameAudio { Name = "GameAudio" });
+        _session.SoundReceived += (sound, at) => Audio.GameAudio.Instance?.PlayServerSound(sound, at);
 
         _loginMenu = new LoginMenu { Name = "LoginMenu" };
         AddChild(_loginMenu);
@@ -92,11 +101,20 @@ public partial class ClientGame : Node
         _session.CharacterResultReceived += (ok, message) => _characterMenu.SetBusy(false, ok ? "" : message);
         _session.EnterInstanceReceived += OnEnterInstance;
         _session.DungeonMenuReceived += OnDungeonMenu;
+        _session.CityMenuReceived += OnCityMenu;
         _session.NoticeReceived += ShowNotice;
         _session.InventoryReceived += OnInventory;
         _session.DungeonStatusReceived += OnDungeonStatus;
         _session.CityClockReceived += OnCityClock;
         _session.DoorStatesReceived += OnDoorStates;
+        _session.PowerStateReceived += OnPowerState;
+        _session.FurnitureTakenReceived += pieces =>
+        {
+            if (_currentInstanceId is not { } id) return;
+            GD.Print($"[client] furniture taken: {string.Join(", ", pieces)}");
+            foreach (var piece in pieces)
+                _main.Instances.GetNodeOrNull<City.CityChair>($"{InstanceFactory.NodeName(id)}/Level/Furniture/Furniture{piece}")?.SetTaken(true);
+        };
         _session.LootReceived += OnLoot;
         _session.DragStateReceived += OnDragState;
 
@@ -113,12 +131,23 @@ public partial class ClientGame : Node
         _dungeonMenu.CreateRequested += (w, h, len) => _session.SendCreateDungeon(w, h, len);
         _dungeonMenu.JoinRequested += id => _session.SendJoinDungeon(id);
 
+        _hotbar = new HotbarBar { Name = "Hotbar", Visible = false };
+        AddChild(_hotbar);
+        _hotbar.BindRequested += (key, container, slot) => _session.SendSetHotbar(key, (int)container, slot);
+        _hotbar.ClearRequested += key => _session.SendSetHotbar(key, -1, -1);
+        _session.HotbarReceived += (ids, _) =>
+        {
+            _lastHotbar = ids;
+            _hotbar.Show(ids, _lastInventoryQuads, _lastGear);
+        };
+
+        _cityMenu = new CityMenu { Name = "CityMenu", Visible = false };
+        AddChild(_cityMenu);
+        _cityMenu.CreateRequested += settings => _session.SendCreateCity(settings);
+        _cityMenu.JoinRequested += id => _session.SendJoinCity(id);
+
         var hud = new CanvasLayer { Name = "DebugHud" };
         AddChild(hud);
-        _debugLabel = new Label { Position = new Vector2(10, 8), Visible = false };
-        _debugLabel.AddThemeColorOverride("font_outline_color", Colors.Black);
-        _debugLabel.AddThemeConstantOverride("outline_size", 6);
-        hud.AddChild(_debugLabel);
 
         _promptLabel = HudLabel(hud, Control.LayoutPreset.CenterBottom, new Vector2(0, -90));
         _noticeLabel = HudLabel(hud, Control.LayoutPreset.CenterTop, new Vector2(0, 40));
@@ -160,34 +189,57 @@ public partial class ClientGame : Node
             GetViewport().SetInputAsHandled();
             return;
         }
-        if (@event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.F1 } && _currentInstanceId != null)
-        {
-            MaterialDebug.Toggle(_main.Instances);
-            UpdateDebugLabel();
-        }
-        else if (@event.IsActionPressed(InputSetup.Interact) && _focused != null && !_dungeonMenu.Visible)
+        if (@event.IsActionPressed(InputSetup.Interact) && _focused != null && !MenuOpen)
         {
             NoteInteraction(_focused.InteractionId);
             _session.SendInteract(_focused.InteractionId);
         }
-        else if (@event.IsActionPressed(InputSetup.DragBody) && !_dungeonMenu.Visible && _currentKind == InstanceKinds.City)
+        else if (@event.IsActionPressed(InputSetup.DragBody) && !MenuOpen && _currentKind == InstanceKinds.City)
         {
             // G: let go of the body being dragged, or take hold of the one looked at.
             if (_draggingName != "") _session.SendDragBody("");
             else if (_focused?.InteractionId.StartsWith(City.CityNpc.LootPrefix) == true) _session.SendDragBody(_focused.InteractionId);
         }
+        else if (@event.IsActionPressed(InputSetup.ToggleLight) && _currentInstanceId != null && !MenuOpen && !_inventory.Visible)
+        {
+            _session.SendCityAction("flashlight", "");
+        }
+        else if (HotbarKey(@event) is { } key && _currentInstanceId != null && !MenuOpen)
+        {
+            // Over an inventory or equipment slot: put that item on the key. Otherwise: use the key.
+            if (_inventory.Visible && ItemSlotButton.Hovered is { ItemId: not null, Container: ItemContainer.Inventory or ItemContainer.Gear } slot)
+                _session.SendSetHotbar(key, (int)slot.Container, slot.Index);
+            else if (!_inventory.Visible)
+                _session.SendUseHotbar(key);
+        }
         else if (@event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Tab }
-                 && _currentInstanceId != null && !_dungeonMenu.Visible)
+                 && _currentInstanceId != null && !MenuOpen)
         {
             _inventory.Toggle();
+            Audio.GameAudio.Instance?.Play2D(_inventory.Visible ? "ui_open" : "ui_close", -8);
         }
     }
+
+    /// <summary>1 to 6 (top row or keypad) as hotbar key 0 to 5, else null.</summary>
+    private static int? HotbarKey(InputEvent @event) => @event is InputEventKey { Pressed: true, Echo: false } k
+        ? k.PhysicalKeycode switch
+        {
+            >= Key.Key1 and <= Key.Key6 => (int)(k.PhysicalKeycode - Key.Key1),
+            >= Key.Kp1 and <= Key.Kp6 => (int)(k.PhysicalKeycode - Key.Kp1),
+            _ => null,
+        }
+        : null;
 
     public override void _Process(double delta)
     {
         if (_noticeTimeLeft > 0 && (_noticeTimeLeft -= delta) <= 0)
             _noticeLabel.Visible = false;
         CombatProcess(delta);
+        if (PlayerCharacter.Local?.NetFlashlight is { } lit && lit != _shownFlashlight)
+        {
+            _shownFlashlight = lit;
+            UpdateWeaponLabel();
+        }
         StorageProcess(delta);
         CityProcess(delta);
         StealthProcess(delta);
@@ -201,7 +253,7 @@ public partial class ClientGame : Node
     {
         _focused = null;
         var player = PlayerCharacter.Local;
-        if (player != null && Input.MouseMode == Input.MouseModeEnum.Captured && !_dungeonMenu.Visible)
+        if (player != null && Input.MouseMode == Input.MouseModeEnum.Captured && !MenuOpen)
         {
             var camera = player.Camera;
             var from = camera.GlobalPosition;
@@ -229,6 +281,8 @@ public partial class ClientGame : Node
         _lastInventoryQuads = quads;
         _lastGear = gear;
         _inventory.SetState(quads, gear, gearData);
+        _hotbar.Show(_lastHotbar, quads, gear);
+        _hotbar.Visible = true;
         UpdateEquippedWeapon(gear);
         _weaponLabel.Visible = true;
 
@@ -309,6 +363,17 @@ public partial class ClientGame : Node
         GD.Print($"[client] dungeon menu: {dungeons.Count} running");
         if (DevDungeonStep(dungeons)) return;
         _dungeonMenu.Open(dungeons);
+    }
+
+    private void OnCityMenu(List<CitySummary> cities, CitySettings defaults)
+    {
+        GD.Print($"[client] city menu: {cities.Count} running");
+        if (CmdArgs.Has("dev-city"))
+        {
+            _session.SendJoinCity(0); // dev: wherever the others are, or a new city with the server's defaults
+            return;
+        }
+        _cityMenu.Open(cities, defaults);
     }
 
     private static Label HudLabel(CanvasLayer hud, Control.LayoutPreset preset, Vector2 offset)
@@ -427,13 +492,14 @@ public partial class ClientGame : Node
         _inventory.CloseLoot();
         _inventory.CloseSupply();
         _dungeonMenu.Visible = false;
+        _cityMenu.Visible = false;
         _inventory.Visible = false;
         _statusLabel.Visible = false;
         InstanceFactory.Build(_main.Instances, instanceId, kind, layoutData, isServer: false);
         _currentInstanceId = instanceId;
         _currentKind = kind;
-        MaterialDebug.Apply(_main.Instances);
-        UpdateDebugLabel();
+        Audio.GameAudio.Instance?.EnterPlace(kind, _main.Instances.GetNodeOrNull<Node3D>(InstanceFactory.NodeName(instanceId)),
+            kind == InstanceKinds.City ? Core.City.CityLayout.Import(layoutData, City.CityCatalog.Catalog) : null);
         _loginMenu.Visible = false;
         _characterMenu.Visible = false;
         GD.Print($"[client] entered instance {instanceId} ({kind})" +
@@ -491,7 +557,52 @@ public partial class ClientGame : Node
             GetTree().CreateTimer(CmdArgs.GetFloat("dev-drag-delay", 2.5f)).Timeout +=
                 () => { if (_currentInstanceId == instanceId) DevDragStart(instanceId); };
         if (kind == InstanceKinds.Hub) GetTree().CreateTimer(0.5).Timeout += DevHubStations;
+        if (kind == InstanceKinds.Hub && CmdArgs.Has("dev-hotbar") && !_devHotbarDone)
+        {
+            // --dev-hotbar: put the Sword on key 1 and the Bat on key 2, then press 1, 2, and 2 again (hands empty).
+            _devHotbarDone = true;
+            int SlotOf(string name)
+            {
+                for (var i = 0; i + 3 < _lastInventoryQuads.Length; i += 4)
+                    if (ItemCatalog.NameOf(_lastInventoryQuads[i + 1]) == name) return _lastInventoryQuads[i];
+                return -1;
+            }
+            var steps = new (double At, System.Action Do)[]
+            {
+                (1.0, () => _session.SendSetHotbar(0, (int)ItemContainer.Inventory, SlotOf("Sword"))),
+                (1.3, () => _session.SendSetHotbar(1, (int)ItemContainer.Inventory, SlotOf("Bat"))),
+                (2.0, () => _session.SendUseHotbar(0)),
+                (3.0, () => _session.SendUseHotbar(1)),
+                (4.0, () => _session.SendUseHotbar(1)),
+                (5.0, () => GD.Print($"[client] dev-hotbar: keys {string.Join(",", _lastHotbar.Select(ItemCatalog.NameOf))}")),
+                // The flashlight: into the offhand, switched on; then a two-handed shotgun won't go in the main hand.
+                (5.5, () => _session.SendMoveItem((int)ItemContainer.Inventory, SlotOf("Flashlight"), (int)ItemContainer.Gear, (int)EquipmentType.Offhand)),
+                (6.0, () => _session.SendCityAction("flashlight", "")),
+                (6.5, () => _session.SendMoveItem((int)ItemContainer.Inventory, SlotOf("Pump Shotgun"), (int)ItemContainer.Gear, (int)EquipmentType.Weapon)),
+            };
+            foreach (var (at, step) in steps) GetTree().CreateTimer(at).Timeout += step;
+        }
         if (kind == InstanceKinds.City) DevStealthStart(instanceId);
+        if (kind == InstanceKinds.City && CmdArgs.Has("dev-chair"))
+        {
+            // --dev-chair: pick up the nearest chair (needs the server's --dev-skip-proximity), then hold it.
+            GetTree().CreateTimer(2.0).Timeout += () =>
+            {
+                if (_currentInstanceId != instanceId || PlayerCharacter.Local is not { } me) return;
+                var city = Core.City.CityLayout.Import(_cityLayoutData, City.CityCatalog.Catalog);
+                var chair = Core.City.Furniture.Generate(city).Where(f => f.Kind == Core.City.FurnitureKind.Chair)
+                    .MinBy(f => new Vector2(f.Rect.CenterX - me.GlobalPosition.X, f.Rect.CenterZ - me.GlobalPosition.Z).Length());
+                if (chair == null) return;
+                GD.Print($"[client] dev-chair: taking chair {chair.Id}");
+                _session.SendInteract(City.CityFurniture.IdFor(chair.Id));
+            };
+            GetTree().CreateTimer(3.0).Timeout += () =>
+            {
+                for (var i = 0; i + 3 < _lastInventoryQuads.Length; i += 4)
+                    if (_lastInventoryQuads[i + 1] == ItemCatalog.ChairId)
+                        _session.SendMoveItem((int)ItemContainer.Inventory, _lastInventoryQuads[i], (int)ItemContainer.Gear, (int)EquipmentType.Weapon);
+            };
+        }
         if (kind == InstanceKinds.City && CmdArgs.Has("dev-doors"))
             GetTree().CreateTimer(2.5).Timeout += () => { if (_currentInstanceId == instanceId) DevDoorsStart(instanceId); };
         if (kind == InstanceKinds.Hub && CmdArgs.Has("dev-city") && !_devCityDone)
@@ -639,10 +750,11 @@ public partial class ClientGame : Node
         Multiplayer.MultiplayerPeer?.Close();
         Multiplayer.MultiplayerPeer = new OfflineMultiplayerPeer();
         Input.MouseMode = Input.MouseModeEnum.Visible;
-        UpdateDebugLabel();
         _characterMenu.Visible = false;
         _dungeonMenu.Visible = false;
+        _cityMenu.Visible = false;
         _inventory.Visible = false;
+        _hotbar.Visible = false;
         _statusLabel.Visible = false;
         _loginMenu.Visible = true;
         _loginMenu.SetBusy(false, status);
@@ -656,12 +768,6 @@ public partial class ClientGame : Node
             child.QueueFree();
         }
         _currentInstanceId = null;
-    }
-
-    private void UpdateDebugLabel()
-    {
-        _debugLabel.Visible = _currentInstanceId != null;
-        _debugLabel.Text = $"Materials: {MaterialDebug.Describe(MaterialDebug.Current)}   [F1 to toggle]";
     }
 
     private bool IsConnected() =>

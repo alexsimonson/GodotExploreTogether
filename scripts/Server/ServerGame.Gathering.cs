@@ -1,3 +1,4 @@
+using ExploreTogether.Core.Audio;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -68,6 +69,7 @@ public partial class ServerGame
 
         SendInventory(s);
         SaveInventory(s, events.ToArray());
+        if (resource is Node3D node) PlaySound(instance, SoundId.Chop, node.GlobalPosition + Vector3.Up);
         var total = s.Inventory.CountOf(itemId);
         _session.SendNotice(s.Peer, $"You get {ItemCatalog.NameOf(itemId)} ({total}).{(result.DepletesNow ? $" The {def.Name.ToLowerInvariant()} is depleted." : "")}");
         GD.Print($"[server] '{s.Character!.Name}' gathered {ItemCatalog.NameOf(itemId)} from {resource.Name} in instance {instance.Id}" +

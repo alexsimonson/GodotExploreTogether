@@ -162,7 +162,7 @@ shape = SubResource("BoxShape3D_rock_block")
 
 [node name="Title" type="Label3D" parent="MaterialSamples"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.8, -19.4)
-text = "Material samples  (floor = hardwood, walls = brick)  -  F1 toggles all effects on/off"
+text = "Material samples  (floor = hardwood, walls = brick)"
 font_size = 56
 outline_size = 12
 

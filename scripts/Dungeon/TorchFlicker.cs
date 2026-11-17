@@ -14,6 +14,17 @@ public partial class TorchFlicker : OmniLight3D
         _baseEnergy = LightEnergy;
         _target = _baseEnergy;
         SetProcess(!Main.IsServer);
+        if (!Main.IsServer) CallDeferred(MethodName.AddCrackle);
+    }
+
+    /// <summary>A quiet fire crackle, heard only up close.</summary>
+    private void AddCrackle()
+    {
+        if (Audio.GameAudio.Instance?.Loop("torch_crackle") is not { } stream) return;
+        var player = new AudioStreamPlayer3D { Stream = stream, Bus = Audio.GameAudio.Ambience, MaxDistance = 7, UnitSize = 1.5f, VolumeDb = -6 };
+        AddChild(player);
+        player.Play((float)GD.RandRange(0, 2));
+        Audio.GameAudio.Instance?.Track(player, "torch_crackle");
     }
 
     public override void _Process(double delta)

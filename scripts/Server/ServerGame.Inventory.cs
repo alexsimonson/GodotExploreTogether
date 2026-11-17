@@ -1,3 +1,4 @@
+using ExploreTogether.Core.Audio;
 using System.Collections.Generic;
 using ExploreTogether.Core.Items;
 using ExploreTogether.Core.Persistence;
@@ -13,6 +14,36 @@ namespace ExploreTogether.Server;
 /// </summary>
 public partial class ServerGame
 {
+    /// <summary>Puts the item in an inventory or gear slot on a hotbar key (container -1: clears the key).</summary>
+    private void OnSetHotbar(long peer, int index, int container, int slot)
+    {
+        if (!_sessions.TryGetValue(peer, out var s) || s.Inventory == null || s.Gear == null || s.Hotbar == null) return;
+        var item = container switch
+        {
+            -1 => null,
+            (int)ItemContainer.Inventory or (int)ItemContainer.Gear => SlotContainerLogic.Slot(s.Inventory, s.Gear, (ItemContainer)container, slot),
+            _ => null,
+        };
+        if (container != -1 && item?.itemId == null) return;
+        if (!s.Hotbar.Bind(index, item))
+        {
+            _session.SendNotice(peer, "Only equipment goes on the hotbar.");
+            return;
+        }
+        _db.SaveHotbar(s.Character!.Id, s.Hotbar.Occupied());
+        SendInventory(s);
+    }
+
+    /// <summary>A hotbar key: equip its item (or put it away if it's already equipped).</summary>
+    private void OnUseHotbar(long peer, int index)
+    {
+        if (!_sessions.TryGetValue(peer, out var s) || s.Inventory == null || s.Gear == null || s.Hotbar == null) return;
+        if (s.Hotbar.MoveFor(index, s.Inventory, s.Gear) is { } m)
+            OnMoveItem(peer, (int)m.From, m.FromSlot, (int)m.To, m.ToSlot);
+        else if (s.Hotbar[index] != null && s.Hotbar.Find(index, s.Inventory, s.Gear) == null)
+            _session.SendNotice(peer, $"You don't have the {ItemCatalog.NameOf(s.Hotbar[index]!.Value.ItemId)} any more.");
+    }
+
     private void OnMoveItem(long peer, int fromContainer, int fromSlot, int toContainer, int toSlot)
     {
         if (!_sessions.TryGetValue(peer, out var s) || s.Inventory == null || s.Gear == null) return;
@@ -39,6 +70,8 @@ public partial class ServerGame
             _session.SendNotice(peer, "You need to be at the storage chest.");
         else if (to == ItemContainer.Storage && moved?.ItemId == ItemCatalog.DungeonPassId)
             _session.SendNotice(peer, "The Dungeon Pass belongs to the dungeon.");
+        else if (moved is { } item && SlotContainerLogic.HandsBlock(s.Gear, from, fromSlot, to, toSlot, item.ItemId) is { } why)
+            _session.SendNotice(peer, why);
         else
             changed = SlotContainerLogic.Move(s.Inventory, s.Gear, from, fromSlot, to, toSlot, s.Storage);
 
@@ -84,6 +117,7 @@ public partial class ServerGame
         var forward = -found.Player.Transform.Basis.Z;
         var position = found.Player.NetPosition + forward * 0.8f + new Vector3(0, 0.8f, 0);
         _instances.SpawnItem(found.Instance, d.ItemId, position, d.Count, d.Data, d.Uid);
+        PlaySound(found.Instance, SoundId.ItemDrop, position);
         if (d.ItemId == ItemCatalog.DungeonPassId) SaveInventory(s); // the pass isn't tracked
         else SaveInventory(s, ItemEventFor(s, ItemActions.Dropped, d.ItemId, d.Count, d.Uid, found.Instance));
         GD.Print($"[server] '{s.Character!.Name}' dropped {ItemCatalog.NameOf(d.ItemId)} x{d.Count} in instance {found.Instance.Id}");

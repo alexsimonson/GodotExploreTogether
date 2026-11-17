@@ -43,6 +43,7 @@ public static class SlotContainerLogic
         var target = Slot(inventory, gear, to, toSlot, storage, loot, lootGear);
         if (source == null || target == null || source.itemId == null) return false;
         if (ReferenceEquals(source, target)) return false;
+        if (HandsBlock(gear, from, fromSlot, to, toSlot, source.itemId.Value) != null) return false;
 
         return (from is ItemContainer.Gear or ItemContainer.LootGear, to is ItemContainer.Gear or ItemContainer.LootGear) switch
         {
@@ -51,6 +52,23 @@ public static class SlotContainerLogic
             (true, false) => UnEquipItem(source, target, Gear.TypeOf(fromSlot)),
             (true, true) => SwapEquipment(source, target, Gear.TypeOf(fromSlot), Gear.TypeOf(toSlot)),
         };
+    }
+
+    /// <summary>
+    /// Two hands, two jobs at most: a two-handed weapon can't be equipped while the offhand holds something, and
+    /// nothing goes into the offhand while a two-handed weapon is equipped. Returns why a move is blocked, or null.
+    /// </summary>
+    public static string? HandsBlock(Gear gear, ItemContainer from, int fromSlot, ItemContainer to, int toSlot, int itemId)
+    {
+        if (to != ItemContainer.Gear || ItemCatalog.Get(itemId) is not { } def) return null;
+        var weapon = (int)EquipmentType.Weapon;
+        var offhand = (int)EquipmentType.Offhand;
+        var fromOwnOffhand = from == ItemContainer.Gear && fromSlot == offhand;
+        if (toSlot == weapon && def.TwoHanded && gear.slots[offhand].itemId != null && !fromOwnOffhand)
+            return $"The {def.Name} needs both hands: put away the {ItemCatalog.NameOf(gear.slots[offhand].itemId!.Value)} first.";
+        if (toSlot == offhand && gear.EquippedWeapon is { TwoHanded: true } held && !(from == ItemContainer.Gear && fromSlot == weapon))
+            return $"Both hands are on the {held.Name}.";
+        return null;
     }
 
     /// <summary>

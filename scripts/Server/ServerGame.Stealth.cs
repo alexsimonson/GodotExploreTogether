@@ -1,3 +1,4 @@
+using ExploreTogether.Core.Audio;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -31,6 +32,15 @@ public partial class ServerGame
     private void SetUpCityStealth(ServerInstance city)
     {
         city.Lighting = new CityLighting(city.City!);
+        city.Power = new CityPower(city.City!, city.Lighting);
+        city.Lighting.Power = city.Power;
+        city.Simulation!.Power = city.Power;
+        // Everyone in the city sees the lights go out (and come back).
+        city.Power.Changed += () =>
+        {
+            var state = city.Power.Export();
+            foreach (var peer in city.Players.Keys) _session.SendPowerState(peer, state);
+        };
         foreach (var npc in city.Npcs.Values)
         {
             npc.Brain.Obstacles = (ax, az, bx, bz, y) => ObstacleBetween(city, ax, az, bx, bz, y);
@@ -60,6 +70,9 @@ public partial class ServerGame
         npc.Brain.HasMeleeWeapon = weapon != null && !gun;
     }
 
+    /// <summary>How lit a player holding a lit flashlight counts as (0..1), for being seen.</summary>
+    private const float FlashlightGlow = 0.85f;
+
     private float LightAt(ServerInstance city, float x, float z) =>
         city.Lighting!.LightAt(x, z, city.Simulation!.Clock.HourOfDay, parcel => city.Doors![parcel].Lit);
 
@@ -68,6 +81,7 @@ public partial class ServerGame
     {
         if (city.Kind != Net.InstanceKinds.City) return;
         city.Noises.Add(noise);
+        PlaySound(city, NoiseSound(noise), new Vector3(noise.X, noise.Y + 1.2f, noise.Z));
         if (noise.Severity >= Severity.Crime || noise.Radius >= Stealth.KickRadius)
             GD.Print($"[server] noise in city {city.Id}: {noise.Cause} at ({noise.X:0}, {noise.Z:0}), heard within {noise.Radius:0} m");
     }
@@ -78,7 +92,7 @@ public partial class ServerGame
         var pos = player.NetPosition;
         if (city.City!.ParcelAt(pos.X, pos.Z) is { } parcel)
         {
-            var open = parcel.IsPublic && Stealth.ShopOpen(hour) && !city.Doors!.IsLocked(parcel.Id);
+            var open = parcel.IsPublic && Stealth.IsOpen(parcel.Building, hour) && !city.Doors!.IsLocked(parcel.Id);
             if (!open) c |= parcel.Footprint.Contains(pos.X, pos.Z) ? Conduct.TrespassInside : Conduct.TrespassYard;
         }
         switch (s.Gear?.EquippedWeapon?.Class)
@@ -118,7 +132,9 @@ public partial class ServerGame
                 (s.LastSample, s.LastSampleAt) = (pos, now);
             }
             var c = ConductOf(s, player, city, hour);
-            players.Add((peer, s, player, c, LightAt(city, pos.X, pos.Z), layout.ParcelAt(pos.X, pos.Z)?.Id ?? -1));
+            // A lit flashlight shows you to everyone, however dark it is.
+            var light = s.FlashlightOn ? Mathf.Max(LightAt(city, pos.X, pos.Z), FlashlightGlow) : LightAt(city, pos.X, pos.Z);
+            players.Add((peer, s, player, c, light, layout.ParcelAt(pos.X, pos.Z)?.Id ?? -1));
             // Footsteps: running anywhere, or walking about inside a building (not crouched).
             var inside = (c & Conduct.TrespassInside) != 0;
             if (!player.NetCrouching && now - s.LastFootstepAt > 0.6 && (s.SampledSpeed > 5.5f || inside && s.SampledSpeed > 1))
@@ -271,7 +287,9 @@ public partial class ServerGame
         var responders = duplicate ? 0 : report.Severity >= Severity.Violent ? 2 : 1;
         var sent = new List<string>();
         var police = city.Npcs.Values.Where(n => n.Role == NpcRole.Police && !n.IsDown)
-            .OrderBy(n => new Vector2(n.Position.X - report.X, n.Position.Z - report.Z).Length());
+            // Patrols first; the desk officer leaves the station only if they're much closer; off duty, last of all.
+            .OrderBy(n => new Vector2(n.Position.X - report.X, n.Position.Z - report.Z).Length()
+                          + (n.Brain.OnPatrol ? 0 : n.Brain.Activity == "on desk" ? 150 : 300));
         foreach (var officer in police)
             if (officer.Brain.Dispatch(report.X, report.Z, report.Player, report.Severity, respond: sent.Count < responders,
                     Retold(report, Witness.CallFactor), report.Confidence * Witness.CallFactor))
@@ -354,7 +372,11 @@ public partial class ServerGame
         if (GunRules.Loaded(slot) == 0)
         {
             var loaded = GunRules.Reload(slot, gun, npc.Inventory);
-            if (loaded > 0) GD.Print($"[server] {npc.NetName} reloads ({loaded})");
+            if (loaded > 0)
+            {
+                GD.Print($"[server] {npc.NetName} reloads ({loaded})");
+                PlaySound(city, ReloadSound(gun), npc.Position + Vector3.Up);
+            }
             RefreshArms(npc); // none left: they fight with it as a club
             return;
         }
@@ -376,6 +398,7 @@ public partial class ServerGame
             from, from + dir * (d + 8), collisionMask: 1 | 2 | 8, exclude: [hitbox]));
         var end = hit.Count > 0 ? (Vector3)hit["position"] : from + dir * (d + 8);
         foreach (var other in city.Players.Keys) _session.SendShot(other, from, end);
+        PlaySound(city, ShotSound(gun), from);
         EmitNoise(city, new Noise(from.X, from.Z, gun.Breaches ? Stealth.ShotgunRadius : Stealth.GunshotRadius, "gunshot", Severity.Violent, Y: npc.Position.Y));
         var damage = NpcDamage(gun, d);
         var outcome = "miss";
@@ -397,6 +420,7 @@ public partial class ServerGame
     private void HurtResidentByResident(CityNpc attacker, CityNpc victim, int damage)
     {
         var killed = victim.TakeDamage(damage);
+        if (_instances.Cities.FirstOrDefault(c => c.Npcs.ContainsKey(victim.Name)) is { } city) PlaySound(city, killed ? SoundId.NpcDeath : SoundId.NpcHurt, victim.Position + Vector3.Up);
         GD.Print($"[server] {victim.NetName} ({victim.Role}) is hit by {attacker.NetName} for {damage} ({victim.NetHealth} left)" +
                  (killed ? ", killed" : ""));
     }
@@ -431,6 +455,7 @@ public partial class ServerGame
     {
         var died = s.Health.Damage(damage);
         SyncHealth(s);
+        if (city.Players.TryGetValue(s.Peer, out var hurt)) PlaySound(city, died ? SoundId.PlayerDeath : SoundId.PlayerHurt, hurt.NetPosition + Vector3.Up);
         if (!died) return;
         GD.Print($"[server] '{s.Character!.Name}' was killed by {npc.NetName} in city {city.Id}");
         NotifyInstance(city, $"{s.Character.Name} was killed by {npc.NetName}.", except: s.Peer);

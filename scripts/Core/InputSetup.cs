@@ -18,6 +18,8 @@ public static class InputSetup
     /// <summary>Grab a standing resident (hold on to choke them out), or struggle free when held.</summary>
     public const string Grab = "grab";
     public const string KickDoor = "kick_door";
+    /// <summary>Switch the flashlight (held in the offhand) on or off.</summary>
+    public const string ToggleLight = "toggle_light";
 
     public static void EnsureActions()
     {
@@ -33,6 +35,7 @@ public static class InputSetup
         Add(Crouch, Key.C);
         Add(Grab, Key.F);
         Add(KickDoor, Key.K);
+        Add(ToggleLight, Key.T);
     }
 
     private static void Add(string action, Key key)

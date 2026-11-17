@@ -14,6 +14,13 @@ public sealed record DungeonStatus(bool ExitOpen, string PassHolder, string[] Es
 
 /// <summary>A running dungeon as listed in the dungeon menu.</summary>
 public sealed record DungeonSummary(int Id, string CreatedBy, int Width, int Height, int Length, string[] Players);
+/// <summary>A running city, as listed at the City Gate: its size (tiles per side), residents, and the time there.</summary>
+public sealed record CitySummary(int Id, string CreatedBy, int Size, int People, float Hour, string[] Players);
+/// <summary>
+/// What a new city is made with (the City Gate's options). <see cref="People"/> below 0: the default for the size;
+/// <see cref="Seed"/> 0: random.
+/// </summary>
+public sealed record CitySettings(int Size, float StartHour, int People, float DayMinutes, int Seed);
 
 /// <summary>
 /// Session-level RPCs (not tied to an instance). Lives at /root/Main/Session on both
@@ -43,6 +50,10 @@ public partial class NetSession : Node
     public event Action<long, string>? DragBodyRequested;               // a body's interaction id, or "" to let go
     public event Action<long, int, int, int>? CreateDungeonRequested;   // width, height, length
     public event Action<long, int>? JoinDungeonRequested;               // instance id
+    public event Action<long, CitySettings>? CreateCityRequested;
+    public event Action<long, int, int, int>? SetHotbarRequested;       // key, container (-1 = clear), slot
+    public event Action<long, int>? UseHotbarRequested;                 // key
+    public event Action<long, int>? JoinCityRequested;                  // instance id
     public event Action<long, int, Vector3, float>? PlayerTransformReceived; // instance id, position, yaw
     public event Action<long, int, int, int, int>? MoveItemRequested;   // from container, from slot, to container, to slot
     public event Action<long, int, int>? DropItemRequested;             // container, slot
@@ -67,6 +78,8 @@ public partial class NetSession : Node
     public event Action<bool, string>? CharacterResultReceived;          // ok, message
     public event Action<int, string, int[]>? EnterInstanceReceived;      // instance id, kind, maze layout (dungeons)
     public event Action<List<DungeonSummary>>? DungeonMenuReceived;
+    public event Action<int[], long[]>? HotbarReceived;                  // item id per key (-1 empty), serial per key (-1 none)
+    public event Action<List<CitySummary>, CitySettings>? CityMenuReceived; // running cities, the server's defaults for a new one
     public event Action<string>? NoticeReceived;                         // short message for the HUD
     /// <summary>inventory (slot, item id, count, data) quads (data -1 = none); gear item ids and gear data per slot (-1 = empty/none)</summary>
     public event Action<int[], int[], int[]>? InventoryReceived;
@@ -85,6 +98,9 @@ public partial class NetSession : Node
     public event Action<Vector3>? PositionCorrectionReceived;            // the server rejected our movement: go back here
     public event Action<string, float>? ProgressReceived;                // a timed action (label, seconds; 0 = cancelled)
     public event Action<string, string>? GrabStateReceived;              // "holding"/"held"/"" and the other one's name
+    public event Action<int[]>? FurnitureTakenReceived;
+    public event Action<int[]>? PowerStateReceived;                       // Core.City.CityPower.Export                  // chair/stool ids picked up
+    public event Action<int, Vector3>? SoundReceived;                    // a Core.Audio.SoundId, and where
     public event Action<Vector3, Vector3>? ShotReceived;                 // a gunshot: muzzle and where it hit
     public event Action<int, string>? AlertReceived;                     // how aware the city is of us (0..3), and why
 
@@ -101,6 +117,10 @@ public partial class NetSession : Node
     public void SendDragBody(string interactionId) => RpcId(1, MethodName.DragBody, interactionId);
     public void SendCreateDungeon(int width, int height, int length) => RpcId(1, MethodName.CreateDungeon, width, height, length);
     public void SendJoinDungeon(int instanceId) => RpcId(1, MethodName.JoinDungeon, instanceId);
+    public void SendCreateCity(CitySettings c) => RpcId(1, MethodName.CreateCity, c.Size, c.StartHour, c.People, c.DayMinutes, c.Seed);
+    public void SendJoinCity(int instanceId) => RpcId(1, MethodName.JoinCity, instanceId);
+    public void SendSetHotbar(int key, int container, int slot) => RpcId(1, MethodName.SetHotbar, key, container, slot);
+    public void SendUseHotbar(int key) => RpcId(1, MethodName.UseHotbar, key);
 
     /// <summary>A drag-and-drop between slots (see Core.Items.SlotContainerLogic).</summary>
     public void SendMoveItem(int fromContainer, int fromSlot, int toContainer, int toSlot) =>
@@ -202,6 +222,30 @@ public partial class NetSession : Node
     }
 
     [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void CreateCity(int size, float startHour, int people, float dayMinutes, int seed)
+    {
+        if (Accept()) CreateCityRequested?.Invoke(Multiplayer.GetRemoteSenderId(), new CitySettings(size, startHour, people, dayMinutes, seed));
+    }
+
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void SetHotbar(int key, int container, int slot)
+    {
+        if (Accept()) SetHotbarRequested?.Invoke(Multiplayer.GetRemoteSenderId(), key, container, slot);
+    }
+
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void UseHotbar(int key)
+    {
+        if (Accept()) UseHotbarRequested?.Invoke(Multiplayer.GetRemoteSenderId(), key);
+    }
+
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void JoinCity(int instanceId)
+    {
+        if (Accept()) JoinCityRequested?.Invoke(Multiplayer.GetRemoteSenderId(), instanceId);
+    }
+
+    [Rpc(MultiplayerApi.RpcMode.AnyPeer, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void Login(string user, string password)
     {
         if (Accept()) LoginRequested?.Invoke(Multiplayer.GetRemoteSenderId(), user, password);
@@ -255,6 +299,8 @@ public partial class NetSession : Node
     public void SendProgress(long peer, string label, float seconds) => RpcId(peer, MethodName.Progress, label, seconds);
     public void SendGrabState(long peer, string state, string other) => RpcId(peer, MethodName.GrabState, state, other);
     public void SendShot(long peer, Vector3 from, Vector3 to) => RpcId(peer, MethodName.Shot, from, to);
+    /// <summary>Play a sound (a Core.Audio.SoundId) at a point. Unreliable: a lost sound isn't worth resending late.</summary>
+    public void SendSound(long peer, int sound, Vector3 at) => RpcId(peer, MethodName.Sound, sound, at);
     public void SendAlert(long peer, int level, string reason) => RpcId(peer, MethodName.Alert, level, reason);
 
     [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
@@ -269,6 +315,9 @@ public partial class NetSession : Node
     [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.UnreliableOrdered)]
     private void Shot(Vector3 from, Vector3 to) => ShotReceived?.Invoke(from, to);
 
+    [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Unreliable)]
+    private void Sound(int sound, Vector3 at) => SoundReceived?.Invoke(sound, at);
+
     [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
     private void Alert(int level, string reason) => AlertReceived?.Invoke(level, reason);
 
@@ -282,6 +331,17 @@ public partial class NetSession : Node
         RpcId(peer, MethodName.CityClock, hour, hoursPerSecond);
 
     public void SendDoorStates(long peer, int[] triples) => RpcId(peer, MethodName.DoorStates, triples);
+    /// <summary>The city's power and lights (Core.City.CityPower.Export), whenever they change.</summary>
+    public void SendPowerState(long peer, int[] state) => RpcId(peer, MethodName.PowerState, state);
+
+    [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void PowerState(int[] state) => PowerStateReceived?.Invoke(state);
+
+    /// <summary>Furniture (chair and stool ids) that has been picked up, so clients hide it.</summary>
+    public void SendFurnitureTaken(long peer, int[] pieces) => RpcId(peer, MethodName.FurnitureTaken, pieces);
+
+    [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void FurnitureTaken(int[] pieces) => FurnitureTakenReceived?.Invoke(pieces);
 
     public void SendLoot(long peer, string name, int[] quads, int[] gear, int[] gearData) =>
         RpcId(peer, MethodName.Loot, name, quads, gear, gearData);
@@ -303,6 +363,23 @@ public partial class NetSession : Node
                 ["players"] = d.Players,
             });
         RpcId(peer, MethodName.DungeonMenu, list);
+    }
+
+    public void SendHotbar(long peer, int[] ids, long[] uids) => RpcId(peer, MethodName.Hotbar, ids, uids);
+
+    [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void Hotbar(int[] ids, long[] uids) => HotbarReceived?.Invoke(ids, uids);
+
+    public void SendCityMenu(long peer, IEnumerable<CitySummary> cities, CitySettings defaults)
+    {
+        var list = new GArray();
+        foreach (var c in cities)
+            list.Add(new GDict
+            {
+                ["id"] = c.Id, ["by"] = c.CreatedBy, ["size"] = c.Size, ["people"] = c.People, ["hour"] = c.Hour,
+                ["players"] = c.Players,
+            });
+        RpcId(peer, MethodName.CityMenu, list, defaults.Size, defaults.StartHour, defaults.People, defaults.DayMinutes);
     }
 
     public void SendCharacterList(long peer, IEnumerable<CharacterSummary> characters)
@@ -372,6 +449,19 @@ public partial class NetSession : Node
                 d["len"].AsInt32(), d["players"].AsStringArray()));
         }
         DungeonMenuReceived?.Invoke(result);
+    }
+
+    [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]
+    private void CityMenu(GArray list, int size, float startHour, int people, float dayMinutes)
+    {
+        var result = new List<CitySummary>();
+        foreach (var item in list)
+        {
+            var d = item.AsGodotDictionary();
+            result.Add(new CitySummary(d["id"].AsInt32(), d["by"].AsString(), d["size"].AsInt32(), d["people"].AsInt32(),
+                d["hour"].AsSingle(), d["players"].AsStringArray()));
+        }
+        CityMenuReceived?.Invoke(result, new CitySettings(size, startHour, people, dayMinutes, 0));
     }
 
     [Rpc(MultiplayerApi.RpcMode.Authority, TransferMode = MultiplayerPeer.TransferModeEnum.Reliable)]

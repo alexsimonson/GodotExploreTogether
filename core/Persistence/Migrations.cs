@@ -158,6 +158,17 @@ public static class Migrations
             );
             CREATE INDEX idx_storage_items_uid ON storage_items(uid) WHERE uid IS NOT NULL;
             """),
+
+        // Hotbar keys (1 to 6): which item each key equips, by item id and (when it has one) its serial.
+        new(8, "hotbar", Sql: """
+            CREATE TABLE hotbar_slots (
+                character_id  INTEGER NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+                slot          INTEGER NOT NULL,
+                item_id       INTEGER NOT NULL,
+                uid           INTEGER,
+                PRIMARY KEY (character_id, slot)
+            );
+            """),
     ];
 
     public static int LatestVersion => All.Count;

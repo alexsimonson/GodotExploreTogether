@@ -46,6 +46,7 @@ public partial class ClientGame
         _session.AlertReceived += (level, reason) =>
         {
             if (level > _alertLevel && level >= 2) GD.Print($"[client] alert: {reason}");
+            if (level > _alertLevel && level >= 2) Audio.GameAudio.Instance?.Play2D(level >= 3 ? "alert_alarmed" : "alert_suspicious", -4);
             _alertLevel = level;
         };
 
@@ -65,7 +66,7 @@ public partial class ClientGame
     /// <summary>Returns true if the event was one of these keys and was used.</summary>
     private bool HandleStealthInput(InputEvent @event)
     {
-        if (_currentKind != InstanceKinds.City || _dungeonMenu.Visible || Input.MouseMode != Input.MouseModeEnum.Captured) return false;
+        if (_currentKind != InstanceKinds.City || MenuOpen || Input.MouseMode != Input.MouseModeEnum.Captured) return false;
         // Holding someone: the attack button strangles while held down; right-click strikes them.
         if (_grabState == "holding" && @event is InputEventMouseButton { ButtonIndex: MouseButton.Left } strangle)
         {
@@ -181,6 +182,9 @@ public partial class ClientGame
     private void SetUpCityLighting(CityLayout city)
     {
         _lighting = new CityLighting(city);
+        _cityLayout = city;
+        _power = new CityPower(city, _lighting);
+        _lighting.Power = _power; // the light meter knows about broken lamps and dark districts
         _doorStates.Clear();
         _alertLevel = 0;
         _grabState = "";

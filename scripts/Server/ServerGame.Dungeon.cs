@@ -1,3 +1,4 @@
+using ExploreTogether.Core.Audio;
 using System.Collections.Generic;
 using System.Linq;
 using ExploreTogether.Core.Items;
@@ -52,6 +53,7 @@ public partial class ServerGame
             _session.SendNotice(s.Peer, "Your inventory is full; some were left behind.");
         }
         var isPass = item.ItemId == ItemCatalog.DungeonPassId;
+        PlaySound(instance, SoundId.ItemPickup, item.GlobalPosition); // before it's gone from the world
         _instances.RemoveItem(instance, item);
         SendInventory(s);
         if (!isPass) SaveInventory(s, events.ToArray()); // the pass is never saved (or tracked)
@@ -82,6 +84,8 @@ public partial class ServerGame
             s.Inventory.RemoveItem(passSlot);
             SendInventory(s);
             instance.ExitOpen = true;
+            if (InstanceFactory.FindInteractable(instance.Nodes.Container, DungeonExit.Id) is Node3D exit)
+                PlaySound(instance, SoundId.ExitOpen, exit.GlobalPosition);
             GD.Print($"[server] '{s.Character!.Name}' opened the exit of instance {instance.Id}");
             NotifyInstance(instance, $"{s.Character.Name} opened the exit!");
             BroadcastDungeonStatus(instance);
@@ -158,6 +162,18 @@ public partial class ServerGame
         _session.SendInventory(s.Peer,
             s.Inventory.Occupied().SelectMany(o => new[] { o.Slot, o.ItemId, o.Count, o.Data ?? -1 }).ToArray(),
             s.Gear?.ExportGear() ?? [], s.Gear?.ExportGearData() ?? []);
+        // What others see in their hands, and whether the flashlight is still lit (put away: off).
+        if (s.Gear != null && _instances.FindPlayer(s.Peer) is { } found)
+        {
+            found.Player.NetWeapon = s.Gear.EquippedWeapon?.Id ?? -1;
+            if (s.Gear.slots[(int)EquipmentType.Offhand].itemId != ItemCatalog.FlashlightId) s.FlashlightOn = false;
+            found.Player.NetFlashlight = s.FlashlightOn;
+        }
+        if (s.Hotbar is { } hotbar)
+        {
+            var (ids, uids) = hotbar.Export();
+            _session.SendHotbar(s.Peer, ids, uids);
+        }
         SendAmmoState(s); // the equipped gun's loaded rounds and the rounds carried may have changed
     }
 

@@ -21,6 +21,10 @@ public sealed class PeerSession(long peer)
     public Inventory? Inventory { get; set; }
     /// <summary>The character's equipment (12 slots), loaded with the inventory.</summary>
     public Gear? Gear { get; set; }
+    /// <summary>The flashlight in the offhand is switched on (T).</summary>
+    public bool FlashlightOn { get; set; }
+    /// <summary>The character's hotbar keys (1 to 6), loaded with the inventory.</summary>
+    public Hotbar? Hotbar { get; set; }
     /// <summary>The character's hub storage (50 slots), loaded with the inventory. Usable only at the hub's storage chest.</summary>
     public Inventory? Storage { get; set; }
     /// <summary>The body this player is searching (node name of a dead city resident), if any.</summary>
@@ -159,6 +163,10 @@ public partial class ServerGame : Node
         _session.InteractRequested += OnInteract;
         _session.CreateDungeonRequested += OnCreateDungeon;
         _session.JoinDungeonRequested += OnJoinDungeon;
+        _session.SetHotbarRequested += OnSetHotbar;
+        _session.UseHotbarRequested += OnUseHotbar;
+        _session.CreateCityRequested += OnCreateCity;
+        _session.JoinCityRequested += OnJoinCity;
         _session.MoveItemRequested += OnMoveItem;
         SetUpCombat();
         SetUpCityActions();
@@ -330,6 +338,8 @@ public partial class ServerGame : Node
         s.Gear.Load(_db.LoadGearRecords(character.Id));
         s.Storage = new Inventory(Inventory.HubStorageSlots);
         s.Storage.Load(_db.LoadStorage(character.Id));
+        s.Hotbar = new Hotbar();
+        s.Hotbar.Load(_db.LoadHotbar(character.Id));
         OnCharacterItemsLoaded(s); // serials for old items, and a duplicate check against everyone online
         s.PlayTimeCountedUntil = DateTime.UtcNow;
         SendToInstance(s, _instances.Hub);
@@ -427,6 +437,12 @@ public partial class ServerGame : Node
         if (interactionId == City.CityBuilder.GateId)
         {
             UseCityGate(s, instance);
+            return;
+        }
+        if (instance.Kind == InstanceKinds.City && UsePower(s, instance, interactionId)) return;
+        if (instance.Kind == InstanceKinds.City && City.CityFurniture.TryParse(interactionId, out var piece))
+        {
+            TakeFurniture(s, instance, piece);
             return;
         }
         if (instance.Kind == InstanceKinds.City && City.CityDoor.TryParse(interactionId, out var doorParcel))
@@ -565,7 +581,8 @@ public partial class ServerGame : Node
         const string origin = "dev starter kit";
         var inv = new Inventory();
         var events = new List<ItemEvent>();
-        foreach (var id in new[] { 1515, 1337, 567, 666, 8, 22, ItemCatalog.BatId, ItemCatalog.DoubleBarrelId, ItemCatalog.PumpShotgunId })
+        foreach (var id in new[] { 1515, 1337, 567, 666, 8, 22, ItemCatalog.BatId, ItemCatalog.DoubleBarrelId, ItemCatalog.PumpShotgunId,
+                     ItemCatalog.FlashlightId })
         {
             var uid = _db.RegisterItem(id, origin);
             inv.AddItem(id, uid: uid);

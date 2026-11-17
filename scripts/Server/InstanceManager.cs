@@ -35,6 +35,10 @@ public sealed class ServerInstance
     public CityLighting? Lighting { get; set; }
     /// <summary>Cities only: sounds made since the last perception tick.</summary>
     public List<Noise> Noises { get; } = new();
+    /// <summary>The city's electricity, fuse boxes, light switches and broken lights (see Core.City.CityPower).</summary>
+    public CityPower? Power { get; set; }
+    /// <summary>Chairs and stools someone has picked up (furniture ids): gone for the rest of the city's life.</summary>
+    public HashSet<int> TakenFurniture { get; } = new();
     /// <summary>Cities only: recent calls to the police (so ten witnesses don't send ten officers).</summary>
     public List<(double At, float X, float Z, long Player)> RecentReports { get; } = new();
     public int[] LayoutData { get; init; } = [];

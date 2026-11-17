@@ -177,6 +177,19 @@ public static class Stealth
     /// <summary>Shops are open (public) from 8:00 to 18:00 while unlocked; otherwise they're private like any building.</summary>
     public static bool ShopOpen(float hour) => hour >= 8 && hour < 18;
 
+    /// <summary>Taverns are open (public) from 16:00 to 3:00 while unlocked.</summary>
+    public static bool TavernOpen(float hour) => hour >= TavernOpens || hour < TavernCloses;
+
+    public const float TavernOpens = 16, TavernCloses = 3;
+
+    /// <summary>Is a public building open for business at that hour (a private one never is)?</summary>
+    public static bool IsOpen(BuildingType type, float hour) => type switch
+    {
+        BuildingType.Shop => ShopOpen(hour),
+        BuildingType.Tavern => TavernOpen(hour),
+        _ => false,
+    };
+
     // ---- noises ----
 
     public const float GunshotRadius = 55, ShotgunRadius = 65, KickRadius = 28, BreakRadius = 35, PickRadius = 4,

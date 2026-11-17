@@ -221,6 +221,37 @@ public sealed class GameDatabase : IDisposable
         cmd.ExecuteNonQuery();
     }
 
+    // ------------------------------------------------------------- hotbar
+
+    public List<(int Index, Items.HotbarEntry Entry)> LoadHotbar(long characterId)
+    {
+        using var cmd = Command("SELECT slot, item_id, uid FROM hotbar_slots WHERE character_id = $c ORDER BY slot;", ("$c", characterId));
+        using var r = cmd.ExecuteReader();
+        var list = new List<(int, Items.HotbarEntry)>();
+        while (r.Read())
+            list.Add((r.GetInt32(0), new Items.HotbarEntry(r.GetInt32(1), r.IsDBNull(2) ? null : r.GetInt64(2))));
+        return list;
+    }
+
+    /// <summary>Replaces the character's saved hotbar.</summary>
+    public void SaveHotbar(long characterId, IEnumerable<(int Index, Items.HotbarEntry Entry)> keys)
+    {
+        using var tx = _connection.BeginTransaction();
+        using (var del = Command("DELETE FROM hotbar_slots WHERE character_id = $c;", ("$c", characterId)))
+        {
+            del.Transaction = tx;
+            del.ExecuteNonQuery();
+        }
+        foreach (var (index, entry) in keys)
+        {
+            using var ins = Command("INSERT INTO hotbar_slots (character_id, slot, item_id, uid) VALUES ($c, $s, $i, $u);",
+                ("$c", characterId), ("$s", index), ("$i", entry.ItemId), ("$u", entry.Uid));
+            ins.Transaction = tx;
+            ins.ExecuteNonQuery();
+        }
+        tx.Commit();
+    }
+
     // ------------------------------------------------------------- inventory
 
     public List<SlotRecord> LoadInventory(long characterId) => LoadSlots("inventory_items", characterId);

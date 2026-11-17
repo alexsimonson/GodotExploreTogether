@@ -94,6 +94,9 @@ public partial class ClientGame
         var w = EquippedWeapon;
         var text = $"Weapon: {w?.Name ?? "none"}";
         if (w?.Class == ItemClass.Gun && _magazine >= 0) text += $"  {_magazine} / {_reserve}";
+        var offhand = (int)EquipmentType.Offhand;
+        if (offhand < _lastGear.Length && _lastGear[offhand] == ItemCatalog.FlashlightId)
+            text += $"\nFlashlight {(PlayerCharacter.Local?.NetFlashlight == true ? "on" : "off")}  [T]";
         _weaponLabel.Text = text;
         _crosshair.Text = w?.Class == ItemClass.Gun ? "+" : "·"; // the original showed its crosshair for guns
     }
@@ -101,7 +104,7 @@ public partial class ClientGame
     private bool CombatInputAllowed =>
         _currentInstanceId != null && PlayerCharacter.Local != null
         && Input.MouseMode == Input.MouseModeEnum.Captured
-        && !_inventory.Visible && !_dungeonMenu.Visible;
+        && !_inventory.Visible && !MenuOpen;
 
     /// <summary>Returns true if the event was a combat input and was used.</summary>
     private bool HandleCombatInput(InputEvent @event)
@@ -132,7 +135,7 @@ public partial class ClientGame
     private void CombatProcess(double delta)
     {
         var inInstance = _currentInstanceId != null && PlayerCharacter.Local != null;
-        _crosshair.Visible = inInstance && !_inventory.Visible && !_dungeonMenu.Visible;
+        _crosshair.Visible = inInstance && !_inventory.Visible && !MenuOpen;
         _healthLabel.Visible = inInstance;
 
         if (PlayerCharacter.Local is { } me)
@@ -262,6 +265,10 @@ public partial class ClientGame
             : container?.GetNodeOrNull("Enemies")?.GetChildren().OfType<EnemyCharacter>()
                 .Where(e => !e.IsDead).OrderBy(e => e.GlobalPosition.DistanceTo(me.GlobalPosition)).FirstOrDefault();
         if (target == null) return;
+        // A wand's area lands within reach (10 m): close in first.
+        var far = EquippedWeapon?.Class == ItemClass.Magic && target.GlobalPosition.DistanceTo(me.GlobalPosition) > 8;
+        me.DevWalkTarget = far ? target.GlobalPosition : null;
+        if (far) return;
 
         // Aim from the head: at the enemy's chest, or at its feet for magic (the area lands on the floor).
         var head = me.GlobalPosition + new Vector3(0, 1.6f, 0);

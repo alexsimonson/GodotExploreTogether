@@ -7,12 +7,18 @@
   Scenarios (each with its own port and throwaway database, so a dev-run session is left alone):
     coop    - two players: hub, create/join a dungeon, wall check, take the pass, open the exit, both escape,
               run recorded, empty dungeon closed.
+    furniture - a player picks up a chair in a city building (the other player sees it go), knocks a resident out
+              with it, and the chair breaks.
+    power   - at night, a player shoots a fuse box open and cuts a building's power, shoots out a street lamp, flips a
+              light switch, then cuts a district's substation and the city's main breaker.
+    hotbar  - a player puts the sword and the bat on hotbar keys 1 and 2, then presses 1, 2, and 2 again; then holds a
+              flashlight in the offhand, switches it on, and can't add a two-handed shotgun.
     combat  - three players with sword, ice wand and pistol fight enemies placed at the start;
               the wand user's aim ghost must show up for a teammate.
     death   - two unarmed players next to enemies: enemies must land hits (up close), the normal character
               returns to the hub, the hardcore one is deleted.
     city    - two players go through the City Gate and end up in the same generated city; its doorways, fences
-              and walls match the layout; its 40 residents and its clock reach the clients; both return to the hub,
+              and walls match the layout; its 60 residents (with taverns open at midnight) and its clock reach the clients; both return to the hub,
               and the empty city is closed.
     crowd   - a player runs at walking city residents: it is stopped at arm's length, never inside them.
     doors   - a player searches a body, takes what it carried, and uses its key on the door it fits (lock, unlock,
@@ -75,8 +81,8 @@ $Scenarios = [ordered]@{
             Expect server "\('Kermit'\) entered instance 2" 'Kermit enters the city'
             Expect server "\('Blueberry'\) entered instance 2" 'Blueberry joins the same city'
             Expect Kermit 'city check: (\d+)/\1 doors, fences and walls match' 'built doorways, fences and walls match the layout'
-            Expect server 'city 2: 40 people \(\d+ civilians, \d+ workers, 6 police, \d+ shopkeepers(, \d+ security guards)?\), clock 08:00' 'the city gets 40 residents and a clock'
-            Expect Kermit 'city: 40 residents in view \(.*\), \d+ walking, clock 08:\d\d' "Kermit sees all the residents, and the city's clock"
+            Expect server 'city 2: 60 people \(\d+ civilians, \d+ workers, 12 police, \d+ shopkeepers(, \d+ security guards)?\), clock 00:00.* at the tavern' 'the city gets 60 residents and a clock; the taverns are busy at midnight'
+            Expect Kermit 'city: 60 residents in view \(.*\), \d+ walking, clock 00:\d\d' "Kermit sees all the residents, and the city's clock"
             Expect Kermit "remote player \d+ \('Blueberry', #4f86f7\) spawned" 'Kermit sees Blueberry in the city' -After 'entered instance 2 \(city\)'
             Expect Kermit 'entered instance 1 \(hub\)' 'Kermit returns to the hub' -After 'entered instance 2 \(city\)'
             Expect Blueberry 'entered instance 1 \(hub\)' 'Blueberry returns to the hub' -After 'entered instance 2 \(city\)'
@@ -223,6 +229,51 @@ $Scenarios = [ordered]@{
             Expect Grape 'Grape died and was a hardcore character' "Grape's client is told"
             ExpectNot Grape 'entered instance' "Grape's client stays out of the world afterwards" -After 'hardcore character'
             Expect server 'run \d+ \(instance \d+\) abandoned: 0/\d escaped' 'both runs are recorded as abandoned' -Min 2
+        }
+    }
+    furniture = @{
+        Port   = 7954
+        Server = @('--dev-skip-proximity', '--city-seed', '4', '--city-start-hour', '9', '--dev-quit-after', '45')
+        Clients = [ordered]@{
+            Kermit    = @('--dev-city', '--dev-chair', '--dev-fight', '--dev-chase-npc', '--dev-quit-after', '38')
+            Blueberry = @('--dev-city', '--dev-quit-after', '20')
+        }
+        Checks = {
+            Expect server "'Kermit' picks up Wooden Chair \(furniture \d+\)" 'Kermit picks up a chair'
+            Expect Blueberry 'furniture taken: \d+' "Blueberry sees the chair vanish"
+            Expect server "'Kermit' weapon: Wooden Chair" 'and holds it'
+            Expect server "'Kermit' knocked out .* with Wooden Chair" 'Kermit knocks a resident out with it' -After "'Kermit' weapon: Wooden Chair"
+            Expect server "'Kermit' smashes Wooden Chair to pieces" 'and it breaks' -After "'Kermit' knocked out"
+        }
+    }
+    power = @{
+        Port   = 7955
+        Server = @('--dev-skip-proximity', '--dev-starter-kit', '--city-seed', '4', '--city-start-hour', '22', '--dev-oblivious', '--dev-quit-after', '70')
+        Clients = [ordered]@{
+            Kermit = @('--dev-city', '--dev-power', '--dev-quit-after', '62')
+        }
+        Checks = {
+            Expect server "'Kermit' breaks open the fuse box of building \d+" 'a shot breaks a fuse box open'
+            Expect server "'Kermit' cuts the power of building \d+" 'and its breaker cuts the power'
+            Expect server "'Kermit' breaks lamp light \d+" 'a street lamp is shot out'
+            Expect server "'Kermit' switches the lights of building \d+" 'the light switch works'
+            Expect server "'Kermit' cuts the power of district 0" 'a substation darkens its district'
+            Expect server "'Kermit' cuts the power of the whole city" 'the main breaker darkens the city'
+            Expect Kermit 'power: \d+ building\(s\) without power, 1 lamp\(s\) broken, the station is down' 'the client sees it all'
+        }
+    }
+    hotbar = @{
+        Port   = 7953
+        Server = @('--dev-starter-kit', '--dev-quit-after', '14')
+        Clients = [ordered]@{
+            Kermit = @('--dev-hotbar', '--dev-quit-after', '9')
+        }
+        Checks = {
+            Expect server "'Kermit' weapon: Sword" 'key 1 equips the sword'
+            Expect server "'Kermit' weapon: Bat" 'key 2 swaps in the bat' -After "'Kermit' weapon: Sword"
+            Expect server "'Kermit' weapon: none" 'key 2 again puts the bat away' -After "'Kermit' weapon: Bat"
+            Expect server "'Kermit' switches the flashlight on" 'a flashlight in the offhand switches on'
+            Expect Kermit 'notice: The Pump Shotgun needs both hands' "a two-handed shotgun won't go with it"
         }
     }
     gather = @{

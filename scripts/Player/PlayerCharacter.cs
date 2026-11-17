@@ -31,6 +31,9 @@ public partial class PlayerCharacter : CharacterBody3D
     [Export] public bool NetCrouching { get; set; }
     /// <summary>The equipped weapon's item id (-1: none), so everyone sees what a player is holding.</summary>
     [Export] public int NetWeapon { get; set; } = -1;
+    /// <summary>A lit flashlight in the offhand (replicated: everyone sees the beam).</summary>
+    [Export] public bool NetFlashlight { get; set; }
+    private SpotLight3D? _flashlight;
     /// <summary>The colour of their outfit (shirt, or their own colour): what others see on their body, and remember.</summary>
     [Export] public Color NetOutfit { get; set; } = PlayerLook.DefaultColor;
     private Color _shownOutfit;
@@ -88,6 +91,7 @@ public partial class PlayerCharacter : CharacterBody3D
     {
         _head = GetNode<Node3D>("Head");
         IsLocal = !Main.IsServer && OwnerPeerId == Multiplayer.GetUniqueId();
+        Audio.GameAudio.Instance?.TrackFootsteps(this, IsLocal ? -3 : 0);
 
         Position = NetPosition;
         Rotation = new Vector3(0, NetYaw, 0);
@@ -198,6 +202,7 @@ public partial class PlayerCharacter : CharacterBody3D
             CrouchChanged?.Invoke(crouch);
         }
         UpdateCrouchPose(delta);
+        UpdateFlashlight();
 
         if (captured && Input.IsActionJustPressed(InputSetup.Jump) && IsOnFloor() && !Dragging && !Held && !crouch)
             velocity.Y = JumpVelocity;
@@ -373,6 +378,44 @@ public partial class PlayerCharacter : CharacterBody3D
         }
     }
 
+    /// <summary>
+    /// The flashlight beam: from the camera for your own player (it points where you look), from the left hand for
+    /// others (along their facing, tipped down a little).
+    /// </summary>
+    private void UpdateFlashlight()
+    {
+        if (_flashlight == null)
+        {
+            if (!NetFlashlight) return;
+            _flashlight = new SpotLight3D
+            {
+                Name = "Flashlight",
+                SpotRange = 28, SpotAngle = 24, SpotAngleAttenuation = 0.8f, LightEnergy = 4f,
+                LightColor = new Color(1f, 0.95f, 0.85f), ShadowEnabled = true,
+            };
+            if (IsLocal)
+            {
+                _flashlight.Position = new Vector3(-0.2f, -0.15f, 0);
+                _head.AddChild(_flashlight);
+            }
+            else
+            {
+                _flashlight.Position = new Vector3(-0.32f, 1.2f, -0.35f);
+                _flashlight.RotationDegrees = new Vector3(-8, 0, 0);
+                _flashlight.AddChild(new MeshInstance3D
+                {
+                    Name = "Torch",
+                    Mesh = new CylinderMesh { TopRadius = 0.03f, BottomRadius = 0.025f, Height = 0.18f,
+                        Material = new StandardMaterial3D { AlbedoColor = new Color(0.1f, 0.1f, 0.12f), Metallic = 0.6f } },
+                    RotationDegrees = new Vector3(90, 0, 0),
+                    CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                });
+                AddChild(_flashlight);
+            }
+        }
+        _flashlight.Visible = NetFlashlight;
+    }
+
     /// <summary>Others see the weapon a player holds: a simple shape at the right hand, sized by kind.</summary>
     private void UpdateWeaponMesh()
     {
@@ -391,6 +434,7 @@ public partial class PlayerCharacter : CharacterBody3D
         UpdateRemoteAimGhost(delta);
         UpdateCrouchPose(delta);
         UpdateWeaponMesh();
+        UpdateFlashlight();
         if (!_shownOutfit.IsEqualApprox(NetOutfit))
         {
             _shownOutfit = NetOutfit;

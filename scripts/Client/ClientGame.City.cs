@@ -30,6 +30,28 @@ public partial class ClientGame
 {
     private float _cityHour = -1, _cityHoursPerSecond;
     private int[] _cityLayoutData = [];
+    private CityLayout? _cityLayout;
+    private CityPower? _power;
+    private double _powerApplyTimer;
+
+    /// <summary>The city's power and lights changed (the server's CityPower state).</summary>
+    private void OnPowerState(int[] state)
+    {
+        if (_power == null) return;
+        _power.Import(state);
+        ApplyPower();
+        var lampsOut = Enumerable.Range(0, _lighting!.Lamps.Count).Count(i => _power.LampBroken(i));
+        var dark = _cityLayout!.Parcels.Count(p => !_power.Powered(p.Id));
+        GD.Print($"[client] power: {dark} building(s) without power, {lampsOut} lamp(s) broken" + (_power.StationDown ? ", the station is down" : ""));
+    }
+
+    /// <summary>Shows the power state: broken and unpowered lamps out, fuse boxes open, switches flipped.</summary>
+    private void ApplyPower()
+    {
+        if (_power == null || _cityLayout == null || _lighting == null || _cityHour < 0 || _currentInstanceId is not { } id) return;
+        if (_main.Instances.GetNodeOrNull<Node3D>($"{InstanceFactory.NodeName(id)}/Level") is { } level)
+            CityPowerProps.Apply(level, _cityLayout, _lighting, _power, _cityHour);
+    }
     private string? _lootNpcName; // the body being searched (node name)
     private string _draggingName = ""; // whoever we're dragging (their name), or ""
 
@@ -85,7 +107,13 @@ public partial class ClientGame
         LootProcess();
         if (_cityHour < 0) return;
         _cityHour = (_cityHour + (float)delta * _cityHoursPerSecond) % 24f;
+        if ((_powerApplyTimer -= delta) <= 0)
+        {
+            _powerApplyTimer = 1; // lamps follow the clock too (dusk, dawn)
+            ApplyPower();
+        }
         _statusLabel.Text = $"City time {CityClock.Format(_cityHour)}";
+        Audio.GameAudio.Instance?.SetCityHour(_cityHour);
         _statusLabel.Visible = true;
         if (_currentInstanceId is { } id
             && _main.Instances.GetNodeOrNull<CityDaylight>($"{InstanceFactory.NodeName(id)}/Level/Daylight") is { } daylight)

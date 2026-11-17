@@ -1,3 +1,4 @@
+using ExploreTogether.Core.Audio;
 using System.Collections.Generic;
 using System.Linq;
 using ExploreTogether.City;
@@ -9,16 +10,15 @@ using Godot;
 namespace ExploreTogether.Server;
 
 /// <summary>
-/// City prototype: the City Gate in the hub takes a player to the city, and the gate in the city brings them back.
+/// City prototype: the City Gate in the hub opens a menu (like the dungeon entrance): join a running city, or make a
+/// new one with a size, start time, number of residents, day length and seed. The gate in the city brings them back.
+/// Empty cities close after the same timeout as dungeons.
 ///
-/// One city at a time per group: the gate joins a city that has players in it (or arriving), so friends end up together.
-/// When nobody is in one, it generates a new city (a new seed each visit). Empty cities close after the same
-/// timeout as dungeons.
-///
-/// Server args: --city-size N (tiles per side, default 5), --city-seed S (fixed seed, default random),
-/// --city-loops P (extra streets in percent, default 15), --city-favor NAME (dev: place that building design wherever it fits),
-/// --city-people N (residents, default about 1.6 per tile), --city-start-hour H (default 0, midnight), --city-day-minutes M
-/// (real minutes per game day, default 48), --dev-log-npcs (log what the residents are doing every 5 s).
+/// Server args (the menu's defaults for a new city): --city-size N (tiles per side, default 5), --city-seed S (fixed
+/// seed, default random), --city-people N (residents, default about 2.4 per tile), --city-start-hour H (default 0,
+/// midnight), --city-day-minutes M (real minutes per game day, default 48). Also --city-loops P (extra streets in
+/// percent, default 15), --city-favor NAME (dev: place that building design wherever it fits), --dev-log-npcs (log
+/// what the residents are doing every 5 s).
 /// </summary>
 public partial class ServerGame
 {
@@ -42,6 +42,56 @@ public partial class ServerGame
             _session.SendCityClock(s.Peer, sim.Clock.HourOfDay, sim.Clock.HoursPerSecond);
         if (city.Doors is { } doors)
             _session.SendDoorStates(s.Peer, doors.Export());
+        if (city.Power is { } power)
+            _session.SendPowerState(s.Peer, power.Export());
+        if (city.TakenFurniture.Count > 0)
+            _session.SendFurnitureTaken(s.Peer, city.TakenFurniture.ToArray());
+    }
+
+    // ------------------------------------------------------------------ furniture
+
+    /// <summary>E on a chair or stool: it goes into the inventory (as an item that breaks on its first hit).</summary>
+    private void TakeFurniture(PeerSession s, ServerInstance city, int piece)
+    {
+        if (s.Inventory == null || city.TakenFurniture.Contains(piece)) return;
+        if (city.Nodes.Level.GetNodeOrNull<City.CityChair>($"Furniture/Furniture{piece}") is not { } chair) return;
+        var itemId = chair.Kind == Core.City.FurnitureKind.Stool ? ItemCatalog.StoolId : ItemCatalog.ChairId;
+        if (!s.Inventory.CanAdd(itemId))
+        {
+            _session.SendNotice(s.Peer, "No room to carry it.");
+            return;
+        }
+        var origin = $"furniture in city {city.Id}";
+        long? uid = null;
+        var events = new List<ItemEvent>();
+        if (NeedsSerial(itemId))
+        {
+            (uid, var created) = RegisterNewItem(s, itemId, origin, city);
+            events.Add(created);
+        }
+        else events.Add(ItemEventFor(s, ItemActions.Created, itemId, 1, null, city, origin));
+        s.Inventory.AddItem(itemId, uid: uid);
+        city.TakenFurniture.Add(piece);
+        chair.SetTaken(true);
+        foreach (var peer in city.Players.Keys) _session.SendFurnitureTaken(peer, [piece]);
+        PlaySound(city, SoundId.FurnitureGrab, chair.GlobalPosition + Vector3.Up * 0.5f);
+        SendInventory(s);
+        SaveInventory(s, events.ToArray());
+        GD.Print($"[server] '{s.Character!.Name}' picks up {ItemCatalog.NameOf(itemId)} (furniture {piece}) in city {city.Id}");
+    }
+
+    /// <summary>A chair or stool smashed over someone: gone from their hands.</summary>
+    private void BreakHeldItem(PeerSession s, ServerInstance instance)
+    {
+        var slot = s.Gear!.WeaponSlot;
+        if (slot.itemId is not { } id) return;
+        var uid = slot.uid;
+        (slot.itemId, slot.stack_size, slot.data, slot.uid) = (null, 0, null, null);
+        SaveInventory(s, ItemEventFor(s, ItemActions.Destroyed, id, 1, uid, instance, "smashed over someone"));
+        SendInventory(s);
+        _session.SendNotice(s.Peer, $"The {ItemCatalog.NameOf(id).ToLowerInvariant()} smashes to pieces!");
+        if (_instances.FindPlayer(s.Peer) is { } found) PlaySound(instance, SoundId.FurnitureBreak, found.Player.GlobalPosition + Vector3.Up * 1.2f);
+        GD.Print($"[server] '{s.Character!.Name}' smashes {ItemCatalog.NameOf(id)} to pieces; weapon: none");
     }
 
     // ------------------------------------------------------------------ doors
@@ -223,6 +273,7 @@ public partial class ServerGame
         // They know who did it: they react (if they're still standing) and remember (if they come round).
         var (look, clarity) = AttackerAsSeenBy(s, city, npc);
         if (knocksOut && !npc.IsDown) npc.Brain.Attacked(s.Peer, at.X, at.Z, at.Y, look, clarity);
+        PlaySound(city, knocksOut ? SoundId.HitBlunt : SoundId.HitFlesh, npc.Position + Vector3.Up);
         if (knocksOut)
         {
             if (npc.KnockOut(WakeSeconds))
@@ -230,6 +281,7 @@ public partial class ServerGame
             return true;
         }
         var killed = npc.TakeDamage(damage);
+        PlaySound(city, killed ? SoundId.NpcDeath : SoundId.NpcHurt, npc.Position + Vector3.Up);
         if (!npc.IsDown) npc.Brain.Attacked(s.Peer, at.X, at.Z, at.Y, look, clarity);
         GD.Print($"[server] '{s.Character!.Name}' hit {npc.NetName} ({npc.Role}) with {weaponName} for {damage} " +
                  $"({npc.NetHealth} left){(killed ? $", killed in city {city.Id}" : "")}");
@@ -319,13 +371,25 @@ public partial class ServerGame
                  (verb == "left" ? $"on the body of {npc.NetName}" : origin));
     }
 
-    private ServerInstance CreateCity(string createdBy)
+    /// <summary>A city's size limits from the menu: residents at most this many per tile, and overall.</summary>
+    private const int MaxPeoplePerTile = 8, MaxCityPeople = 1000;
+
+    /// <summary>The menu's defaults (from the server args).</summary>
+    private static CitySettings DefaultCitySettings => new(CitySize, CityStartHour, CityPeople ?? -1, CityDayMinutes, CitySeed ?? 0);
+
+    private ServerInstance CreateCity(string createdBy, CitySettings settings)
     {
-        var city = _instances.CreateCity(CitySize, CitySize, CitySeed, CityLoops, createdBy, CityFavor,
-            CityPeople, CityStartHour, CityDayMinutes);
+        var size = Mathf.Clamp(settings.Size, 1, InstanceManager.MaxCitySide);
+        int? people = settings.People >= 0 ? Mathf.Min(settings.People, Mathf.Min(MaxCityPeople, size * size * MaxPeoplePerTile)) : null;
+        var hour = Mathf.PosMod(float.IsFinite(settings.StartHour) ? settings.StartHour : 0, 24);
+        var dayMinutes = Mathf.Clamp(float.IsFinite(settings.DayMinutes) ? settings.DayMinutes : 48, 1, 24 * 60);
+        int? seed = settings.Seed != 0 ? settings.Seed : null;
+        var city = _instances.CreateCity(size, size, seed, CityLoops, createdBy, CityFavor, people, hour, dayMinutes);
         // Everyone in the city sees doors open, close, lock, unlock, break, and the lights inside.
+        TrackDoorSounds(city);
         city.Doors!.Changed += parcel =>
         {
+            PlayDoorSound(city, parcel);
             var d = city.Doors[parcel];
             foreach (var peer in city.Players.Keys)
                 _session.SendDoorStates(peer, [parcel, d.Flags]);
@@ -358,23 +422,59 @@ public partial class ServerGame
     {
         if (instance == _instances.Hub)
         {
-            // A city counts as in use while someone is in it or still loading into it.
-            var city = _instances.Cities.FirstOrDefault(c =>
-                           c.Players.Count > 0 || _sessions.Values.Any(o => o.PendingInstanceId == c.Id));
-            if (city == null && _instances.Cities.Count() >= MaxCities)
-            {
-                _session.SendNotice(s.Peer, "The city is busy right now. Try again in a minute.");
-                return;
-            }
-            city ??= CreateCity(s.Character!.Name);
-            Save(s, CityReturnPoint); // a later login starts in front of the gate, not inside it
-            GD.Print($"[server] '{s.Character!.Name}' goes to city {city.Id}");
-            SendToInstance(s, city);
+            _session.SendCityMenu(s.Peer, _instances.Cities.Select(c => new CitySummary(
+                c.Id, c.CreatedBy, c.City!.Width, c.Npcs.Count, c.Simulation?.Clock.HourOfDay ?? 0,
+                c.Players.Values.Select(p => p.DisplayName).ToArray())), DefaultCitySettings);
         }
         else if (instance.Kind == InstanceKinds.City)
         {
             GD.Print($"[server] '{s.Character!.Name}' returns to the hub from city {instance.Id}");
             SendToInstance(s, _instances.Hub);
         }
+    }
+
+    /// <summary>From the City Gate's menu: a new city with these settings.</summary>
+    private void OnCreateCity(long peer, CitySettings settings)
+    {
+        if (!_sessions.TryGetValue(peer, out var s) || !IsNear(s, City.CityBuilder.GateId, out var instance)
+            || instance != _instances.Hub) return;
+        if (_instances.Cities.Count() >= MaxCities)
+        {
+            _session.SendNotice(peer, "Too many cities are open right now. Join one, or try again in a minute.");
+            return;
+        }
+        var city = CreateCity(s.Character!.Name, settings);
+        EnterCity(s, city);
+    }
+
+    /// <summary>
+    /// From the City Gate's menu: join a running city. Id 0 (dev clients, "quick join"): the city others are in or
+    /// on their way to, or a new one with the default settings, so a group always ends up together.
+    /// </summary>
+    private void OnJoinCity(long peer, int instanceId)
+    {
+        if (!_sessions.TryGetValue(peer, out var s) || !IsNear(s, City.CityBuilder.GateId, out var instance)
+            || instance != _instances.Hub) return;
+        if (instanceId == 0)
+        {
+            var busy = _instances.Cities.FirstOrDefault(c =>
+                c.Players.Count > 0 || _sessions.Values.Any(o => o.PendingInstanceId == c.Id));
+            if (busy == null) OnCreateCity(peer, DefaultCitySettings);
+            else EnterCity(s, busy);
+            return;
+        }
+        if (_instances.Get(instanceId) is not { Kind: InstanceKinds.City } city)
+        {
+            _session.SendNotice(peer, "That city no longer exists.");
+            return;
+        }
+        EnterCity(s, city);
+    }
+
+    private void EnterCity(PeerSession s, ServerInstance city)
+    {
+        Save(s, CityReturnPoint); // a later login starts in front of the gate, not inside it
+        GD.Print($"[server] '{s.Character!.Name}' goes to city {city.Id}");
+        SendToInstance(s, city);
     }
 }

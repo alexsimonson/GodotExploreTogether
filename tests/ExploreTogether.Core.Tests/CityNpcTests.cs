@@ -23,16 +23,10 @@ public class CityPopulationTests
             var home = city.Parcels[p.Home];
             if (p.Role == NpcRole.Shopkeeper) Assert.Equal(BuildingType.Shop, city.Parcels[p.Work].Building);
             if (p.Role == NpcRole.Security) Assert.True(CityPopulation.SecurityPosts(city.Parcels[p.Work].Building) > 0);
-            if (p.Role == NpcRole.Police)
-            {
-                Assert.Equal(BuildingType.Guardhouse, home.Building);
-                Assert.Equal(p.Home, p.Work);
-            }
-            else
-            {
-                Assert.True(CityPopulation.HomeCapacity(home.Building) > 0, $"{p.Name} lives in a {home.Building}");
-            }
-            if (p.Role == NpcRole.Worker) Assert.True(CityPopulation.Jobs(city.Parcels[p.Work].Building) > 0);
+            if (p.Role == NpcRole.Police) Assert.Equal(BuildingType.Guardhouse, city.Parcels[p.Work].Building);
+            Assert.True(CityPopulation.HomeCapacity(home.Building) > 0, $"{p.Name} lives in a {home.Building}");
+            if (p.Role == NpcRole.Worker)
+                Assert.True(CityPopulation.WorkerPosts(city.Parcels[p.Work].Building) > 0);
             if (p.Role == NpcRole.Civilian) Assert.Equal(-1, p.Work);
         }
         Assert.Equal(pop.People.Count, pop.People.Select(p => p.Id).Distinct().Count());
@@ -43,10 +37,10 @@ public class CityPopulationTests
     {
         var city = CityLayout.Generate(5, 5, 4);
         var pop = CityPopulation.Generate(city, 4);
-        foreach (var g in pop.People.Where(p => p.Role != NpcRole.Police).GroupBy(p => p.Home))
+        foreach (var g in pop.People.GroupBy(p => p.Home))
             Assert.InRange(g.Count(), 1, CityPopulation.HomeCapacity(city.Parcels[g.Key].Building));
         foreach (var g in pop.People.Where(p => p.Role == NpcRole.Worker).GroupBy(p => p.Work))
-            Assert.InRange(g.Count(), 1, CityPopulation.Jobs(city.Parcels[g.Key].Building));
+            Assert.InRange(g.Count(), 1, CityPopulation.WorkerPosts(city.Parcels[g.Key].Building));
     }
 
     [Fact]
@@ -137,26 +131,36 @@ public class CityNpcTests
     {
         var sim = Start(5, seed, 5.5f);
 
-        // Late morning: workers are at work, day guards out on patrol, night guards resting.
+        // Late morning: workers are at work (tavern staff asleep), day police out on patrol or at the desk, night police at home.
         RunUntil(sim, 11.5);
-        var workers = sim.Brains.Where(b => b.Person.Role == NpcRole.Worker).ToList();
+        bool TavernStaff(CityNpcBrain b) => b.Person.Work >= 0 && sim.City.Parcels[b.Person.Work].Building == BuildingType.Tavern;
+        var workers = sim.Brains.Where(b => b.Person.Role == NpcRole.Worker && !TavernStaff(b)).ToList();
         var atWork = workers.Count(b => b.Inside == b.Person.Work);
         Assert.True(atWork >= workers.Count * 0.9, $"{atWork}/{workers.Count} workers at work at 11:30");
+        Assert.All(sim.Brains.Where(TavernStaff), b => Assert.Equal(b.Person.Home, b.Inside));
         foreach (var g in sim.Brains.Where(b => b.Person.Role == NpcRole.Police))
         {
-            if (g.Person.Shift == 0) Assert.Equal(-1, g.Inside);
-            else Assert.Equal(g.Person.Home, g.Inside);
+            if (g.Person.Shift == 1) Assert.Equal(g.Person.Home, g.Inside);
+            else if (g.Person.Desk) Assert.Equal(g.Person.Work, g.Inside);
+            else Assert.Equal(-1, g.Inside);
         }
         // Mid-afternoon: civilians are out and about (some in shops, most on the streets).
         RunUntil(sim, 15);
         var civilians = sim.Brains.Where(b => b.Person.Role == NpcRole.Civilian).ToList();
         Assert.True(civilians.Count(b => b.Inside != b.Person.Home) >= civilians.Count * 0.8);
 
-        // Night: everyone but the night guards is at home.
-        RunUntil(sim, 24 + 3);
-        foreach (var b in sim.Brains.Where(b => !(b.Person.WorksShifts && b.Person.Shift == 1)))
-            Assert.True(b.Inside == b.Person.Home, $"{b.Person.Name} ({b.Person.Role}) is {b.Activity} at 03:00, inside {b.Inside}");
-        Assert.All(sim.Brains.Where(b => b.Person.Role == NpcRole.Police && b.Person.Shift == 1), g => Assert.Equal(-1, g.Inside));
+        // Midnight: the taverns are busy, and the station is kept.
+        RunUntil(sim, 24);
+        var taverns = sim.Brains.Count(b => b.Inside >= 0 && sim.City.Parcels[b.Inside].Building == BuildingType.Tavern);
+        Assert.True(taverns >= 5, $"{taverns} people in taverns at midnight");
+        Assert.All(sim.Brains.Where(b => b.Person.Role == NpcRole.Police && b.Person.Shift == 1 && b.Person.Desk),
+            g => Assert.Equal(g.Person.Work, g.Inside));
+
+        // Small hours: everyone but the night shift is at home (night owls too, by now; tavern staff may still be on the way).
+        RunUntil(sim, 24 + 5);
+        foreach (var b in sim.Brains.Where(b => !(b.Person.WorksShifts && b.Person.Shift == 1) && !TavernStaff(b)))
+            Assert.True(b.Inside == b.Person.Home, $"{b.Person.Name} ({b.Person.Role}) is {b.Activity} at 05:00, inside {b.Inside}");
+        Assert.All(sim.Brains.Where(b => b.Person.Role == NpcRole.Police && b.Person.Shift == 1 && !b.Person.Desk), g => Assert.Equal(-1, g.Inside));
         Assert.All(sim.Brains.Where(b => b.Person.Role == NpcRole.Security && b.Person.Shift == 1), g => Assert.Equal(g.Person.Work, g.Inside));
     }
 
@@ -219,7 +223,10 @@ public class CityNpcTests
     {
         var sim = Start(5, 3, 6.5f);
         // Players: one standing in the front yard of a home (right in its residents' way), and some on the streets.
-        var home = sim.Population.People.First(p => p.Role == NpcRole.Worker).Home;
+        // A worker's home whose whole household is in at 6:30 (nobody on a shift, nobody already gone to work).
+        var home = sim.Population.People.First(p => p.Role == NpcRole.Worker
+            && sim.Population.PeopleOf(p.Home).All(q => !q.WorksShifts)
+            && sim.Brains.Where(b => b.Person.Home == p.Home).All(b => b.Inside == p.Home)).Home;
         var doorway = CityPaths.WayIn(sim.City.Parcels[home], (0, 0))[1];
         var players = new List<(float X, float Z)> { doorway };
         var rng = new Random(5);
@@ -271,11 +278,11 @@ public class CityNpcTests
         var sim = Start(5, seed, 5.5f);
         var opened = new HashSet<int>();
         sim.Doors.Changed += p => { if (sim.Doors.IsOpen(p)) opened.Add(p); };
-        RunUntil(sim, 24 + 3);
+        RunUntil(sim, 24 + 5); // the night owls home, the early shift not yet up
         Assert.True(opened.Count > 20, $"only {opened.Count} doors were ever opened");
         for (var p = 0; p < sim.Doors.Count; p++)
         {
-            Assert.False(sim.Doors.IsOpen(p), $"{sim.City.Parcels[p].Building} {p} left open at 03:00");
+            Assert.False(sim.Doors.IsOpen(p), $"{sim.City.Parcels[p].Building} {p} left open at 05:00");
             var sleepers = sim.Brains.Where(b => b.Inside == p && b.Person.Home == p).ToList();
             if (sleepers.Count > 0 && CityPopulation.HomeCapacity(sim.City.Parcels[p].Building) > 0)
                 Assert.True(sim.Doors.IsLocked(p), $"{sim.City.Parcels[p].Building} {p} unlocked at night with {sleepers.Count} inside");
@@ -376,7 +383,7 @@ public class CityNpcTests
     public void AfterWakingUp_TheyCarryOnWithTheirDay()
     {
         var sim = Start(5, 1, 9);
-        var who = sim.Brains.First(b => b.Person.Role == NpcRole.Worker);
+        var who = sim.Brains.First(b => b.Person.Role == NpcRole.Worker && sim.City.Parcels[b.Person.Work].Building != BuildingType.Tavern);
         var (x, z) = CityLayout.CellCenter(new CityPaths(sim.City).StreetCells[^1]);
         WakeAt(sim, who, (x, z));
         RunUntil(sim, 12.5);
@@ -390,5 +397,41 @@ public class CityNpcTests
         clock.Advance(0.75);
         Assert.Equal("00:15", CityClock.Format(clock.HourOfDay));
         Assert.Equal(24.25, clock.Time, 3);
+    }
+}
+
+public class CityNightlifeTests
+{
+    [Theory]
+    [InlineData(5, 1)]
+    [InlineData(10, 3)]
+    public void EveryCity_HasStaffedTaverns_InOneDistrict(int size, int seed)
+    {
+        var city = CityLayout.Generate(size, size, seed);
+        var taverns = city.Parcels.Where(p => p.Building == BuildingType.Tavern).ToList();
+        Assert.Equal(Math.Max(1, (int)Math.Round(size * size / 10.0)), taverns.Count);
+        Assert.All(taverns, t => Assert.True(t.IsPublic));
+        // Close together: every tavern within a few blocks of the first.
+        Assert.All(taverns, t => Assert.True(MathF.Abs(t.Bounds.CenterX - taverns[0].Bounds.CenterX) + MathF.Abs(t.Bounds.CenterZ - taverns[0].Bounds.CenterZ) < 150));
+        var pop = CityPopulation.Generate(city, seed);
+        Assert.All(taverns, t => Assert.Equal(CityPopulation.TavernStaff, pop.PeopleOf(t.Id).Count(p => p.Work == t.Id)));
+        // Every station is kept, day and night, by a desk officer who lives elsewhere.
+        foreach (var g in city.Parcels.Where(p => p.Building == BuildingType.Guardhouse))
+        {
+            var officers = pop.People.Where(p => p.Role == NpcRole.Police && p.Work == g.Id).ToList();
+            Assert.Contains(officers, o => o.Desk && o.Shift == 0);
+            Assert.Contains(officers, o => o.Desk && o.Shift == 1);
+            Assert.All(officers, o => Assert.NotEqual(g.Id, o.Home));
+        }
+    }
+
+    [Fact]
+    public void Taverns_AreOpenEveningsAndNights()
+    {
+        Assert.True(Stealth.IsOpen(BuildingType.Tavern, 23));
+        Assert.True(Stealth.IsOpen(BuildingType.Tavern, 1));
+        Assert.False(Stealth.IsOpen(BuildingType.Tavern, 10));
+        Assert.False(Stealth.IsOpen(BuildingType.Shop, 23));
+        Assert.False(Stealth.IsOpen(BuildingType.House, 12));
     }
 }

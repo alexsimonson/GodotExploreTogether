@@ -23,7 +23,10 @@ public sealed class CityLighting
     public const float PorchRadius = 5.5f, PorchBrightness = 0.5f, PorchHeight = 2.75f;
 
     private readonly CityLayout _city;
-    private readonly Dictionary<Cell, List<(float X, float Z, float Radius, float Brightness)>> _lightsByCell = new();
+    private readonly Dictionary<Cell, List<(float X, float Z, float Radius, float Brightness, bool Lamp, int Index)>> _lightsByCell = new();
+
+    /// <summary>The city's electricity and broken lights (null: every lamp burns from dusk to dawn).</summary>
+    public CityPower? Power { get; set; }
 
     /// <summary>Street lamps' heads (where the light is), on an arm out over the street from their posts.</summary>
     public IReadOnlyList<(float X, float Z)> Lamps { get; }
@@ -46,13 +49,13 @@ public sealed class CityLighting
             return (post.X + dx / d * LampArm, post.Z + dz / d * LampArm);
         }).ToList();
         Porches = PlacePorches(city);
-        void Index(float x, float z, float radius, float brightness)
+        void Index(float x, float z, float radius, float brightness, bool lamp, int index)
         {
             var c = CityLayout.CellAt(x, z);
-            (_lightsByCell.TryGetValue(c, out var list) ? list : _lightsByCell[c] = []).Add((x, z, radius, brightness));
+            (_lightsByCell.TryGetValue(c, out var list) ? list : _lightsByCell[c] = []).Add((x, z, radius, brightness, lamp, index));
         }
-        foreach (var (x, z) in Lamps) Index(x, z, LampRadius, LampBrightness);
-        foreach (var (x, z, _) in Porches) Index(x, z, PorchRadius, PorchBrightness);
+        for (var i = 0; i < Lamps.Count; i++) Index(Lamps[i].X, Lamps[i].Z, LampRadius, LampBrightness, true, i);
+        for (var i = 0; i < Porches.Count; i++) Index(Porches[i].X, Porches[i].Z, PorchRadius, PorchBrightness, false, i);
     }
 
     /// <summary>The sun's share of the light, 0 (night) to 1 (day): the same curve the client's sun follows.</summary>
@@ -100,7 +103,7 @@ public sealed class CityLighting
             h ^= h >> 15;
             var odds = p.Building switch
             {
-                BuildingType.Guardhouse => 100,
+                BuildingType.Guardhouse or BuildingType.Tavern or BuildingType.PowerStation => 100,
                 BuildingType.Shop => 50,
                 BuildingType.Office or BuildingType.Warehouse => 33,
                 _ => CityPopulation.HomeCapacity(p.Building) > 0 ? 45 : 0,
@@ -124,13 +127,16 @@ public sealed class CityLighting
         var outdoor = Moonlight + (1 - Moonlight) * day;
         if (_city.AlleyAt(x, z) != null) return outdoor * 0.55f; // shaded, unlit
         var light = outdoor;
-        if (LampsOn(hour)) light = MathF.Max(light, LampLightAt(x, z));
+        if (LampsOn(hour)) light = MathF.Max(light, LampLightAt(x, z, hour));
         if (lit) light = MathF.Max(light, 0.3f); // light from the windows
         return light;
     }
 
-    /// <summary>The brightest street lamp's or porch light's light at (x, z), when they're on.</summary>
-    public float LampLightAt(float x, float z)
+    /// <summary>
+    /// The brightest street lamp's or porch light's light at (x, z), when they're on (with <paramref name="hour"/>:
+    /// leaving out the broken ones and those without power).
+    /// </summary>
+    public float LampLightAt(float x, float z, float? hour = null)
     {
         var best = 0f;
         var c = CityLayout.CellAt(x, z);
@@ -138,8 +144,9 @@ public sealed class CityLighting
             for (var dz = -1; dz <= 1; dz++)
             {
                 if (!_lightsByCell.TryGetValue(new Cell(c.X + dx, c.Z + dz), out var lights)) continue;
-                foreach (var (lx, lz, radius, brightness) in lights)
+                foreach (var (lx, lz, radius, brightness, lamp, index) in lights)
                 {
+                    if (Power is { } power && hour is { } h && !(lamp ? power.LampLit(index, h) : power.PorchLit(index, h))) continue;
                     var d = MathF.Sqrt((lx - x) * (lx - x) + (lz - z) * (lz - z));
                     if (d < radius) best = MathF.Max(best, brightness * (1 - d / radius * 0.85f));
                 }

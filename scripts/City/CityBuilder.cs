@@ -53,6 +53,7 @@ public static class CityBuilder
         BuildingType.Office => (new Color(0.62f, 0.64f, 0.68f), new Color(0.30f, 0.31f, 0.33f)),
         BuildingType.Warehouse => (new Color(0.50f, 0.46f, 0.40f), new Color(0.35f, 0.33f, 0.30f)),
         BuildingType.Guardhouse => (new Color(0.45f, 0.45f, 0.50f), new Color(0.55f, 0.12f, 0.12f)),
+        BuildingType.Tavern => (new Color(0.52f, 0.36f, 0.22f), new Color(0.20f, 0.30f, 0.18f)),
         _ => (new Color(0.7f, 0.7f, 0.7f), new Color(0.3f, 0.3f, 0.3f)),
     };
 
@@ -103,6 +104,10 @@ public static class CityBuilder
             level.AddChild(Sign(parcel));
             level.AddChild(CityDoor.Create(parcel)); // closed until the server says otherwise
         }
+
+        CityFurniture.Build(b, level, city);
+        var lighting = new CityLighting(city);
+        CityPowerProps.Build(level, city, lighting, new CityPower(city, lighting));
 
         // The city wall, just outside the outermost fences.
         const float t = 1f;
@@ -380,21 +385,25 @@ public static class CityBuilder
         level.AddChild(lamps);
         const float h = CityLighting.LampHeight;
         var lighting = new CityLighting(city);
-        // Porch lights: a small warm lamp over the door (see CityLighting.Porches).
-        foreach (var (x, z, parcel) in lighting.Porches)
+        // Porch lights: a small warm lamp over the door (see CityLighting.Porches). Named by index, so the client can
+        // put out the broken ones and those without power (CityPowerProps.Apply).
+        for (var i = 0; i < lighting.Porches.Count; i++)
         {
+            var (x, z, parcel) = lighting.Porches[i];
             var p = city.Parcels[parcel];
             var (ox, oz) = Core.Dungeon.MazePieces.Vector(p.Front);
             var wallX = p.Door.X + ox * 0.08f;
             var wallZ = p.Door.Z + oz * 0.08f;
             lamps.AddChild(new MeshInstance3D
             {
+                Name = $"Porch{i}Mesh",
                 Mesh = new BoxMesh { Size = new Vector3(0.22f, 0.22f, 0.22f), Material = LampHeadMaterial },
                 Position = new Vector3(wallX, CityLighting.PorchHeight, wallZ),
                 CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
             });
             lamps.AddChild(new OmniLight3D
             {
+                Name = $"Porch{i}Light",
                 Position = new Vector3(x, CityLighting.PorchHeight - 0.1f, z),
                 OmniRange = CityLighting.PorchRadius + 0.5f,
                 OmniAttenuation = 1.3f,
@@ -417,6 +426,7 @@ public static class CityBuilder
             b.Add(new Vector3(x - 0.22f, h + 0.1f, z - 0.22f), new Vector3(x + 0.22f, h + 0.25f, z + 0.22f), LampPost, solid: false);
             lamps.AddChild(new MeshInstance3D
             {
+                Name = $"Lamp{i}Mesh",
                 Mesh = new BoxMesh { Size = new Vector3(0.3f, 0.08f, 0.3f), Material = LampHeadMaterial },
                 Position = new Vector3(x, h + 0.06f, z),
                 CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
@@ -424,6 +434,7 @@ public static class CityBuilder
             // Bright, warm pools under the lamps; shadows from the near ones only (they fade out with distance).
             lamps.AddChild(new OmniLight3D
             {
+                Name = $"Lamp{i}Light",
                 Position = new Vector3(x, h - 0.2f, z),
                 OmniRange = CityLighting.LampRadius + 1,
                 OmniAttenuation = 1.4f,
@@ -560,7 +571,7 @@ public static class CityBuilder
     /// Collects colored boxes into one mesh, and gives each solid box a collision shape on one static body.
     /// Plates are thin visual-only boxes lying on the ground (streets, yards).
     /// </summary>
-    private sealed class Boxes
+    internal sealed class Boxes
     {
         private readonly Node3D _parent;
         private readonly SurfaceTool _st = new();
@@ -572,6 +583,10 @@ public static class CityBuilder
             _parent = parent;
             _st.Begin(Mesh.PrimitiveType.Triangles);
         }
+
+        /// <summary>Collision only (the look is drawn separately, in finer pieces).</summary>
+        public void Solid(Vector3 min, Vector3 max) =>
+            _body.AddChild(new CollisionShape3D { Name = $"S{_shapes++}", Shape = new BoxShape3D { Size = max - min }, Position = (min + max) / 2 });
 
         public void Plate(float x0, float z0, float x1, float z1, float top, Color color) =>
             Add(new Vector3(x0, top - 0.01f, z0), new Vector3(x1, top, z1), color, solid: false);

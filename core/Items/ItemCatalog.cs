@@ -33,7 +33,9 @@ public sealed record ItemDef(
     ToolRole? Role = null,     // tools only: which resources it can gather from
     bool Breaches = false,     // guns (new): a shot at a door's deadbolt destroys the lock (shotgun slugs)
     float? Range = null,       // overrides the class's attack range (m)
-    float? Cooldown = null)    // overrides the class's time between attacks (s): a pump-action is slow
+    float? Cooldown = null,    // overrides the class's time between attacks (s): a pump-action is slow
+    bool BreaksOnHit = false,  // melee (new): smashed to pieces by the first hit that lands (furniture: chairs, stools)
+    bool TwoHanded = false)    // weapons (new): needs both hands, so nothing can be held in the offhand with it
 {
     /// <summary>The original's valid_equipment_types: Equipment and every Weapon subclass.</summary>
     public bool IsEquipment => Class != ItemClass.Item;
@@ -78,6 +80,10 @@ public static class ItemCatalog
     /// <summary>New: shotguns firing 12-gauge slugs. Heavy damage at short range, and a slug through a door's
     /// deadbolt destroys the lock (the door can then be opened, but never locked again).</summary>
     public const int DoubleBarrelId = 1704, PumpShotgunId = 1705, SlugId = 1706;
+    /// <summary>Furniture picked up in city buildings (new): one swing that lands and it's in pieces.</summary>
+    public const int ChairId = 1707, StoolId = 1708;
+    /// <summary>Held in the offhand (new); T switches it on and off.</summary>
+    public const int FlashlightId = 1709;
 
     public static readonly IReadOnlyList<ItemDef> All =
     [
@@ -111,11 +117,17 @@ public static class ItemCatalog
         new(LockpickId, "Lockpick", "Opens a lock without its key, given time. Breaks if you slip", true, "", LootCount: 3),
         new(DoubleBarrelId, "Double-Barrel Shotgun", "Two quick shots, then reload. Slugs blow out door locks", false, "",
             ItemClass.Gun, EquipmentType.Weapon, WeaponStyle.Gun, 10, MagazineSize: 2, AmmoItemId: SlugId,
-            Breaches: true, Range: 40, Cooldown: 0.3f),
+            Breaches: true, Range: 40, Cooldown: 0.3f, TwoHanded: true),
         new(PumpShotgunId, "Pump Shotgun", "Six slugs, pumped between shots. Slugs blow out door locks", false, "",
             ItemClass.Gun, EquipmentType.Weapon, WeaponStyle.Gun, 10, MagazineSize: 6, AmmoItemId: SlugId,
-            Breaches: true, Range: 40, Cooldown: 0.9f),
+            Breaches: true, Range: 40, Cooldown: 0.9f, TwoHanded: true),
         new(SlugId, "12 Gauge Slug", "Shotgun ammunition: one heavy lead slug", true, "", LootCount: 6),
+        new(ChairId, "Wooden Chair", "Picked up from someone's home. Knocks someone out, and breaks doing it", false, "",
+            ItemClass.Melee, EquipmentType.Weapon, WeaponStyle.Melee, 15, KnocksOut: true, BreaksOnHit: true, Cooldown: 1.1f, TwoHanded: true),
+        new(StoolId, "Bar Stool", "Picked up in a tavern. Knocks someone out, and breaks doing it", false, "",
+            ItemClass.Melee, EquipmentType.Weapon, WeaponStyle.Melee, 12, KnocksOut: true, BreaksOnHit: true, Cooldown: 0.9f),
+        new(FlashlightId, "Flashlight", "Held in the offhand; T switches it on and off. Lights the way, and shows you to everyone",
+            false, "", ItemClass.Equipment, EquipmentType.Offhand),
     ];
 
     private static readonly Dictionary<int, ItemDef> ById = All.ToDictionary(i => i.Id);
@@ -124,11 +136,14 @@ public static class ItemCatalog
 
     public static string NameOf(int id) => Get(id)?.Name ?? $"Unknown item {id}";
 
-    /// <summary>Port of Manager.GenerateItem: a random item from the bank, never the Dungeon Pass, a key or a retired item.</summary>
+    /// <summary>
+    /// Port of Manager.GenerateItem: a random item from the bank, never the Dungeon Pass, a key, furniture (found in
+    /// city buildings only) or a retired item.
+    /// </summary>
     public static ItemDef GenerateItem(Random random)
     {
         ItemDef? generated = null;
-        while (generated == null || generated.Id is DungeonPassId or KeyId || generated.Retired)
+        while (generated == null || generated.Id is DungeonPassId or KeyId || generated.Retired || generated.BreaksOnHit)
             generated = All[random.Next(0, All.Count)];
         return generated;
     }

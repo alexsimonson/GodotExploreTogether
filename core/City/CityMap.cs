@@ -20,6 +20,8 @@ public static class CityMap
         BuildingType.Office => 'O',
         BuildingType.Warehouse => 'W',
         BuildingType.Guardhouse => 'G',
+        BuildingType.Tavern => 'T',
+        BuildingType.PowerStation => 'P',
         _ => '?',
     };
 

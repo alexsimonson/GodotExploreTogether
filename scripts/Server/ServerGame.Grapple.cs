@@ -1,3 +1,4 @@
+using ExploreTogether.Core.Audio;
 using System.Linq;
 using ExploreTogether.City;
 using ExploreTogether.Core.City;
@@ -38,6 +39,17 @@ public partial class ServerGame
         {
             case "crouch":
                 found.Player.NetCrouching = target == "1";
+                break;
+            case "flashlight":
+                if (s.Gear?.slots[(int)EquipmentType.Offhand].itemId != ItemCatalog.FlashlightId)
+                {
+                    _session.SendNotice(peer, "No flashlight in hand (it goes in the offhand slot).");
+                    return;
+                }
+                s.FlashlightOn = !s.FlashlightOn;
+                found.Player.NetFlashlight = s.FlashlightOn;
+                PlaySound(found.Instance, SoundId.FlashlightClick, found.Player.GlobalPosition + Vector3.Up * 1.3f);
+                GD.Print($"[server] '{s.Character.Name}' switches the flashlight {(s.FlashlightOn ? "on" : "off")}");
                 break;
             case "grab":
                 if (found.Instance.Kind != InstanceKinds.City) return;
@@ -91,6 +103,7 @@ public partial class ServerGame
         (s.Strangling, s.StrangleProgress) = (false, 0);
         npc.Brain.GrabbedBy(s.Peer, me.X, me.Z, surprised, LookOf(s, _instances.FindPlayer(s.Peer)!.Value.Player));
         _session.SendGrabState(s.Peer, "holding", npc.NetName);
+        if (_instances.FindPlayer(s.Peer) is { } grabber) PlaySound(grabber.Instance, SoundId.Grab, npc.Position + Vector3.Up);
         _session.SendNotice(s.Peer, surprised ? $"You grab {npc.NetName} from behind. Hold left mouse to strangle, F to let go."
                                               : $"You grab {npc.NetName}! They're struggling. Hold left mouse to strangle, F to let go.");
         _session.SendNotice(s.Peer, "Right-click to strike them (they'll stop struggling). Left mouse: strangle. F: let go.");
@@ -270,6 +283,7 @@ public partial class ServerGame
         npc.Holding = peer;
         npc.Brain.GrabResult(peer, true);
         _session.SendGrabState(peer, "held", npc.NetName);
+        PlaySound(city, SoundId.Grab, npc.Position + Vector3.Up);
         _session.SendNotice(peer, npc.Role == NpcRole.Police
             ? $"{npc.NetName} has you! Mash F to break free, or be arrested."
             : $"{npc.NetName} grabs you! Mash F to break free.");
@@ -330,6 +344,7 @@ public partial class ServerGame
         _session.SendGrabState(s.Peer, "", "");
         _session.SendProgress(s.Peer, "", 0);
         _session.SendNotice(s.Peer, "You break free!");
+        if (_instances.FindPlayer(s.Peer) is { } free) PlaySound(free.Instance, SoundId.BreakFree, free.Player.GlobalPosition + Vector3.Up);
         GD.Print($"[server] '{s.Character!.Name}' breaks free from {npc.NetName} ({npc.Role})");
     }
 
@@ -449,6 +464,7 @@ public partial class ServerGame
                 SaveInventory(s, ItemEventFor(s, ItemActions.Destroyed, ItemCatalog.LockpickId, 1, null, city, $"broke picking door {pick.Parcel}"));
                 SendInventory(s);
                 _session.SendNotice(s.Peer, "Snap! Your lockpick breaks.");
+                PlaySound(city, SoundId.LockpickBreak, pick.At + Vector3.Up);
                 GD.Print($"[server] '{s.Character!.Name}' breaks a lockpick on door {pick.Parcel}");
             }
         }

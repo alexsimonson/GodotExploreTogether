@@ -134,7 +134,7 @@ public class StoragePersistenceTests : IDisposable
     }
 
     [Fact]
-    public void RealSchema_V6Data_SurvivesUpgradeToV7_WithAnEmptyStorage()
+    public void RealSchema_V6Data_SurvivesUpgrade_WithAnEmptyStorage()
     {
         using var temp = new TempDatabase();
         temp.CreateAtVersion(6, conn =>
@@ -145,7 +145,7 @@ public class StoragePersistenceTests : IDisposable
             Exec(conn, "INSERT INTO inventory_items (character_id, slot, item_id, count, data, uid) VALUES (7, 0, 432, 1, NULL, 12);");
         });
         using var db = GameDatabase.Open(temp.Path);
-        Assert.Equal(7, db.SchemaVersion);
+        Assert.Equal(Migrations.LatestVersion, db.SchemaVersion); // v7 storage, and every step since
         Assert.Equal([new SlotRecord(0, ItemCatalog.LogId, 1, null, 12)], db.LoadInventory(7));
         Assert.Empty(db.LoadStorage(7));
 
